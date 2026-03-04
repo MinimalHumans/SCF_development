@@ -1,0 +1,10 @@
+# Claude Code internals (worktrees, settings, session data)
+.claude/
+
+# Python bytecode cache — auto-generated, never commit
+__pycache__/
+*.pyc
+*.pyo
+
+# SCF project database files — runtime data, not source code
+
