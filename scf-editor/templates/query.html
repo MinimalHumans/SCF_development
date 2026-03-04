@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Query Explorer — {{ project_name }} — SCF Editor</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="app-layout">
+
+        <!-- Header -->
+        <header class="app-header">
+            <span class="logo">SCF</span>
+            <span class="header-sep">/</span>
+            <span class="project-name">{{ project_name }}</span>
+            <div class="header-spacer"></div>
+            <a href="/browse" class="btn header-btn btn-sm">Browse</a>
+            <a href="/query" class="btn header-btn btn-sm header-btn-active">Query Explorer</a>
+            <a href="/project/close" class="btn header-btn btn-sm">Close Project</a>
+        </header>
+
+        <!-- Query Explorer Body -->
+        <main class="query-page">
+
+            <!-- Page Title -->
+            <div class="query-hero">
+                <h1 class="query-title">Query Explorer</h1>
+                <p class="query-subtitle">Analyze your story structure with predefined queries</p>
+            </div>
+
+            <!-- Query Cards Grid -->
+            <div class="query-cards">
+
+                <!-- Character Journey -->
+                <div class="query-card">
+                    <div class="query-card-icon">👤</div>
+                    <div class="query-card-body">
+                        <div class="query-card-title">Character Journey</div>
+                        <div class="query-card-desc">
+                            Track a character through every scene they appear in
+                        </div>
+                        <div class="query-card-input">
+                            <label>Character</label>
+                            <select id="qc-character-journey">
+                                <option value="">Select character...</option>
+                                {% for c in characters %}
+                                <option value="{{ c.id }}">{{ c.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary btn-sm query-run-btn"
+                            onclick="runCharacterJourney()">Run</button>
+                </div>
+
+                <!-- Location Breakdown -->
+                <div class="query-card">
+                    <div class="query-card-icon">📍</div>
+                    <div class="query-card-body">
+                        <div class="query-card-title">Location Breakdown</div>
+                        <div class="query-card-desc">
+                            See all scenes at a location with characters and props
+                        </div>
+                        <div class="query-card-input">
+                            <label>Location</label>
+                            <select id="qc-location-breakdown">
+                                <option value="">Select location...</option>
+                                {% for l in locations %}
+                                <option value="{{ l.id }}">{{ l.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary btn-sm query-run-btn"
+                            onclick="runLocationBreakdown()">Run</button>
+                </div>
+
+                <!-- Scene Context -->
+                <div class="query-card">
+                    <div class="query-card-icon">🎬</div>
+                    <div class="query-card-body">
+                        <div class="query-card-title">Scene Context</div>
+                        <div class="query-card-desc">
+                            Full breakdown: location, characters, props, emotional beat
+                        </div>
+                        <div class="query-card-input">
+                            <label>Scene</label>
+                            <select id="qc-scene-context">
+                                <option value="">Select scene...</option>
+                                {% for s in scenes %}
+                                <option value="{{ s.id }}">{{ s.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary btn-sm query-run-btn"
+                            onclick="runSceneContext()">Run</button>
+                </div>
+
+                <!-- Character Crossover -->
+                <div class="query-card">
+                    <div class="query-card-icon">🤝</div>
+                    <div class="query-card-body">
+                        <div class="query-card-title">Character Crossover</div>
+                        <div class="query-card-desc">
+                            Find every scene where two characters appear together
+                        </div>
+                        <div class="query-card-input">
+                            <label>Character 1</label>
+                            <select id="qc-crossover-char1">
+                                <option value="">Select character...</option>
+                                {% for c in characters %}
+                                <option value="{{ c.id }}">{{ c.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <label>Character 2</label>
+                            <select id="qc-crossover-char2">
+                                <option value="">Select character...</option>
+                                {% for c in characters %}
+                                <option value="{{ c.id }}">{{ c.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary btn-sm query-run-btn"
+                            onclick="runCharacterCrossover()">Run</button>
+                </div>
+
+                <!-- Project Stats -->
+                <div class="query-card">
+                    <div class="query-card-icon">📊</div>
+                    <div class="query-card-body">
+                        <div class="query-card-title">Project Stats</div>
+                        <div class="query-card-desc">
+                            Entity counts, most-appearing characters, coverage gaps
+                        </div>
+                    </div>
+                    <button class="btn btn-primary btn-sm query-run-btn"
+                            onclick="runProjectStats()">Run</button>
+                </div>
+
+            </div>
+
+            <!-- Results Area -->
+            <div id="query-results" class="query-results hidden">
+                <div class="query-results-header">
+                    <h2 id="query-results-title"></h2>
+                    <button class="btn btn-sm"
+                            onclick="document.getElementById('query-results').classList.add('hidden')">
+                        Clear
+                    </button>
+                </div>
+                <div id="query-results-body"></div>
+            </div>
+
+        </main>
+    </div>
+
+    <script src="/static/js/query.js"></script>
+</body>
+</html>

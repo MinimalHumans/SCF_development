@@ -52,6 +52,7 @@
              role="tabpanel">
 
             {% for field in e.get_fields_for_tab(tab) %}
+            {% if not field.hidden %}
             <div class="field-group">
                 <label class="field-label" for="field-{{ field.name }}">
                     {{ field.label }}
@@ -143,6 +144,7 @@
                 <div class="field-help">{{ field.help_text }}</div>
                 {% endif %}
             </div>
+            {% endif %}
             {% endfor %}
         </div>
         {% endfor %}

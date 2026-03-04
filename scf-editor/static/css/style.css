@@ -834,3 +834,259 @@ select option {
 .text-muted { color: var(--text-muted); }
 .text-sm { font-size: 12px; }
 .mono { font-family: var(--font-mono); }
+
+/* ==========================================================================
+   Query Explorer
+   ========================================================================== */
+
+/* -- Page layout ---------------------------------------------------------- */
+.query-page {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.query-page .app-header {
+    flex-shrink: 0;
+}
+
+.query-main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 40px;
+}
+
+.query-hero {
+    text-align: center;
+    margin-bottom: 40px;
+}
+
+.query-hero h1 {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+}
+
+.query-hero p {
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+/* -- Query cards grid ----------------------------------------------------- */
+.query-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 20px;
+    max-width: 1200px;
+    margin: 0 auto 48px;
+}
+
+.query-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    transition: border-color var(--transition);
+}
+
+.query-card:hover {
+    border-color: var(--text-muted);
+}
+
+.query-card-icon {
+    font-size: 28px;
+    line-height: 1;
+}
+
+.query-card-body h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.query-card-body p {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin-bottom: 16px;
+}
+
+.query-card-inputs {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.query-card-inputs select {
+    width: 100%;
+}
+
+.query-card-inputs .btn {
+    align-self: flex-start;
+}
+
+/* -- Results area --------------------------------------------------------- */
+#query-results {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding-bottom: 64px;
+}
+
+#query-results-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+/* -- Query table ---------------------------------------------------------- */
+.query-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.query-table thead th {
+    text-align: left;
+    padding: 10px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-surface);
+    white-space: nowrap;
+}
+
+.query-table tbody td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    vertical-align: top;
+}
+
+.query-table tbody tr:hover td {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.query-table a {
+    color: var(--text-accent);
+    font-weight: 500;
+}
+
+.query-table a:hover {
+    text-decoration: underline;
+}
+
+.query-table-compact {
+    font-size: 12px;
+}
+
+.query-table-compact thead th {
+    padding: 6px 10px;
+}
+
+.query-table-compact tbody td {
+    padding: 6px 10px;
+}
+
+/* -- Badges / pills ------------------------------------------------------- */
+.query-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 500;
+    border-radius: 10px;
+    background: var(--accent-subtle);
+    color: var(--text-accent);
+    white-space: nowrap;
+}
+
+.query-badge-accent {
+    background: var(--accent-subtle);
+    color: var(--text-accent);
+}
+
+.query-badge-muted {
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    font-size: 10px;
+}
+
+/* -- Context grid (Scene Context / Project Stats) ------------------------- */
+.query-context-grid,
+.query-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 20px;
+}
+
+.query-context-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+}
+
+.query-context-card h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+/* -- Definition list (key-value pairs) ------------------------------------ */
+.query-dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 16px;
+    font-size: 13px;
+}
+
+.query-dl dt {
+    color: var(--text-muted);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.query-dl dd {
+    color: var(--text-primary);
+    word-break: break-word;
+}
+
+/* -- Empty / error states ------------------------------------------------- */
+.query-empty {
+    text-align: center;
+    padding: 24px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.query-error {
+    text-align: center;
+    padding: 24px;
+    color: #fca5a5;
+    background: var(--danger-bg);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    border-radius: var(--radius);
+    font-size: 13px;
+}
+
+/* -- Active header button highlight --------------------------------------- */
+.header-btn-active,
+.header-btn-active:hover {
+    background: var(--accent-subtle);
+    border-color: var(--accent);
+    color: var(--text-accent);
+}

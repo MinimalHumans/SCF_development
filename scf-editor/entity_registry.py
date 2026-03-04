@@ -25,6 +25,7 @@ class FieldDef:
     reference_entity: str | None = None  # For reference fields — which entity type
     tab: str = "General"              # Which tab this field appears on
     help_text: str = ""
+    hidden: bool = False              # If True, field exists in DB but not shown in forms
     sql_type: str | None = None       # Override auto-detected SQL type
 
     def get_sql_type(self) -> str:
@@ -59,10 +60,10 @@ class EntityDef:
     sort_order: int = 0                # Display order within category
 
     def get_tabs(self) -> list[str]:
-        """Return ordered unique tab names."""
+        """Return ordered unique tab names (skips tabs with only hidden fields)."""
         tabs = []
         for f in self.fields:
-            if f.tab not in tabs:
+            if not f.hidden and f.tab not in tabs:
                 tabs.append(f.tab)
         return tabs
 
@@ -375,6 +376,70 @@ register(EntityDef(
             "Outline", "Draft", "Revised", "Locked"
         ], default="Outline"),
         FieldDef("notes", "Notes", "textarea", tab="Notes"),
+    ],
+))
+
+
+# ---------------------------------------------------------------------------
+# Junction: Scene-Character
+# ---------------------------------------------------------------------------
+register(EntityDef(
+    name="scene_character",
+    label="Scene-Character",
+    label_plural="Scene-Characters",
+    icon="🔗",
+    category="Connections",
+    sort_order=60,
+    description="Links a character to a scene with role information.",
+    fields=[
+        FieldDef("name", "Display Name", hidden=True),
+        FieldDef("scene_id", "Scene", "reference", reference_entity="scene", required=True),
+        FieldDef("character_id", "Character", "reference", reference_entity="character", required=True),
+        FieldDef("role_in_scene", "Role in Scene", "select", options=[
+            "Featured", "Supporting", "Background", "Mentioned", "Voiceover"
+        ]),
+        FieldDef("notes", "Notes", "textarea"),
+    ],
+))
+
+# ---------------------------------------------------------------------------
+# Junction: Scene-Prop
+# ---------------------------------------------------------------------------
+register(EntityDef(
+    name="scene_prop",
+    label="Scene-Prop",
+    label_plural="Scene-Props",
+    icon="🔗",
+    category="Connections",
+    sort_order=61,
+    description="Links a prop to a scene with usage details.",
+    fields=[
+        FieldDef("name", "Display Name", hidden=True),
+        FieldDef("scene_id", "Scene", "reference", reference_entity="scene", required=True),
+        FieldDef("prop_id", "Prop", "reference", reference_entity="prop", required=True),
+        FieldDef("usage_note", "Usage Note", "text"),
+        FieldDef("significance", "Significance", "select", options=[
+            "Key", "Present", "Background", "Mentioned"
+        ]),
+    ],
+))
+
+# ---------------------------------------------------------------------------
+# Junction: Scene-Sequence
+# ---------------------------------------------------------------------------
+register(EntityDef(
+    name="scene_sequence",
+    label="Scene-Sequence",
+    label_plural="Scene-Sequences",
+    icon="🔗",
+    category="Connections",
+    sort_order=62,
+    description="Links a scene to a sequence with ordering.",
+    fields=[
+        FieldDef("name", "Display Name", hidden=True),
+        FieldDef("scene_id", "Scene", "reference", reference_entity="scene", required=True),
+        FieldDef("sequence_id", "Sequence", "reference", reference_entity="sequence", required=True),
+        FieldDef("order_in_sequence", "Order in Sequence", "integer"),
     ],
 ))
 

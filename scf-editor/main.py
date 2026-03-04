@@ -19,6 +19,7 @@ from entity_registry import (
     get_entity, get_all_entities, get_entities_by_category, EntityDef
 )
 import database as db
+import queries
 
 
 # =============================================================================
@@ -70,6 +71,41 @@ def _require_project(request: Request) -> Path:
     return path
 
 
+# -- Junction entity auto-naming --
+_JUNCTION_NAME_PARTS = {
+    "scene_character": [("character_id", "character"), ("scene_id", "scene")],
+    "scene_prop": [("prop_id", "prop"), ("scene_id", "scene")],
+    "scene_sequence": [("scene_id", "scene"), ("sequence_id", "sequence")],
+}
+
+
+def _auto_name_junction(db_path: Path, entity_type: str, entity_id: int):
+    """Compute a display name for junction entities from their references."""
+    parts_spec = _JUNCTION_NAME_PARTS.get(entity_type)
+    if not parts_spec:
+        return
+
+    record = db.get_entity_by_id(db_path, entity_type, entity_id)
+    if not record:
+        return
+
+    name_parts = []
+    for ref_field, ref_entity_type in parts_spec:
+        ref_id = record.get(ref_field)
+        if ref_id:
+            ref_def = get_entity(ref_entity_type)
+            ref_record = db.get_entity_by_id(db_path, ref_entity_type, ref_id)
+            if ref_record and ref_def:
+                name_parts.append(str(ref_record.get(ref_def.name_field, f"#{ref_id}")))
+            else:
+                name_parts.append(f"#{ref_id}")
+        else:
+            name_parts.append("?")
+
+    display_name = " in ".join(name_parts)
+    db.update_entity(db_path, entity_type, entity_id, {"name": display_name})
+
+
 # =============================================================================
 # Page routes
 # =============================================================================
@@ -108,10 +144,12 @@ async def project_create(request: Request, project_name: str = Form(...)):
 
 @app.get("/project/open/{filename}")
 async def project_open(filename: str):
-    """Open an existing project."""
+    """Open an existing project (auto-migrates tables for new entity types)."""
     path = Path("projects") / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project not found")
+    # Auto-migrate: ensures new entity tables (e.g. junction tables) exist
+    db.init_database(path)
     response = RedirectResponse("/browse", status_code=302)
     response.set_cookie("scf_project", filename, max_age=86400 * 365)
     return response
@@ -302,6 +340,7 @@ async def api_create(request: Request, entity_type: str):
         data[entity_def.name_field] = f"New {entity_def.label} {count + 1}"
 
     new_id = db.create_entity(db_path, entity_type, data)
+    _auto_name_junction(db_path, entity_type, new_id)
 
     # If htmx request, redirect to browse
     if request.headers.get("HX-Request"):
@@ -330,6 +369,7 @@ async def api_update(request: Request, entity_type: str, entity_id: int):
                 data[f.name] = None
 
     success = db.update_entity(db_path, entity_type, entity_id, data)
+    _auto_name_junction(db_path, entity_type, entity_id)
 
     if request.headers.get("HX-Request"):
         # Return updated form with a success indicator
@@ -393,6 +433,69 @@ async def htmx_search(request: Request, q: str = Query("")):
         "results": results,
         "query": q,
     })
+
+
+# =============================================================================
+# Query Explorer
+# =============================================================================
+
+@app.get("/query", response_class=HTMLResponse)
+async def query_page(request: Request):
+    """Query Explorer page."""
+    db_path = _require_project(request)
+
+    # Load entity lists for dropdowns
+    characters = db.list_entities(db_path, "character")
+    locations = db.list_entities(db_path, "location")
+    scenes = db.list_entities(db_path, "scene")
+
+    project_info = db.list_entities(db_path, "project", limit=1)
+    project_name = project_info[0]["name"] if project_info else "Untitled"
+
+    return templates.TemplateResponse("query.html", _add_template_context(
+        request,
+        characters=characters,
+        locations=locations,
+        scenes=scenes,
+        project_name=project_name,
+    ))
+
+
+@app.get("/api/query/character-journey")
+async def api_query_character_journey(request: Request, character_id: int = Query(...)):
+    db_path = _require_project(request)
+    results = queries.character_journey(db_path, character_id)
+    return JSONResponse(results)
+
+
+@app.get("/api/query/location-breakdown")
+async def api_query_location_breakdown(request: Request, location_id: int = Query(...)):
+    db_path = _require_project(request)
+    results = queries.location_breakdown(db_path, location_id)
+    return JSONResponse(results)
+
+
+@app.get("/api/query/scene-context")
+async def api_query_scene_context(request: Request, scene_id: int = Query(...)):
+    db_path = _require_project(request)
+    result = queries.scene_context(db_path, scene_id)
+    return JSONResponse(result)
+
+
+@app.get("/api/query/character-crossover")
+async def api_query_character_crossover(request: Request,
+                                         char1: int = Query(...),
+                                         char2: int = Query(...)):
+    db_path = _require_project(request)
+    results = queries.character_crossover(db_path, char1, char2)
+    return JSONResponse(results)
+
+
+@app.get("/api/query/project-stats")
+async def api_query_project_stats(request: Request):
+    db_path = _require_project(request)
+    results = queries.project_stats(db_path)
+    return JSONResponse(results)
 
 
 # =============================================================================
