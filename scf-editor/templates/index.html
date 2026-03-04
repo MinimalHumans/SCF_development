@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SCF Editor</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="landing">
+        <div class="landing-card">
+            <div class="landing-logo">SCF</div>
+            <h1 class="landing-title">Story Context Framework</h1>
+            <p class="landing-subtitle">
+                Create and edit structured story databases.<br>
+                Open an existing project or create a new one.
+            </p>
+
+            {% if error %}
+            <div class="error-msg">{{ error }}</div>
+            {% endif %}
+
+            <div class="landing-section-label">New Project</div>
+            <form action="/project/create" method="post" class="landing-create">
+                <input type="text" name="project_name" placeholder="Project name…" required
+                       autofocus autocomplete="off">
+                <button type="submit" class="btn btn-primary">Create</button>
+            </form>
+
+            {% if projects %}
+            <div class="landing-section-label">Existing Projects</div>
+            <div class="landing-projects">
+                {% for p in projects %}
+                <a href="/project/open/{{ p.filename }}" class="project-item">
+                    <span class="icon">🎬</span>
+                    <span class="name">{{ p.display_name }}</span>
+                    <span class="meta">{{ p.filename }}</span>
+                </a>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="landing-section-label">Existing Projects</div>
+            <div class="landing-empty">No projects yet. Create one above.</div>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

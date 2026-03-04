@@ -1,0 +1,12 @@
+{% if results %}
+{% for item in results %}
+<a href="/browse?entity_type={{ item._entity_type }}&entity_id={{ item.id }}"
+   class="search-result-item">
+    <span class="sr-icon">{{ item._entity_icon }}</span>
+    <span class="sr-name">{{ item._display_name }}</span>
+    <span class="sr-type">{{ item._entity_label }}</span>
+</a>
+{% endfor %}
+{% else %}
+<div class="search-empty">No results for "{{ query }}"</div>
+{% endif %}

@@ -1,0 +1,47 @@
+{% for cat_name, entities in categories.items() %}
+{% if cat_name != "Project" %}
+<div class="tree-category">
+    <div class="tree-category-label">{{ cat_name }}</div>
+
+    {% for edef in entities %}
+    {% set td = tree_data.get(edef.name, {"records": [], "count": 0}) %}
+    <div class="tree-entity-group" data-entity-type="{{ edef.name }}">
+
+        <div class="tree-group-header"
+             onclick="toggleTreeGroup(this)">
+            <span class="chevron">▼</span>
+            <span class="icon">{{ edef.icon }}</span>
+            <span class="label">{{ edef.label_plural }}</span>
+            <span class="count">{{ td.count }}</span>
+            <form hx-post="/api/{{ edef.name }}"
+                  hx-swap="none"
+                  style="display: contents;"
+                  onclick="event.stopPropagation()">
+                <button type="submit"
+                        class="add-btn"
+                        title="New {{ edef.label }}">+</button>
+            </form>
+        </div>
+
+        <div class="tree-items" id="tree-items-{{ edef.name }}">
+            {% for item in td.records %}
+            <a href="/browse?entity_type={{ edef.name }}&entity_id={{ item.id }}"
+               class="tree-item {% if selected_type == edef.name and selected_id == item.id %}active{% endif %}"
+               data-entity-type="{{ edef.name }}"
+               data-entity-id="{{ item.id }}">
+                <span class="dot"></span>
+                <span>{{ item[edef.name_field] or "Unnamed" }}</span>
+            </a>
+            {% endfor %}
+            {% if td.count == 0 %}
+            <div class="tree-item text-muted" style="cursor: default; font-style: italic; font-size: 12px;">
+                No {{ edef.label_plural | lower }} yet
+            </div>
+            {% endif %}
+        </div>
+
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endfor %}

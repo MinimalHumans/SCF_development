@@ -1,0 +1,170 @@
+{% set entity_data = entity if entity else {} %}
+{% set e = entity_def %}
+
+<div class="entity-editor">
+
+    <!-- Entity Header -->
+    <div class="entity-header">
+        <span class="icon">{{ e.icon }}</span>
+        <div class="entity-header-info">
+            <div class="type-label">{{ e.label }}</div>
+            <div class="entity-name">{{ entity_data.get(e.name_field, "Untitled") }}</div>
+            <div class="entity-meta">
+                ID #{{ entity_data.get("id", "–") }}
+                {% if entity_data.get("updated_at") %}
+                · Updated {{ entity_data.updated_at[:16] }}
+                {% endif %}
+            </div>
+        </div>
+        <div class="entity-actions">
+            <button class="btn btn-danger btn-sm"
+                    onclick="deleteEntity('{{ entity_type }}', {{ entity_data.get('id', 0) }})"
+                    title="Delete this {{ e.label | lower }}">
+                Delete
+            </button>
+        </div>
+    </div>
+
+    <!-- Tab Bar -->
+    {% set tabs = e.get_tabs() %}
+    {% if tabs | length > 1 %}
+    <div class="tab-bar" role="tablist">
+        {% for tab in tabs %}
+        <button class="tab-btn {% if loop.first %}active{% endif %}"
+                role="tab"
+                data-tab="{{ tab | replace(' ', '-') | lower }}"
+                onclick="switchTab(this, '{{ tab | replace(' ', '-') | lower }}')">
+            {{ tab }}
+        </button>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Form -->
+    <form id="entity-form"
+          hx-put="/api/{{ entity_type }}/{{ entity_data.get('id', 0) }}"
+          hx-target="#editor-panel"
+          hx-swap="innerHTML">
+
+        {% for tab in tabs %}
+        <div class="tab-content {% if loop.first %}active{% endif %}"
+             id="tab-{{ tab | replace(' ', '-') | lower }}"
+             role="tabpanel">
+
+            {% for field in e.get_fields_for_tab(tab) %}
+            <div class="field-group">
+                <label class="field-label" for="field-{{ field.name }}">
+                    {{ field.label }}
+                    {% if field.required %}<span class="required">*</span>{% endif %}
+                </label>
+
+                {% if field.field_type == "text" %}
+                    <input type="text"
+                           id="field-{{ field.name }}"
+                           name="{{ field.name }}"
+                           value="{{ entity_data.get(field.name, '') or '' }}"
+                           placeholder="{{ field.placeholder }}"
+                           {% if field.required %}required{% endif %}>
+
+                {% elif field.field_type == "textarea" or field.field_type == "json" %}
+                    <textarea id="field-{{ field.name }}"
+                              name="{{ field.name }}"
+                              placeholder="{{ field.placeholder }}"
+                              {% if field.field_type == "json" %}
+                              style="font-family: var(--font-mono); font-size: 12px;"
+                              {% endif %}
+                              {% if field.required %}required{% endif %}
+                              rows="{% if field.field_type == 'json' %}3{% else %}4{% endif %}"
+                    >{{ entity_data.get(field.name, '') or '' }}</textarea>
+
+                {% elif field.field_type == "integer" %}
+                    <input type="number"
+                           id="field-{{ field.name }}"
+                           name="{{ field.name }}"
+                           value="{{ entity_data.get(field.name, '') if entity_data.get(field.name) is not none else '' }}"
+                           placeholder="{{ field.placeholder }}"
+                           step="1"
+                           {% if field.required %}required{% endif %}>
+
+                {% elif field.field_type == "float" %}
+                    <input type="number"
+                           id="field-{{ field.name }}"
+                           name="{{ field.name }}"
+                           value="{{ entity_data.get(field.name, '') if entity_data.get(field.name) is not none else '' }}"
+                           placeholder="{{ field.placeholder }}"
+                           step="any"
+                           {% if field.required %}required{% endif %}>
+
+                {% elif field.field_type == "select" %}
+                    <select id="field-{{ field.name }}"
+                            name="{{ field.name }}"
+                            {% if field.required %}required{% endif %}>
+                        <option value="">— Select —</option>
+                        {% if field.options %}
+                        {% for opt in field.options %}
+                        <option value="{{ opt }}"
+                                {% if entity_data.get(field.name) == opt %}selected{% endif %}>
+                            {{ opt }}
+                        </option>
+                        {% endfor %}
+                        {% endif %}
+                    </select>
+
+                {% elif field.field_type == "reference" %}
+                    <select id="field-{{ field.name }}"
+                            name="{{ field.name }}"
+                            {% if field.required %}required{% endif %}>
+                        <option value="">— Select {{ field.reference_entity | title }} —</option>
+                        {% if reference_options and field.name in reference_options %}
+                        {% for ref in reference_options[field.name] %}
+                        <option value="{{ ref.id }}"
+                                {% if entity_data.get(field.name) | string == ref.id | string %}selected{% endif %}>
+                            {{ ref.name }}
+                        </option>
+                        {% endfor %}
+                        {% endif %}
+                    </select>
+
+                {% elif field.field_type == "boolean" %}
+                    <div class="field-checkbox">
+                        <input type="checkbox"
+                               id="field-{{ field.name }}"
+                               name="{{ field.name }}"
+                               value="1"
+                               {% if entity_data.get(field.name) %}checked{% endif %}>
+                        <label for="field-{{ field.name }}" style="font-size: 13px; color: var(--text-secondary);">
+                            {{ field.label }}
+                        </label>
+                    </div>
+
+                {% endif %}
+
+                {% if field.help_text %}
+                <div class="field-help">{{ field.help_text }}</div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endfor %}
+
+        <!-- Save Bar -->
+        <div class="save-bar">
+            <button type="submit" class="btn btn-primary">Save Changes</button>
+            <span id="save-indicator" class="save-indicator {% if save_success %}show{% endif %}">
+                ✓ Saved
+            </span>
+        </div>
+    </form>
+</div>
+
+{% if save_success %}
+<script>
+    // Auto-fade the save indicator
+    setTimeout(() => {
+        const ind = document.getElementById('save-indicator');
+        if (ind) ind.classList.remove('show');
+    }, 2500);
+    // Update tree item name if it changed
+    refreshTree();
+</script>
+{% endif %}
