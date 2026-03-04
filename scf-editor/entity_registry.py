@@ -303,7 +303,8 @@ register(EntityDef(
         # Characters tab
         FieldDef("characters_present", "Characters Present", "json", tab="Characters",
                  placeholder='["Eleanor", "Marcus"]',
-                 help_text="JSON array of character names present in this scene"),
+                 help_text="JSON array of character names present in this scene",
+                 hidden=True),
         FieldDef("character_dynamics", "Character Dynamics", "textarea", tab="Characters",
                  placeholder="Key interactions and tensions in this scene"),
 

@@ -1,0 +1,61 @@
+{# Reusable inline relationship linking panel.
+   Parameters (set before including):
+     link_label        — e.g. "Characters", "Props", "Scenes"
+     link_entity_type  — e.g. "character", "prop", "scene"
+     junction_type     — e.g. "scene-character", "scene-prop", "scene-sequence"
+     parent_id         — the current entity's ID
+     meta_field        — junction metadata field name (e.g. "role_in_scene")
+     meta_options      — list of option strings for the dropdown
+     meta_label        — label for the metadata dropdown
+     current_links     — list of dicts from _query_links (server-rendered)
+     show_order        — if true, show order number input instead of dropdown
+#}
+
+<div class="link-panel"
+     data-link-entity-type="{{ link_entity_type }}"
+     data-junction-type="{{ junction_type }}"
+     data-parent-id="{{ parent_id }}"
+     data-meta-field="{{ meta_field }}">
+
+    <div class="link-panel-header">{{ link_label }}</div>
+
+    <!-- Autocomplete search input -->
+    <div class="link-search">
+        <input type="text"
+               class="link-search-input"
+               placeholder="Type to search or create {{ link_entity_type }}s..."
+               autocomplete="off">
+        <div class="link-autocomplete-dropdown hidden"></div>
+    </div>
+
+    <!-- Linked entity chips -->
+    <div class="link-chips">
+        {% for link in current_links %}
+        <div class="link-chip" data-link-id="{{ link.link_id }}">
+            <a href="/browse?entity_type={{ link_entity_type }}&entity_id={{ link.entity_id }}"
+               class="link-chip-name">{{ link.entity_name }}</a>
+
+            {% if show_order is defined and show_order %}
+            <input type="number"
+                   class="link-chip-order"
+                   value="{{ link.order_in_sequence or '' }}"
+                   placeholder="#"
+                   title="{{ meta_label }}"
+                   min="1" step="1">
+            {% else %}
+            <select class="link-chip-meta" title="{{ meta_label }}">
+                <option value="">{{ meta_label }}</option>
+                {% for opt in meta_options %}
+                <option value="{{ opt }}"
+                        {% if link.get(meta_field) == opt %}selected{% endif %}>
+                    {{ opt }}
+                </option>
+                {% endfor %}
+            </select>
+            {% endif %}
+
+            <button type="button" class="link-chip-remove" title="Remove">&times;</button>
+        </div>
+        {% endfor %}
+    </div>
+</div>

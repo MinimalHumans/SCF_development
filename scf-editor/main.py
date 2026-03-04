@@ -79,6 +79,28 @@ _JUNCTION_NAME_PARTS = {
 }
 
 
+def _get_relationship_data(db_path: Path, entity_type: str, entity_id: int):
+    """Get linked entities and reverse links for the entity editor."""
+    linked_data = {}
+    reverse_links = []
+    conn = db.get_connection(db_path)
+    try:
+        if entity_type == "scene":
+            linked_data["characters"] = _query_links(conn, "scene", entity_id, "characters")
+            linked_data["props"] = _query_links(conn, "scene", entity_id, "props")
+        elif entity_type == "sequence":
+            linked_data["scenes"] = _query_links(conn, "sequence", entity_id, "scenes")
+        elif entity_type == "character":
+            reverse_links = _query_links(conn, "character", entity_id, "scenes")
+        elif entity_type == "prop":
+            reverse_links = _query_links(conn, "prop", entity_id, "scenes")
+        elif entity_type == "location":
+            reverse_links = _query_links(conn, "location", entity_id, "scenes")
+    finally:
+        conn.close()
+    return linked_data, reverse_links
+
+
 def _auto_name_junction(db_path: Path, entity_type: str, entity_id: int):
     """Compute a display name for junction entities from their references."""
     parts_spec = _JUNCTION_NAME_PARTS.get(entity_type)
@@ -242,6 +264,12 @@ async def browse(request: Request, entity_type: str = None, entity_id: int = Non
                         for item in ref_items
                     ]
 
+    # Linked entities data for inline relationship panels
+    linked_data = {}
+    reverse_links = []
+    if entity_type and entity_id:
+        linked_data, reverse_links = _get_relationship_data(db_path, entity_type, entity_id)
+
     # Get project info
     project_info = db.list_entities(db_path, "project", limit=1)
     project_name = project_info[0]["name"] if project_info else "Untitled"
@@ -254,6 +282,8 @@ async def browse(request: Request, entity_type: str = None, entity_id: int = Non
         selected_type=entity_type,
         selected_id=entity_id,
         reference_options=reference_options,
+        linked_data=linked_data,
+        reverse_links=reverse_links,
         project_name=project_name,
     ))
 
@@ -286,6 +316,9 @@ async def htmx_entity_form(request: Request, entity_type: str, entity_id: int):
                     for item in ref_items
                 ]
 
+    # Linked entities data
+    linked_data, reverse_links = _get_relationship_data(db_path, entity_type, entity_id)
+
     return templates.TemplateResponse("partials/entity_form.html", {
         "request": request,
         "entity": entity_data,
@@ -293,6 +326,8 @@ async def htmx_entity_form(request: Request, entity_type: str, entity_id: int):
         "entity_type": entity_type,
         "entity_id": entity_id,
         "reference_options": reference_options,
+        "linked_data": linked_data,
+        "reverse_links": reverse_links,
     })
 
 
@@ -384,6 +419,7 @@ async def api_update(request: Request, entity_type: str, entity_id: int):
                         {"id": item["id"], "name": item.get(ref_def.name_field, f"#{item['id']}")}
                         for item in ref_items
                     ]
+        linked_data, reverse_links = _get_relationship_data(db_path, entity_type, entity_id)
         return templates.TemplateResponse("partials/entity_form.html", {
             "request": request,
             "entity": entity_data,
@@ -391,6 +427,8 @@ async def api_update(request: Request, entity_type: str, entity_id: int):
             "entity_type": entity_type,
             "entity_id": entity_id,
             "reference_options": reference_options,
+            "linked_data": linked_data,
+            "reverse_links": reverse_links,
             "save_success": True,
         })
 
@@ -496,6 +534,216 @@ async def api_query_project_stats(request: Request):
     db_path = _require_project(request)
     results = queries.project_stats(db_path)
     return JSONResponse(results)
+
+
+# =============================================================================
+# Inline Relationship Linking API
+# =============================================================================
+
+# Config for junction types: maps URL slug to DB/entity details
+_LINK_CONFIG = {
+    "scene-character": {
+        "junction_table": "scene_character",
+        "parent_field": "scene_id",
+        "child_field": "character_id",
+        "child_entity": "character",
+        "meta_fields": ["role_in_scene", "notes"],
+    },
+    "scene-prop": {
+        "junction_table": "scene_prop",
+        "parent_field": "scene_id",
+        "child_field": "prop_id",
+        "child_entity": "prop",
+        "meta_fields": ["significance", "usage_note"],
+    },
+    "scene-sequence": {
+        "junction_table": "scene_sequence",
+        "parent_field": "sequence_id",
+        "child_field": "scene_id",
+        "child_entity": "scene",
+        "meta_fields": ["order_in_sequence"],
+    },
+}
+
+
+@app.get("/api/autocomplete/{entity_type}")
+async def api_autocomplete(request: Request, entity_type: str, q: str = Query("")):
+    """Autocomplete search for entity names."""
+    if not q:
+        return JSONResponse([])
+    db_path = _require_project(request)
+    entity_def = get_entity(entity_type)
+    if not entity_def:
+        raise HTTPException(status_code=404, detail="Unknown entity type")
+    items = db.list_entities(db_path, entity_type, search=q, limit=10)
+    results = [{"id": item["id"], "name": item.get(entity_def.name_field, f"#{item['id']}")}
+               for item in items]
+    return JSONResponse(results)
+
+
+@app.post("/api/link/{junction_type}")
+async def api_link_create(request: Request, junction_type: str):
+    """Create a junction link. Supports creating new child entities inline."""
+    cfg = _LINK_CONFIG.get(junction_type)
+    if not cfg:
+        raise HTTPException(status_code=404, detail="Unknown junction type")
+
+    db_path = _require_project(request)
+    body = await request.json()
+
+    parent_id = body.get("parent_id")
+    child_id = body.get("child_id")
+    new_name = body.get("new_name")
+    is_new = False
+
+    if not parent_id:
+        raise HTTPException(status_code=400, detail="parent_id required")
+
+    # Create new child entity if needed
+    if not child_id and new_name:
+        child_id = db.create_entity(db_path, cfg["child_entity"], {"name": new_name})
+        is_new = True
+    elif not child_id:
+        raise HTTPException(status_code=400, detail="child_id or new_name required")
+
+    # Check for duplicate link
+    conn = db.get_connection(db_path)
+    try:
+        existing = conn.execute(
+            f"SELECT id FROM {cfg['junction_table']} WHERE {cfg['parent_field']} = ? AND {cfg['child_field']} = ?",
+            (parent_id, child_id)
+        ).fetchone()
+        if existing:
+            return JSONResponse({"id": existing["id"], "child_id": child_id, "is_new": False, "duplicate": True})
+    finally:
+        conn.close()
+
+    # Build junction data
+    junction_data = {
+        cfg["parent_field"]: parent_id,
+        cfg["child_field"]: child_id,
+        "name": "",  # auto-named later
+    }
+    for mf in cfg["meta_fields"]:
+        if mf in body:
+            junction_data[mf] = body[mf]
+
+    link_id = db.create_entity(db_path, cfg["junction_table"], junction_data)
+    _auto_name_junction(db_path, cfg["junction_table"], link_id)
+
+    return JSONResponse({"id": link_id, "child_id": child_id, "is_new": is_new})
+
+
+@app.delete("/api/link/{junction_type}/{link_id}")
+async def api_link_delete(request: Request, junction_type: str, link_id: int):
+    """Delete a junction link."""
+    cfg = _LINK_CONFIG.get(junction_type)
+    if not cfg:
+        raise HTTPException(status_code=404, detail="Unknown junction type")
+    db_path = _require_project(request)
+    success = db.delete_entity(db_path, cfg["junction_table"], link_id)
+    return JSONResponse({"success": success})
+
+
+@app.put("/api/link/{junction_type}/{link_id}")
+async def api_link_update(request: Request, junction_type: str, link_id: int):
+    """Update junction metadata (role, significance, order)."""
+    cfg = _LINK_CONFIG.get(junction_type)
+    if not cfg:
+        raise HTTPException(status_code=404, detail="Unknown junction type")
+    db_path = _require_project(request)
+    body = await request.json()
+
+    # Only allow updating meta fields
+    update_data = {k: v for k, v in body.items() if k in cfg["meta_fields"]}
+    if not update_data:
+        return JSONResponse({"success": False, "detail": "No valid fields"})
+
+    success = db.update_entity(db_path, cfg["junction_table"], link_id, update_data)
+    return JSONResponse({"success": success})
+
+
+@app.get("/api/links/{parent_type}/{parent_id}/{link_type}")
+async def api_links_list(request: Request, parent_type: str, parent_id: int, link_type: str):
+    """List linked entities for a parent. Handles both forward and reverse lookups."""
+    db_path = _require_project(request)
+    conn = db.get_connection(db_path)
+    try:
+        results = _query_links(conn, parent_type, parent_id, link_type)
+        return JSONResponse(results)
+    finally:
+        conn.close()
+
+
+def _query_links(conn, parent_type: str, parent_id: int, link_type: str) -> list[dict]:
+    """Query linked entities. Used by both API and template rendering."""
+
+    if parent_type == "scene" and link_type == "characters":
+        rows = conn.execute("""
+            SELECT sc.id AS link_id, sc.role_in_scene, sc.notes AS link_notes,
+                   c.id AS entity_id, c.name AS entity_name
+            FROM scene_character sc
+            JOIN character c ON c.id = sc.character_id
+            WHERE sc.scene_id = ?
+            ORDER BY c.name
+        """, (parent_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    elif parent_type == "scene" and link_type == "props":
+        rows = conn.execute("""
+            SELECT sp.id AS link_id, sp.significance, sp.usage_note,
+                   p.id AS entity_id, p.name AS entity_name
+            FROM scene_prop sp
+            JOIN prop p ON p.id = sp.prop_id
+            WHERE sp.scene_id = ?
+            ORDER BY p.name
+        """, (parent_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    elif parent_type == "sequence" and link_type == "scenes":
+        rows = conn.execute("""
+            SELECT ss.id AS link_id, ss.order_in_sequence,
+                   s.id AS entity_id, s.name AS entity_name, s.scene_number
+            FROM scene_sequence ss
+            JOIN scene s ON s.id = ss.scene_id
+            WHERE ss.sequence_id = ?
+            ORDER BY ss.order_in_sequence ASC, s.scene_number ASC
+        """, (parent_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    # Reverse lookups
+    elif parent_type == "character" and link_type == "scenes":
+        rows = conn.execute("""
+            SELECT sc.id AS link_id, sc.role_in_scene,
+                   s.id AS entity_id, s.name AS entity_name, s.scene_number
+            FROM scene_character sc
+            JOIN scene s ON s.id = sc.scene_id
+            WHERE sc.character_id = ?
+            ORDER BY s.scene_number ASC, s.id ASC
+        """, (parent_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    elif parent_type == "prop" and link_type == "scenes":
+        rows = conn.execute("""
+            SELECT sp.id AS link_id, sp.significance,
+                   s.id AS entity_id, s.name AS entity_name, s.scene_number
+            FROM scene_prop sp
+            JOIN scene s ON s.id = sp.scene_id
+            WHERE sp.prop_id = ?
+            ORDER BY s.scene_number ASC, s.id ASC
+        """, (parent_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    elif parent_type == "location" and link_type == "scenes":
+        rows = conn.execute("""
+            SELECT s.id AS entity_id, s.name AS entity_name, s.scene_number
+            FROM scene s
+            WHERE s.location_id = ?
+            ORDER BY s.scene_number ASC, s.id ASC
+        """, (parent_id,)).fetchall()
+        return [{"link_id": None, **dict(r)} for r in rows]
+
+    return []
 
 
 # =============================================================================

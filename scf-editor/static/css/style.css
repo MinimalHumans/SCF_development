@@ -1090,3 +1090,242 @@ select option {
     border-color: var(--accent);
     color: var(--text-accent);
 }
+
+/* ==========================================================================
+   Inline Relationship Link Panels
+   ========================================================================== */
+
+/* -- Link panel container ------------------------------------------------- */
+.link-panel {
+    margin-top: 28px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.link-panel-header {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+}
+
+/* -- Autocomplete search -------------------------------------------------- */
+.link-search {
+    position: relative;
+    margin-bottom: 12px;
+}
+
+.link-search-input {
+    width: 100%;
+    padding: 8px 12px;
+    font-size: 13px;
+}
+
+.link-autocomplete-dropdown {
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 0;
+    right: 0;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    max-height: 240px;
+    overflow-y: auto;
+    z-index: 50;
+}
+
+.link-autocomplete-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    cursor: pointer;
+    transition: background var(--transition);
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.link-autocomplete-item:hover,
+.link-autocomplete-item.highlighted {
+    background: var(--bg-hover);
+}
+
+.link-autocomplete-item.highlighted {
+    background: var(--accent-subtle);
+    color: var(--text-accent);
+}
+
+.link-autocomplete-create {
+    color: var(--success);
+    font-style: italic;
+    border-top: 1px solid var(--border-subtle);
+}
+
+/* -- Link chips ----------------------------------------------------------- */
+.link-chips {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.link-chip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    transition: border-color var(--transition);
+}
+
+.link-chip:hover {
+    border-color: var(--border);
+}
+
+.link-chip-name {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-accent);
+    text-decoration: none;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.link-chip-name:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+}
+
+.link-new-indicator {
+    font-size: 11px;
+    color: var(--success);
+    font-style: italic;
+    flex-shrink: 0;
+}
+
+.link-chip-meta {
+    width: 130px;
+    flex-shrink: 0;
+    padding: 4px 8px;
+    font-size: 12px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+}
+
+.link-chip-order {
+    width: 60px;
+    flex-shrink: 0;
+    padding: 4px 8px;
+    font-size: 12px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    text-align: center;
+}
+
+.link-chip-remove {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 2px 6px;
+    line-height: 1;
+    border-radius: var(--radius-sm);
+    transition: all var(--transition);
+}
+
+.link-chip-remove:hover {
+    background: var(--danger-bg);
+    color: var(--danger);
+}
+
+/* ==========================================================================
+   Reverse Links — "Appears In" Section
+   ========================================================================== */
+
+.appears-in {
+    margin-top: 28px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.appears-in-header {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+}
+
+.appears-in-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.appears-in-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    text-decoration: none;
+    color: var(--text-primary);
+    transition: all var(--transition);
+    font-size: 13px;
+}
+
+.appears-in-item:hover {
+    background: var(--bg-hover);
+    border-color: var(--border);
+    color: var(--text-accent);
+}
+
+.appears-in-number {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    width: 36px;
+    flex-shrink: 0;
+}
+
+.appears-in-name {
+    flex: 1;
+    font-weight: 500;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.appears-in-badge {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--accent-subtle);
+    color: var(--text-accent);
+    flex-shrink: 0;
+}
+
+.appears-in-empty {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-style: italic;
+    padding: 8px 0;
+}

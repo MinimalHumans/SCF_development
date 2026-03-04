@@ -157,6 +157,62 @@
             </span>
         </div>
     </form>
+
+    {# ================================================================ #}
+    {# Inline Relationship Panels (outside the form, managed via JS)    #}
+    {# ================================================================ #}
+
+    {% if entity_type == "scene" %}
+        {# Characters linked to this scene #}
+        {% set link_label = "Characters in Scene" %}
+        {% set link_entity_type = "character" %}
+        {% set junction_type = "scene-character" %}
+        {% set parent_id = entity_data.get("id") %}
+        {% set meta_field = "role_in_scene" %}
+        {% set meta_options = ["Featured", "Supporting", "Background", "Mentioned", "Voiceover"] %}
+        {% set meta_label = "Role" %}
+        {% set current_links = linked_data.get("characters", []) if linked_data is defined else [] %}
+        {% include "partials/link_panel.html" %}
+
+        {# Props linked to this scene #}
+        {% set link_label = "Props in Scene" %}
+        {% set link_entity_type = "prop" %}
+        {% set junction_type = "scene-prop" %}
+        {% set meta_field = "significance" %}
+        {% set meta_options = ["Key", "Present", "Background", "Mentioned"] %}
+        {% set meta_label = "Significance" %}
+        {% set current_links = linked_data.get("props", []) if linked_data is defined else [] %}
+        {% include "partials/link_panel.html" %}
+
+    {% elif entity_type == "sequence" %}
+        {# Scenes in this sequence #}
+        {% set link_label = "Scenes in Sequence" %}
+        {% set link_entity_type = "scene" %}
+        {% set junction_type = "scene-sequence" %}
+        {% set parent_id = entity_data.get("id") %}
+        {% set meta_field = "order_in_sequence" %}
+        {% set meta_options = [] %}
+        {% set meta_label = "Order" %}
+        {% set show_order = true %}
+        {% set current_links = linked_data.get("scenes", []) if linked_data is defined else [] %}
+        {% include "partials/link_panel.html" %}
+
+    {% elif entity_type == "character" %}
+        {% set reverse_label = "Appears In" %}
+        {% set reverse_meta_field = "role_in_scene" %}
+        {% include "partials/reverse_links.html" %}
+
+    {% elif entity_type == "prop" %}
+        {% set reverse_label = "Appears In" %}
+        {% set reverse_meta_field = "significance" %}
+        {% include "partials/reverse_links.html" %}
+
+    {% elif entity_type == "location" %}
+        {% set reverse_label = "Scenes at this Location" %}
+        {% set reverse_meta_field = "" %}
+        {% include "partials/reverse_links.html" %}
+
+    {% endif %}
 </div>
 
 {% if save_success %}

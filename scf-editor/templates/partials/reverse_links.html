@@ -1,0 +1,31 @@
+{# Read-only "Appears In" section for character, prop, location editors.
+   Parameters (set before including):
+     reverse_label     — e.g. "Appears In", "Scenes at this Location"
+     reverse_links     — list of dicts with entity_id, entity_name, scene_number, + optional meta
+     reverse_meta_field — optional: which meta field to show as badge (e.g. "role_in_scene", "significance")
+#}
+
+{% if reverse_links is defined and reverse_links|length > 0 %}
+<div class="appears-in">
+    <div class="appears-in-header">{{ reverse_label }}</div>
+    <div class="appears-in-list">
+        {% for item in reverse_links %}
+        <a href="/browse?entity_type=scene&entity_id={{ item.entity_id }}"
+           class="appears-in-item">
+            <span class="appears-in-number">
+                {% if item.scene_number %}#{{ item.scene_number }}{% else %}—{% endif %}
+            </span>
+            <span class="appears-in-name">{{ item.entity_name }}</span>
+            {% if reverse_meta_field is defined and item.get(reverse_meta_field) %}
+            <span class="appears-in-badge">{{ item.get(reverse_meta_field) }}</span>
+            {% endif %}
+        </a>
+        {% endfor %}
+    </div>
+</div>
+{% elif reverse_links is defined %}
+<div class="appears-in">
+    <div class="appears-in-header">{{ reverse_label }}</div>
+    <div class="appears-in-empty">No linked scenes yet.</div>
+</div>
+{% endif %}
