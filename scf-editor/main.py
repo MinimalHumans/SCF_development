@@ -6,11 +6,12 @@ All routes are generic — entity types are resolved from the registry.
 """
 
 import json
+import shutil
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Form, HTTPException, Query
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi import FastAPI, Request, Form, HTTPException, Query, UploadFile, File
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -80,6 +81,8 @@ async def index(request: Request):
     if proj and (Path("projects") / proj).exists():
         return RedirectResponse("/browse", status_code=302)
     projects = db.list_projects()
+    for p in projects:
+        p["abs_path"] = str(Path(p["path"]).resolve())
     return templates.TemplateResponse("index.html", {
         "request": request,
         "projects": projects,
@@ -120,6 +123,44 @@ async def project_close():
     response = RedirectResponse("/", status_code=302)
     response.delete_cookie("scf_project")
     return response
+
+
+@app.post("/project/import")
+async def project_import(request: Request, file: UploadFile = File(...)):
+    """Import an existing .scf file into the projects folder."""
+    if not file.filename or not file.filename.endswith(".scf"):
+        projects = db.list_projects()
+        for p in projects:
+            p["abs_path"] = str(Path(p["path"]).resolve())
+        return templates.TemplateResponse("index.html", {
+            "request": request,
+            "projects": projects,
+            "error": "Please select a valid .scf file.",
+        })
+    dest = Path("projects") / file.filename
+    if dest.exists():
+        projects = db.list_projects()
+        for p in projects:
+            p["abs_path"] = str(Path(p["path"]).resolve())
+        return templates.TemplateResponse("index.html", {
+            "request": request,
+            "projects": projects,
+            "error": f"A project named '{file.filename}' already exists.",
+        })
+    with dest.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+    response = RedirectResponse("/browse", status_code=302)
+    response.set_cookie("scf_project", file.filename, max_age=86400 * 365)
+    return response
+
+
+@app.get("/project/download/{filename}")
+async def project_download(filename: str):
+    """Download a project .scf file."""
+    path = Path("projects") / filename
+    if not path.exists() or path.suffix != ".scf":
+        raise HTTPException(status_code=404, detail="Project file not found")
+    return FileResponse(path, filename=filename, media_type="application/octet-stream")
 
 
 @app.get("/browse", response_class=HTMLResponse)

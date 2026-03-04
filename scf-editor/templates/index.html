@@ -27,15 +27,31 @@
                 <button type="submit" class="btn btn-primary">Create</button>
             </form>
 
+            <div class="landing-section-label">Import Project</div>
+            <form action="/project/import" method="post" enctype="multipart/form-data" class="landing-create">
+                <label class="file-input-label">
+                    <input type="file" accept=".scf" name="file" id="import-file"
+                           onchange="document.getElementById('import-name').textContent = this.files[0]?.name ?? 'Choose .scf file…'">
+                    <span id="import-name">Choose .scf file…</span>
+                </label>
+                <button type="submit" class="btn btn-primary">Import</button>
+            </form>
+
             {% if projects %}
             <div class="landing-section-label">Existing Projects</div>
             <div class="landing-projects">
                 {% for p in projects %}
-                <a href="/project/open/{{ p.filename }}" class="project-item">
-                    <span class="icon">🎬</span>
-                    <span class="name">{{ p.display_name }}</span>
-                    <span class="meta">{{ p.filename }}</span>
-                </a>
+                <div class="project-item">
+                    <a href="/project/open/{{ p.filename }}" class="project-item-link">
+                        <span class="project-icon">🎬</span>
+                        <span class="project-info">
+                            <span class="project-name">{{ p.display_name }}</span>
+                            <span class="project-path" title="{{ p.abs_path }}">{{ p.abs_path }}</span>
+                        </span>
+                    </a>
+                    <a href="/project/download/{{ p.filename }}" class="btn btn-sm btn-icon project-download"
+                       title="Download {{ p.filename }}">&#8659;</a>
+                </div>
                 {% endfor %}
             </div>
             {% else %}
