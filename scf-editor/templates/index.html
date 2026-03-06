@@ -5,8 +5,48 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SCF Editor</title>
     <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .import-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(17, 17, 22, 0.85);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .import-overlay.active { display: flex; }
+        .import-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .import-overlay-text {
+            font-size: 15px;
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+        .import-overlay-detail {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+        }
+    </style>
 </head>
 <body>
+    <!-- Loading overlay for screenplay import -->
+    <div class="import-overlay" id="import-overlay">
+        <div class="import-spinner"></div>
+        <div class="import-overlay-text" id="import-overlay-text">Importing screenplay…</div>
+        <div class="import-overlay-detail" id="import-overlay-detail">Parsing scenes, characters, and props</div>
+    </div>
+
     <div class="landing">
         <div class="landing-card">
             <div class="landing-logo">SCF</div>
@@ -56,7 +96,9 @@
 
                 <!-- New Project from Fountain -->
                 <form id="fountain-new" action="/project/import-fountain" method="post"
-                      enctype="multipart/form-data" class="landing-create" style="flex-wrap: wrap; gap: 8px;">
+                      enctype="multipart/form-data" class="landing-create"
+                      style="flex-wrap: wrap; gap: 8px;"
+                      onsubmit="showImportOverlay(this)">
                     <label class="file-input-label" style="flex: 1; min-width: 200px;">
                         <input type="file" accept=".fountain" name="file"
                                onchange="this.closest('label').querySelector('span').textContent = this.files[0]?.name ?? 'Choose .fountain file…'">
@@ -70,7 +112,8 @@
                 <!-- Merge Fountain into Existing -->
                 <form id="fountain-merge" action="/project/merge-fountain" method="post"
                       enctype="multipart/form-data" class="landing-create hidden"
-                      style="flex-wrap: wrap; gap: 8px;">
+                      style="flex-wrap: wrap; gap: 8px;"
+                      onsubmit="showImportOverlay(this)">
                     <label class="file-input-label" style="flex: 1; min-width: 200px;">
                         <input type="file" accept=".fountain" name="file"
                                onchange="this.closest('label').querySelector('span').textContent = this.files[0]?.name ?? 'Choose .fountain file…'">
@@ -109,5 +152,45 @@
             {% endif %}
         </div>
     </div>
+
+    <script>
+    function showImportOverlay(form) {
+        const fileInput = form.querySelector('input[type="file"]');
+        if (!fileInput || !fileInput.files.length) return;
+
+        const fileName = fileInput.files[0].name;
+        const overlay = document.getElementById('import-overlay');
+        const text = document.getElementById('import-overlay-text');
+        const detail = document.getElementById('import-overlay-detail');
+
+        const isMerge = form.action.includes('merge');
+        text.textContent = isMerge
+            ? 'Merging screenplay…'
+            : 'Importing screenplay…';
+        detail.textContent = fileName;
+
+        overlay.classList.add('active');
+
+        // Cycle through status messages to show it's working
+        const messages = [
+            'Parsing scene headings and action lines',
+            'Extracting characters and descriptions',
+            'Detecting props from action text',
+            'Creating locations and linking scenes',
+            'Building scene-character relationships',
+            'Writing to SCF database',
+            'Almost done…',
+        ];
+        let msgIndex = 0;
+        const interval = setInterval(() => {
+            if (msgIndex < messages.length) {
+                detail.textContent = messages[msgIndex];
+                msgIndex++;
+            }
+        }, 2000);
+
+        window.addEventListener('beforeunload', () => clearInterval(interval));
+    }
+    </script>
 </body>
 </html>

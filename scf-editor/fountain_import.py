@@ -4,12 +4,16 @@ Fountain Import Orchestrator for SCF
 Takes parsed FountainData and writes it into an SCF project using
 the existing database CRUD layer. Supports both new project creation
 and merging into existing projects.
+
+Performance: uses a single database connection and transaction for
+all writes, avoiding the overhead of per-entity connection cycling.
 """
 
 from pathlib import Path
 from fountain_parser import parse as fountain_parse, FountainData
 
 import database as db
+from entity_registry import get_entity
 
 
 # Confidence → scene_prop significance mapping
@@ -56,12 +60,25 @@ def merge_into_project(fountain_text: str, db_path: Path) -> dict:
     return summary
 
 
+def _insert(conn, table: str, data: dict, entity_type: str) -> int:
+    """Insert a row using a shared connection (no open/close overhead)."""
+    entity_def = get_entity(entity_type)
+    valid_fields = {f.name for f in entity_def.fields}
+    filtered = {k: v for k, v in data.items() if k in valid_fields and v is not None and v != ""}
+    if not filtered:
+        return -1
+    cols = ", ".join(filtered.keys())
+    placeholders = ", ".join(["?"] * len(filtered))
+    values = list(filtered.values())
+    cursor = conn.execute(
+        f"INSERT INTO {entity_type} ({cols}) VALUES ({placeholders})", values
+    )
+    return cursor.lastrowid
+
+
 def _write_to_project(data: FountainData, db_path: Path, merge: bool = False) -> dict:
     """
-    Core write logic. Creates locations, characters, scenes, props,
-    and all junction records.
-
-    When merge=True, skips entities whose names already exist.
+    Core write logic. Uses a SINGLE connection and transaction for all writes.
     """
     summary = {
         "locations": {"created": 0, "skipped": 0},
@@ -72,236 +89,207 @@ def _write_to_project(data: FountainData, db_path: Path, merge: bool = False) ->
         "scene_props": {"created": 0},
     }
 
-    # ── Build existing name lookups for merge dedup ──
-    existing_locations = {}   # lowercase name → id
-    existing_characters = {}
-    existing_scenes = {}
-    existing_props = {}
+    conn = db.get_connection(db_path)
+    try:
+        # ── Build existing name lookups for merge dedup ──
+        existing_locations = {}
+        existing_characters = {}
+        existing_scenes = {}
+        existing_props = {}
 
-    if merge:
-        for item in db.list_entities(db_path, "location"):
-            existing_locations[item["name"].lower()] = item["id"]
-        for item in db.list_entities(db_path, "character"):
-            existing_characters[item["name"].lower()] = item["id"]
-        for item in db.list_entities(db_path, "scene"):
-            existing_scenes[item["name"].lower()] = item["id"]
-        for item in db.list_entities(db_path, "prop"):
-            existing_props[item["name"].lower()] = item["id"]
+        if merge:
+            for row in conn.execute("SELECT id, name FROM location").fetchall():
+                existing_locations[row["name"].lower()] = row["id"]
+            for row in conn.execute("SELECT id, name FROM character").fetchall():
+                existing_characters[row["name"].lower()] = row["id"]
+            for row in conn.execute("SELECT id, name FROM scene").fetchall():
+                existing_scenes[row["name"].lower()] = row["id"]
+            for row in conn.execute("SELECT id, name FROM prop").fetchall():
+                existing_props[row["name"].lower()] = row["id"]
 
-    # ═══════════════════════════════════════════════════════════════════
-    # 1. Create Locations
-    # ═══════════════════════════════════════════════════════════════════
-    location_id_map = {}  # fountain location name (lowercase) → SCF id
+        # ═════════════════════════════════════════════════════════════
+        # 1. Locations
+        # ═════════════════════════════════════════════════════════════
+        location_id_map = {}
 
-    for loc in data.locations:
-        key = loc.name.lower()
-
-        if key in existing_locations:
-            location_id_map[key] = existing_locations[key]
-            summary["locations"]["skipped"] += 1
-            continue
-
-        loc_data = {"name": loc.name}
-
-        # Infer location_type from raw headings
-        has_int = any("INT" in h.upper().split('.')[0] for h in loc.raw_headings)
-        has_ext = any("EXT" in h.upper().split('.')[0] for h in loc.raw_headings)
-        if has_int and has_ext:
-            loc_data["location_type"] = "Int/Ext"
-        elif has_int:
-            loc_data["location_type"] = "Interior"
-        elif has_ext:
-            loc_data["location_type"] = "Exterior"
-
-        loc_id = db.create_entity(db_path, "location", loc_data)
-        location_id_map[key] = loc_id
-        existing_locations[key] = loc_id
-        summary["locations"]["created"] += 1
-
-    # ═══════════════════════════════════════════════════════════════════
-    # 2. Create Characters
-    # ═══════════════════════════════════════════════════════════════════
-    character_id_map = {}  # fountain character name (lowercase) → SCF id
-
-    for char in data.characters:
-        key = char.name.lower()
-
-        if key in existing_characters:
-            character_id_map[key] = existing_characters[key]
-            summary["characters"]["skipped"] += 1
-            continue
-
-        char_data = {"name": char.name}
-
-        if char.description:
-            char_data["summary"] = char.description
-
-        if char.hair:
-            char_data["hair"] = char.hair
-
-        char_id = db.create_entity(db_path, "character", char_data)
-        character_id_map[key] = char_id
-        existing_characters[key] = char_id
-        summary["characters"]["created"] += 1
-
-    # ═══════════════════════════════════════════════════════════════════
-    # 3. Create Scenes
-    # ═══════════════════════════════════════════════════════════════════
-    scene_id_map = {}  # fountain scene index (0-based) → SCF id
-
-    for scene in data.scenes:
-        scene_key = scene.name.lower()
-
-        if scene_key in existing_scenes:
-            scene_id_map[scene.scene_number - 1] = existing_scenes[scene_key]
-            summary["scenes"]["skipped"] += 1
-            continue
-
-        scene_data = {
-            "name": scene.name,
-            "scene_number": scene.scene_number,
-        }
-
-        # Link to location
-        loc_key = scene.location_name.lower()
-        if loc_key in location_id_map:
-            scene_data["location_id"] = location_id_map[loc_key]
-
-        # INT/EXT on scene (the new field from our plan)
-        if scene.int_ext:
-            scene_data["int_ext"] = scene.int_ext
-
-        # Time of day
-        if scene.time_of_day:
-            scene_data["time_of_day"] = scene.time_of_day
-
-        # Summary from action text
-        if scene.summary:
-            # Truncate to reasonable length for the textarea field
-            scene_data["summary"] = scene.summary[:2000]
-
-        scene_id = db.create_entity(db_path, "scene", scene_data)
-        scene_id_map[scene.scene_number - 1] = scene_id
-        existing_scenes[scene_key] = scene_id
-        summary["scenes"]["created"] += 1
-
-    # ═══════════════════════════════════════════════════════════════════
-    # 4. Create Props
-    # ═══════════════════════════════════════════════════════════════════
-    prop_id_map = {}  # fountain prop name (lowercase) → SCF id
-
-    for prop in data.props:
-        key = prop.name.lower()
-
-        if key in existing_props:
-            prop_id_map[key] = existing_props[key]
-            summary["props"]["skipped"] += 1
-            continue
-
-        prop_data = {
-            "name": prop.name,
-        }
-
-        # Store context as narrative significance
-        if prop.context:
-            prop_data["narrative_significance"] = prop.context[:500]
-
-        # Store first appearance info
-        if prop.first_scene < len(data.scenes):
-            scene_name = data.scenes[prop.first_scene].name
-            prop_data["first_appearance"] = f"Scene {prop.first_scene + 1}: {scene_name}"
-
-        prop_id = db.create_entity(db_path, "prop", prop_data)
-        prop_id_map[key] = prop_id
-        existing_props[key] = prop_id
-        summary["props"]["created"] += 1
-
-    # ═══════════════════════════════════════════════════════════════════
-    # 5. Create Scene-Character junction records
-    # ═══════════════════════════════════════════════════════════════════
-    for scene in data.scenes:
-        scene_idx = scene.scene_number - 1
-        scene_id = scene_id_map.get(scene_idx)
-        if not scene_id:
-            continue
-
-        for sc_link in scene.characters:
-            char_key = sc_link.name.lower()
-            char_id = character_id_map.get(char_key)
-            if not char_id:
+        for loc in data.locations:
+            key = loc.name.lower()
+            if key in existing_locations:
+                location_id_map[key] = existing_locations[key]
+                summary["locations"]["skipped"] += 1
                 continue
 
-            # Check for existing junction (avoid duplicates on merge)
-            if merge:
-                conn = db.get_connection(db_path)
-                try:
-                    existing = conn.execute(
-                        "SELECT id FROM scene_character WHERE scene_id = ? AND character_id = ?",
-                        (scene_id, char_id)
-                    ).fetchone()
-                    if existing:
-                        continue
-                finally:
-                    conn.close()
+            loc_data = {"name": loc.name}
+            has_int = any("INT" in h.upper().split('.')[0] for h in loc.raw_headings)
+            has_ext = any("EXT" in h.upper().split('.')[0] for h in loc.raw_headings)
+            if has_int and has_ext:
+                loc_data["location_type"] = "Int/Ext"
+            elif has_int:
+                loc_data["location_type"] = "Interior"
+            elif has_ext:
+                loc_data["location_type"] = "Exterior"
+
+            loc_id = _insert(conn, "location", loc_data, "location")
+            location_id_map[key] = loc_id
+            existing_locations[key] = loc_id
+            summary["locations"]["created"] += 1
+
+        # ═════════════════════════════════════════════════════════════
+        # 2. Characters
+        # ═════════════════════════════════════════════════════════════
+        character_id_map = {}
+
+        for char in data.characters:
+            key = char.name.lower()
+            if key in existing_characters:
+                character_id_map[key] = existing_characters[key]
+                summary["characters"]["skipped"] += 1
+                continue
+
+            char_data = {"name": char.name}
+            if char.description:
+                char_data["summary"] = char.description
+            if char.hair:
+                char_data["hair"] = char.hair
+
+            char_id = _insert(conn, "character", char_data, "character")
+            character_id_map[key] = char_id
+            existing_characters[key] = char_id
+            summary["characters"]["created"] += 1
+
+        # ═════════════════════════════════════════════════════════════
+        # 3. Scenes
+        # ═════════════════════════════════════════════════════════════
+        scene_id_map = {}
+
+        for scene in data.scenes:
+            scene_key = scene.name.lower()
+            if scene_key in existing_scenes:
+                scene_id_map[scene.scene_number - 1] = existing_scenes[scene_key]
+                summary["scenes"]["skipped"] += 1
+                continue
+
+            scene_data = {
+                "name": scene.name,
+                "scene_number": scene.scene_number,
+            }
+            loc_key = scene.location_name.lower()
+            if loc_key in location_id_map:
+                scene_data["location_id"] = location_id_map[loc_key]
+            if scene.int_ext:
+                scene_data["int_ext"] = scene.int_ext
+            if scene.time_of_day:
+                scene_data["time_of_day"] = scene.time_of_day
+            if scene.summary:
+                scene_data["summary"] = scene.summary[:2000]
+
+            scene_id = _insert(conn, "scene", scene_data, "scene")
+            scene_id_map[scene.scene_number - 1] = scene_id
+            existing_scenes[scene_key] = scene_id
+            summary["scenes"]["created"] += 1
+
+        # ═════════════════════════════════════════════════════════════
+        # 4. Props
+        # ═════════════════════════════════════════════════════════════
+        prop_id_map = {}
+
+        for prop in data.props:
+            key = prop.name.lower()
+            if key in existing_props:
+                prop_id_map[key] = existing_props[key]
+                summary["props"]["skipped"] += 1
+                continue
+
+            prop_data = {"name": prop.name}
+            if prop.context:
+                prop_data["narrative_significance"] = prop.context[:500]
+            if prop.first_scene < len(data.scenes):
+                scene_name = data.scenes[prop.first_scene].name
+                prop_data["first_appearance"] = f"Scene {prop.first_scene + 1}: {scene_name}"
+
+            prop_id = _insert(conn, "prop", prop_data, "prop")
+            prop_id_map[key] = prop_id
+            existing_props[key] = prop_id
+            summary["props"]["created"] += 1
+
+        # ═════════════════════════════════════════════════════════════
+        # 5. Scene-Character junctions
+        # ═════════════════════════════════════════════════════════════
+        # Build set of existing junctions for merge dedup
+        existing_sc_junctions = set()
+        if merge:
+            for row in conn.execute("SELECT scene_id, character_id FROM scene_character").fetchall():
+                existing_sc_junctions.add((row["scene_id"], row["character_id"]))
+
+        for scene in data.scenes:
+            scene_idx = scene.scene_number - 1
+            scene_id = scene_id_map.get(scene_idx)
+            if not scene_id:
+                continue
+
+            for sc_link in scene.characters:
+                char_key = sc_link.name.lower()
+                char_id = character_id_map.get(char_key)
+                if not char_id:
+                    continue
+
+                if (scene_id, char_id) in existing_sc_junctions:
+                    continue
+
+                junction_data = {
+                    "scene_id": scene_id,
+                    "character_id": char_id,
+                    "name": "",
+                }
+                if sc_link.parentheticals:
+                    junction_data["notes"] = "; ".join(sc_link.parentheticals)
+                if len(scene.characters) <= 3:
+                    junction_data["role_in_scene"] = "Featured"
+                else:
+                    junction_data["role_in_scene"] = "Supporting"
+
+                _insert(conn, "scene_character", junction_data, "scene_character")
+                existing_sc_junctions.add((scene_id, char_id))
+                summary["scene_characters"]["created"] += 1
+
+        # ═════════════════════════════════════════════════════════════
+        # 6. Scene-Prop junctions
+        # ═════════════════════════════════════════════════════════════
+        existing_sp_junctions = set()
+        if merge:
+            for row in conn.execute("SELECT scene_id, prop_id FROM scene_prop").fetchall():
+                existing_sp_junctions.add((row["scene_id"], row["prop_id"]))
+
+        for prop in data.props:
+            prop_key = prop.name.lower()
+            prop_id = prop_id_map.get(prop_key)
+            if not prop_id:
+                continue
+
+            scene_idx = prop.first_scene
+            scene_id = scene_id_map.get(scene_idx)
+            if not scene_id:
+                continue
+
+            if (scene_id, prop_id) in existing_sp_junctions:
+                continue
 
             junction_data = {
                 "scene_id": scene_id,
-                "character_id": char_id,
-                "name": "",  # auto-named by main.py
+                "prop_id": prop_id,
+                "name": "",
+                "significance": _CONFIDENCE_TO_SIGNIFICANCE.get(prop.confidence, "Present"),
             }
 
-            # Store parentheticals as notes
-            if sc_link.parentheticals:
-                junction_data["notes"] = "; ".join(sc_link.parentheticals)
+            _insert(conn, "scene_prop", junction_data, "scene_prop")
+            existing_sp_junctions.add((scene_id, prop_id))
+            summary["scene_props"]["created"] += 1
 
-            # Default role: Featured if few characters in scene, Supporting otherwise
-            if len(scene.characters) <= 3:
-                junction_data["role_in_scene"] = "Featured"
-            else:
-                junction_data["role_in_scene"] = "Supporting"
+        # ── Commit everything in one transaction ──
+        conn.commit()
 
-            db.create_entity(db_path, "scene_character", junction_data)
-            summary["scene_characters"]["created"] += 1
-
-    # ═══════════════════════════════════════════════════════════════════
-    # 6. Create Scene-Prop junction records
-    # ═══════════════════════════════════════════════════════════════════
-    # Build a reverse map: prop name → list of scenes it appears in
-    # (from the action text scanning done by the parser)
-    for prop in data.props:
-        prop_key = prop.name.lower()
-        prop_id = prop_id_map.get(prop_key)
-        if not prop_id:
-            continue
-
-        # Link to the first scene where the prop was detected
-        scene_idx = prop.first_scene
-        scene_id = scene_id_map.get(scene_idx)
-        if not scene_id:
-            continue
-
-        # Check for existing junction on merge
-        if merge:
-            conn = db.get_connection(db_path)
-            try:
-                existing = conn.execute(
-                    "SELECT id FROM scene_prop WHERE scene_id = ? AND prop_id = ?",
-                    (scene_id, prop_id)
-                ).fetchone()
-                if existing:
-                    continue
-            finally:
-                conn.close()
-
-        junction_data = {
-            "scene_id": scene_id,
-            "prop_id": prop_id,
-            "name": "",
-            "significance": _CONFIDENCE_TO_SIGNIFICANCE.get(prop.confidence, "Present"),
-        }
-
-        db.create_entity(db_path, "scene_prop", junction_data)
-        summary["scene_props"]["created"] += 1
+    finally:
+        conn.close()
 
     return summary
 
