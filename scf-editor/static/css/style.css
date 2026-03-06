@@ -369,14 +369,33 @@ a:hover { color: var(--accent-hover); }
 
 /* -- Left Panel: Tree ------------------------------------------------------ */
 .panel-tree {
-    width: 280px;
+    width: 560px;
     min-width: 220px;
-    max-width: 400px;
+    max-width: 800px;
     background: var(--bg-surface);
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    position: relative;
+}
+
+/* -- Resize handle for panel-tree ------------------------------------------ */
+.panel-resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 5px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 5;
+    background: transparent;
+    transition: background 150ms ease;
+}
+.panel-resize-handle:hover,
+.panel-resize-handle.dragging {
+    background: var(--accent);
+    opacity: 0.5;
 }
 
 .tree-scroll {

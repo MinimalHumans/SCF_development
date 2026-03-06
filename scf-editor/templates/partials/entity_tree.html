@@ -7,7 +7,7 @@
     {% set td = tree_data.get(edef.name, {"records": [], "count": 0}) %}
     <div class="tree-entity-group" data-entity-type="{{ edef.name }}">
 
-        <div class="tree-group-header"
+        <div class="tree-group-header collapsed"
              onclick="toggleTreeGroup(this)">
             <span class="chevron">▼</span>
             <span class="icon">{{ edef.icon }}</span>
@@ -23,7 +23,7 @@
             </form>
         </div>
 
-        <div class="tree-items" id="tree-items-{{ edef.name }}">
+        <div class="tree-items collapsed" id="tree-items-{{ edef.name }}">
             {% for item in td.records %}
             <a href="/browse?entity_type={{ edef.name }}&entity_id={{ item.id }}"
                class="tree-item {% if selected_type == edef.name and selected_id == item.id %}active{% endif %}"

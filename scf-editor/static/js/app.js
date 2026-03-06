@@ -3,6 +3,55 @@
    Minimal JS for tree toggling, tab switching, and htmx integration.
    ========================================================================== */
 
+// =============================================================================
+// Tree collapse state persistence
+// =============================================================================
+
+const TREE_STATE_KEY = 'scf-tree-collapse-state';
+
+function getTreeState() {
+    try {
+        return JSON.parse(localStorage.getItem(TREE_STATE_KEY)) || {};
+    } catch { return {}; }
+}
+
+function saveTreeState() {
+    const state = {};
+    document.querySelectorAll('.tree-group-header').forEach(header => {
+        const group = header.closest('.tree-entity-group');
+        if (group) {
+            const type = group.dataset.entityType;
+            if (type) {
+                state[type] = header.classList.contains('collapsed');
+            }
+        }
+    });
+    localStorage.setItem(TREE_STATE_KEY, JSON.stringify(state));
+}
+
+function applyTreeState() {
+    const state = getTreeState();
+    const hasState = Object.keys(state).length > 0;
+
+    document.querySelectorAll('.tree-entity-group').forEach(group => {
+        const type = group.dataset.entityType;
+        const header = group.querySelector('.tree-group-header');
+        const items = group.querySelector('.tree-items');
+        if (!header || !items) return;
+
+        // If we have saved state, use it; otherwise default to collapsed
+        const shouldCollapse = hasState ? (state[type] !== false) : true;
+
+        if (shouldCollapse) {
+            header.classList.add('collapsed');
+            items.classList.add('collapsed');
+        } else {
+            header.classList.remove('collapsed');
+            items.classList.remove('collapsed');
+        }
+    });
+}
+
 // -- Tree toggling -----------------------------------------------------------
 
 function toggleTreeGroup(header) {
@@ -10,6 +59,7 @@ function toggleTreeGroup(header) {
     if (!items) return;
     header.classList.toggle('collapsed');
     items.classList.toggle('collapsed');
+    saveTreeState();
 }
 
 // -- Tab switching -----------------------------------------------------------
@@ -60,7 +110,10 @@ function refreshTree() {
         .then(r => r.text())
         .then(html => {
             const scroll = document.querySelector('.tree-scroll');
-            if (scroll) scroll.innerHTML = html;
+            if (scroll) {
+                scroll.innerHTML = html;
+                applyTreeState();
+            }
         });
 }
 
@@ -112,9 +165,60 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // -- Apply saved tree collapse state --
+    applyTreeState();
+
     // -- Init link panels on page load --
     initLinkPanels();
+
+    // -- Init panel resize --
+    initPanelResize();
 });
+
+// =============================================================================
+// Panel Resize (draggable tree panel width)
+// =============================================================================
+
+function initPanelResize() {
+    const panel = document.querySelector('.panel-tree');
+    if (!panel) return;
+
+    // Create resize handle
+    const handle = document.createElement('div');
+    handle.className = 'panel-resize-handle';
+    panel.appendChild(handle);
+
+    // Restore saved width
+    const savedWidth = localStorage.getItem('scf-panel-tree-width');
+    if (savedWidth) {
+        panel.style.width = savedWidth + 'px';
+    }
+
+    let startX, startWidth;
+
+    handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        startX = e.clientX;
+        startWidth = panel.getBoundingClientRect().width;
+        handle.classList.add('dragging');
+
+        const onMouseMove = (e) => {
+            const newWidth = Math.max(220, Math.min(800, startWidth + (e.clientX - startX)));
+            panel.style.width = newWidth + 'px';
+        };
+
+        const onMouseUp = () => {
+            handle.classList.remove('dragging');
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+            // Save width
+            localStorage.setItem('scf-panel-tree-width', panel.getBoundingClientRect().width);
+        };
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    });
+}
 
 // =============================================================================
 // Inline Relationship Link Panels
@@ -396,6 +500,10 @@ document.body.addEventListener('htmx:afterSwap', (e) => {
         }
         // Re-init link panels after form swap
         initLinkPanels();
+    }
+    // Re-apply tree state after any tree swap
+    if (e.detail.target.id === 'tree-panel' || e.detail.target.querySelector('.tree-scroll')) {
+        applyTreeState();
     }
 });
 
