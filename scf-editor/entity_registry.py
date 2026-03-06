@@ -288,6 +288,10 @@ register(EntityDef(
         FieldDef("name", "Scene Name / Slug", required=True,
                  placeholder="e.g. INT. COFFEE SHOP - MORNING"),
         FieldDef("scene_number", "Scene Number", "integer"),
+        # NEW: Int/Ext field for Fountain import (stores INT/EXT per-scene)
+        FieldDef("int_ext", "Int/Ext", "select", options=[
+            "Interior", "Exterior", "Int/Ext"
+        ]),
         FieldDef("location_id", "Location", "reference", reference_entity="location"),
         FieldDef("time_of_day", "Time of Day", "select", options=[
             "Dawn", "Morning", "Midday", "Afternoon", "Dusk", "Night", "Continuous"

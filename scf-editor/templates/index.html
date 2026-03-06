@@ -37,6 +37,55 @@
                 <button type="submit" class="btn btn-primary">Import</button>
             </form>
 
+            <div class="landing-section-label">Import from Screenplay</div>
+            <div style="margin-bottom: 32px;">
+                <div style="display: flex; gap: 12px; margin-bottom: 12px;">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="radio" name="fountain_mode" value="new" checked
+                               onchange="document.getElementById('fountain-new').classList.remove('hidden');
+                                         document.getElementById('fountain-merge').classList.add('hidden');">
+                        <span style="font-size: 13px; color: var(--text-secondary);">New project</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="radio" name="fountain_mode" value="merge"
+                               onchange="document.getElementById('fountain-merge').classList.remove('hidden');
+                                         document.getElementById('fountain-new').classList.add('hidden');">
+                        <span style="font-size: 13px; color: var(--text-secondary);">Merge into existing</span>
+                    </label>
+                </div>
+
+                <!-- New Project from Fountain -->
+                <form id="fountain-new" action="/project/import-fountain" method="post"
+                      enctype="multipart/form-data" class="landing-create" style="flex-wrap: wrap; gap: 8px;">
+                    <label class="file-input-label" style="flex: 1; min-width: 200px;">
+                        <input type="file" accept=".fountain" name="file"
+                               onchange="this.closest('label').querySelector('span').textContent = this.files[0]?.name ?? 'Choose .fountain file…'">
+                        <span>Choose .fountain file…</span>
+                    </label>
+                    <input type="text" name="project_name" placeholder="Project name (optional)"
+                           style="flex: 1; min-width: 150px;">
+                    <button type="submit" class="btn btn-primary">Import</button>
+                </form>
+
+                <!-- Merge Fountain into Existing -->
+                <form id="fountain-merge" action="/project/merge-fountain" method="post"
+                      enctype="multipart/form-data" class="landing-create hidden"
+                      style="flex-wrap: wrap; gap: 8px;">
+                    <label class="file-input-label" style="flex: 1; min-width: 200px;">
+                        <input type="file" accept=".fountain" name="file"
+                               onchange="this.closest('label').querySelector('span').textContent = this.files[0]?.name ?? 'Choose .fountain file…'">
+                        <span>Choose .fountain file…</span>
+                    </label>
+                    <select name="target_project" style="flex: 1; min-width: 150px;">
+                        <option value="">Select target project…</option>
+                        {% for p in projects %}
+                        <option value="{{ p.filename }}">{{ p.display_name }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="btn btn-primary">Merge</button>
+                </form>
+            </div>
+
             {% if projects %}
             <div class="landing-section-label">Existing Projects</div>
             <div class="landing-projects">

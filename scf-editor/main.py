@@ -20,6 +20,7 @@ from entity_registry import (
 )
 import database as db
 import queries
+import fountain_import
 
 
 # =============================================================================
@@ -744,6 +745,86 @@ def _query_links(conn, parent_type: str, parent_id: int, link_type: str) -> list
         return [{"link_id": None, **dict(r)} for r in rows]
 
     return []
+
+
+# =============================================================================
+# Fountain Screenplay Import
+# =============================================================================
+
+@app.post("/project/import-fountain")
+async def project_import_fountain(
+    request: Request,
+    file: UploadFile = File(...),
+    project_name: str = Form(""),
+):
+    """Import a .fountain screenplay as a new SCF project."""
+    if not file.filename or not file.filename.endswith(".fountain"):
+        projects = db.list_projects()
+        for p in projects:
+            p["abs_path"] = str(Path(p["path"]).resolve())
+        return templates.TemplateResponse("index.html", {
+            "request": request,
+            "projects": projects,
+            "error": "Please select a valid .fountain file.",
+        })
+
+    content = await file.read()
+    text = content.decode("utf-8", errors="replace")
+
+    # Use filename as project name if none provided
+    if not project_name.strip():
+        project_name = file.filename.rsplit(".", 1)[0].replace("-", " ").replace("_", " ").title()
+
+    try:
+        db_path, summary = fountain_import.import_as_new_project(text, project_name)
+    except FileExistsError:
+        projects = db.list_projects()
+        for p in projects:
+            p["abs_path"] = str(Path(p["path"]).resolve())
+        return templates.TemplateResponse("index.html", {
+            "request": request,
+            "projects": projects,
+            "error": f"Project '{project_name}' already exists.",
+        })
+
+    response = RedirectResponse("/browse", status_code=302)
+    response.set_cookie("scf_project", db_path.name, max_age=86400 * 365)
+    msg = fountain_import.format_summary(summary)
+    response.set_cookie("import_summary", msg, max_age=30)
+    return response
+
+
+@app.post("/project/merge-fountain")
+async def project_merge_fountain(
+    request: Request,
+    file: UploadFile = File(...),
+    target_project: str = Form(...),
+):
+    """Merge a .fountain screenplay into an existing SCF project."""
+    if not file.filename or not file.filename.endswith(".fountain"):
+        projects = db.list_projects()
+        for p in projects:
+            p["abs_path"] = str(Path(p["path"]).resolve())
+        return templates.TemplateResponse("index.html", {
+            "request": request,
+            "projects": projects,
+            "error": "Please select a valid .fountain file.",
+        })
+
+    target_path = Path("projects") / target_project
+    if not target_path.exists():
+        raise HTTPException(status_code=404, detail="Target project not found")
+
+    content = await file.read()
+    text = content.decode("utf-8", errors="replace")
+
+    summary = fountain_import.merge_into_project(text, target_path)
+
+    response = RedirectResponse("/browse", status_code=302)
+    response.set_cookie("scf_project", target_project, max_age=86400 * 365)
+    msg = fountain_import.format_summary(summary)
+    response.set_cookie("import_summary", msg, max_age=30)
+    return response
 
 
 # =============================================================================
