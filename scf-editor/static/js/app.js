@@ -65,12 +65,10 @@ function toggleTreeGroup(header) {
 // -- Tab switching -----------------------------------------------------------
 
 function switchTab(btn, tabId) {
-    // Deactivate all tabs
     const tabBar = btn.closest('.tab-bar');
     tabBar.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active'));
     btn.classList.add('active');
 
-    // Show/hide tab content
     const editor = btn.closest('.entity-editor');
     editor.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
     const target = editor.querySelector(`#tab-${tabId}`);
@@ -87,13 +85,8 @@ function deleteEntity(entityType, entityId) {
         headers: { 'HX-Request': 'true' },
     }).then(resp => {
         if (resp.ok) {
-            // Check for redirect
             const redirect = resp.headers.get('HX-Redirect');
-            if (redirect) {
-                window.location.href = redirect;
-            } else {
-                window.location.href = '/browse';
-            }
+            window.location.href = redirect || '/browse';
         }
     });
 }
@@ -101,7 +94,6 @@ function deleteEntity(entityType, entityId) {
 // -- Refresh tree after save -------------------------------------------------
 
 function refreshTree() {
-    // Get current selection from URL
     const params = new URLSearchParams(window.location.search);
     const type = params.get('entity_type');
     const id = params.get('entity_id');
@@ -117,71 +109,18 @@ function refreshTree() {
         });
 }
 
-// -- Search dropdown visibility ----------------------------------------------
-
-document.addEventListener('DOMContentLoaded', () => {
-    const searchInput = document.querySelector('.search-box input');
-    const dropdown = document.getElementById('search-dropdown');
-
-    if (searchInput && dropdown) {
-        // Show dropdown when results arrive
-        const observer = new MutationObserver(() => {
-            if (dropdown.innerHTML.trim()) {
-                dropdown.classList.remove('hidden');
-            }
-        });
-        observer.observe(dropdown, { childList: true, subtree: true });
-
-        // Hide dropdown when clicking outside
-        document.addEventListener('click', (e) => {
-            if (!e.target.closest('.search-box')) {
-                dropdown.classList.add('hidden');
-            }
-        });
-
-        // Show dropdown on focus if it has content
-        searchInput.addEventListener('focus', () => {
-            if (dropdown.innerHTML.trim() && searchInput.value.length >= 2) {
-                dropdown.classList.remove('hidden');
-            }
-        });
-
-        // Clear and hide on escape
-        searchInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                searchInput.value = '';
-                dropdown.classList.add('hidden');
-                dropdown.innerHTML = '';
-            }
-        });
-    }
-
-    // -- Keyboard shortcut: Ctrl/Cmd + K for search --------------------------
-    document.addEventListener('keydown', (e) => {
-        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-            e.preventDefault();
-            const si = document.querySelector('.search-box input');
-            if (si) { si.focus(); si.select(); }
-        }
-    });
-
-    // -- Apply saved tree collapse state --
-    applyTreeState();
-
-    // -- Init link panels on page load --
-    initLinkPanels();
-
-    // -- Init panel resize --
-    initPanelResize();
-});
-
 // =============================================================================
 // Panel Resize (draggable tree panel width)
 // =============================================================================
 
+const PANEL_WIDTH_KEY = 'scf-panel-tree-width';
+
 function initPanelResize() {
     const panel = document.querySelector('.panel-tree');
     if (!panel) return;
+
+    // Don't double-init
+    if (panel.querySelector('.panel-resize-handle')) return;
 
     // Create resize handle
     const handle = document.createElement('div');
@@ -189,7 +128,7 @@ function initPanelResize() {
     panel.appendChild(handle);
 
     // Restore saved width
-    const savedWidth = localStorage.getItem('scf-panel-tree-width');
+    const savedWidth = localStorage.getItem(PANEL_WIDTH_KEY);
     if (savedWidth) {
         panel.style.width = savedWidth + 'px';
     }
@@ -201,6 +140,8 @@ function initPanelResize() {
         startX = e.clientX;
         startWidth = panel.getBoundingClientRect().width;
         handle.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
 
         const onMouseMove = (e) => {
             const newWidth = Math.max(220, Math.min(800, startWidth + (e.clientX - startX)));
@@ -209,14 +150,66 @@ function initPanelResize() {
 
         const onMouseUp = () => {
             handle.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
             document.removeEventListener('mousemove', onMouseMove);
             document.removeEventListener('mouseup', onMouseUp);
-            // Save width
-            localStorage.setItem('scf-panel-tree-width', panel.getBoundingClientRect().width);
+            localStorage.setItem(PANEL_WIDTH_KEY, Math.round(panel.getBoundingClientRect().width));
         };
 
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup', onMouseUp);
+    });
+}
+
+// =============================================================================
+// Search dropdown
+// =============================================================================
+
+function initSearch() {
+    const searchInput = document.querySelector('.search-box input');
+    const dropdown = document.getElementById('search-dropdown');
+    if (!searchInput || !dropdown) return;
+
+    const observer = new MutationObserver(() => {
+        if (dropdown.innerHTML.trim()) {
+            dropdown.classList.remove('hidden');
+        }
+    });
+    observer.observe(dropdown, { childList: true, subtree: true });
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.search-box')) {
+            dropdown.classList.add('hidden');
+        }
+    });
+
+    searchInput.addEventListener('focus', () => {
+        if (dropdown.innerHTML.trim() && searchInput.value.length >= 2) {
+            dropdown.classList.remove('hidden');
+        }
+    });
+
+    searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            searchInput.value = '';
+            dropdown.classList.add('hidden');
+            dropdown.innerHTML = '';
+        }
+    });
+}
+
+// =============================================================================
+// Keyboard shortcuts
+// =============================================================================
+
+function initKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+            e.preventDefault();
+            const si = document.querySelector('.search-box input');
+            if (si) { si.focus(); si.select(); }
+        }
     });
 }
 
@@ -239,7 +232,6 @@ function initLinkPanels() {
         let highlightIndex = -1;
         let currentResults = [];
 
-        // -- Debounced autocomplete search --
         input.addEventListener('input', () => {
             clearTimeout(debounceTimer);
             const q = input.value.trim();
@@ -258,7 +250,6 @@ function initLinkPanels() {
             }, 200);
         });
 
-        // -- Keyboard navigation --
         input.addEventListener('keydown', (e) => {
             const items = dropdown.querySelectorAll('.link-autocomplete-item');
             if (e.key === 'ArrowDown') {
@@ -274,7 +265,6 @@ function initLinkPanels() {
                 if (highlightIndex >= 0 && highlightIndex < items.length) {
                     items[highlightIndex].click();
                 } else if (input.value.trim()) {
-                    // No match selected — create new entity + link
                     createAndLink(input.value.trim());
                 }
             } else if (e.key === 'Escape') {
@@ -283,7 +273,6 @@ function initLinkPanels() {
             }
         });
 
-        // -- Hide dropdown on outside click --
         document.addEventListener('click', (e) => {
             if (!e.target.closest('.link-search')) {
                 hideDropdown();
@@ -306,7 +295,6 @@ function initLinkPanels() {
                         ${escapeHtml(r.name)}
                     </div>`).join('');
 
-                // Always show "create new" option at bottom if query doesn't exactly match
                 const exactMatch = results.some(r => r.name.toLowerCase() === query.toLowerCase());
                 if (!exactMatch && query) {
                     html += `
@@ -318,7 +306,6 @@ function initLinkPanels() {
                 dropdown.innerHTML = html;
             }
 
-            // Bind click handlers
             dropdown.querySelectorAll('.link-autocomplete-item').forEach(item => {
                 item.addEventListener('click', () => {
                     if (item.dataset.createName) {
@@ -394,7 +381,6 @@ function initLinkPanels() {
             if (isOrder) {
                 metaHtml = `<input type="number" class="link-chip-order" value="" placeholder="#" title="Order" min="1" step="1">`;
             } else {
-                // Get meta options from existing chip or from the panel config
                 const existingSelect = panel.querySelector('.link-chip-meta');
                 let options = '<option value="">' + (metaField === 'role_in_scene' ? 'Role' : metaField === 'significance' ? 'Significance' : 'Meta') + '</option>';
                 if (existingSelect) {
@@ -402,7 +388,6 @@ function initLinkPanels() {
                         if (opt.value) options += `<option value="${opt.value}">${opt.textContent}</option>`;
                     });
                 } else {
-                    // Hardcoded fallback based on junction type
                     const optMap = {
                         'scene-character': ['Featured', 'Supporting', 'Background', 'Mentioned', 'Voiceover'],
                         'scene-prop': ['Key', 'Present', 'Background', 'Mentioned'],
@@ -426,7 +411,6 @@ function initLinkPanels() {
             bindChipEvents(chip, junctionType, metaField);
         }
 
-        // -- Bind events on server-rendered chips --
         panel.querySelectorAll('.link-chip').forEach(chip => {
             bindChipEvents(chip, junctionType, metaField);
         });
@@ -436,7 +420,6 @@ function initLinkPanels() {
 function bindChipEvents(chip, junctionType, metaField) {
     const linkId = chip.dataset.linkId;
 
-    // Meta dropdown change
     const metaSelect = chip.querySelector('.link-chip-meta');
     if (metaSelect) {
         metaSelect.addEventListener('change', () => {
@@ -448,7 +431,6 @@ function bindChipEvents(chip, junctionType, metaField) {
         });
     }
 
-    // Order input change
     const orderInput = chip.querySelector('.link-chip-order');
     if (orderInput) {
         let orderDebounce = null;
@@ -465,7 +447,6 @@ function bindChipEvents(chip, junctionType, metaField) {
         });
     }
 
-    // Remove button
     const removeBtn = chip.querySelector('.link-chip-remove');
     if (removeBtn) {
         removeBtn.addEventListener('click', () => {
@@ -490,21 +471,16 @@ function escapeHtml(str) {
 
 // -- HTMX events -------------------------------------------------------------
 
-// After any htmx swap in the editor, re-initialize save indicator fade and link panels
 document.body.addEventListener('htmx:afterSwap', (e) => {
     if (e.detail.target.id === 'editor-panel') {
-        // Show toast on save
         const ind = document.getElementById('save-indicator');
         if (ind && ind.classList.contains('show')) {
             showToast('Changes saved');
         }
-        // Re-init link panels after form swap
         initLinkPanels();
     }
-    // Re-apply tree state after any tree swap
-    if (e.detail.target.id === 'tree-panel' || e.detail.target.querySelector('.tree-scroll')) {
-        applyTreeState();
-    }
+    // Re-apply tree state after any tree refresh
+    applyTreeState();
 });
 
 function showToast(message) {
@@ -514,3 +490,13 @@ function showToast(message) {
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 2500);
 }
+
+// =============================================================================
+// INIT — called immediately (script is at bottom of <body>, DOM is ready)
+// =============================================================================
+
+applyTreeState();
+initPanelResize();
+initSearch();
+initKeyboardShortcuts();
+initLinkPanels();
