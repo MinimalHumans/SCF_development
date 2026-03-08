@@ -859,16 +859,6 @@ select option {
    ========================================================================== */
 
 /* -- Page layout ---------------------------------------------------------- */
-.query-page {
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-}
-
-.query-page .app-header {
-    flex-shrink: 0;
-}
-
 .query-main {
     flex: 1;
     overflow-y: auto;
