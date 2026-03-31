@@ -465,3 +465,70 @@
     from { opacity: 1; }
     to   { opacity: 0; }
 }
+
+
+/* --- Screenplay Autocomplete Dropdown ------------------------------------ */
+
+.screenplay-autocomplete {
+    position: fixed;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    max-height: 240px;
+    overflow-y: auto;
+    z-index: 100;
+    min-width: 200px;
+    max-width: 400px;
+}
+
+.screenplay-autocomplete.hidden {
+    display: none;
+}
+
+.screenplay-ac-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-primary);
+    transition: background 0.1s;
+}
+
+.screenplay-ac-item:hover,
+.screenplay-ac-item.highlighted {
+    background: var(--bg-hover);
+}
+
+.screenplay-ac-item.highlighted {
+    background: var(--accent-subtle);
+    color: var(--text-accent);
+}
+
+.screenplay-ac-icon {
+    font-size: 12px;
+    flex-shrink: 0;
+}
+
+.screenplay-ac-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.screenplay-ac-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    flex-shrink: 0;
+}
+
+.screenplay-ac-new {
+    font-size: 11px;
+    color: var(--success);
+    font-style: italic;
+    padding: 6px 12px;
+}

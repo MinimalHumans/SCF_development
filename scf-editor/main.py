@@ -162,7 +162,6 @@ async def project_create(request: Request, project_name: str = Form(...)):
     """Create a new project."""
     try:
         db_path = db.create_project(project_name)
-        # Cookie stores the directory name (parent of the .scf file)
         dir_name = db_path.parent.name
         response = RedirectResponse("/browse", status_code=302)
         response.set_cookie("scf_project", dir_name, max_age=86400 * 365)
@@ -180,13 +179,11 @@ async def project_create(request: Request, project_name: str = Form(...)):
 
 @app.get("/project/open/{filename}")
 async def project_open(filename: str):
-    """Open an existing project (auto-migrates tables for new entity types).
-    filename is the project directory name."""
+    """Open an existing project. filename is the project directory name."""
     project_dir = Path("projects") / filename
     scf_path = project_dir / f"{filename}.scf"
     if not project_dir.exists() or not scf_path.exists():
         raise HTTPException(status_code=404, detail="Project not found")
-    # Auto-migrate: ensures new entity tables (e.g. junction tables) exist
     db.init_database(scf_path)
     response = RedirectResponse("/browse", status_code=302)
     response.set_cookie("scf_project", filename, max_age=86400 * 365)
@@ -214,7 +211,6 @@ async def project_import(request: Request, file: UploadFile = File(...)):
             "error": "Please select a valid .scf file.",
         })
     dir_name = file.filename.rsplit(".", 1)[0]
-    # Sanitize same as get_db_path
     dir_name = "".join(c for c in dir_name if c.isalnum() or c in " -_").strip()
     dir_name = dir_name.replace(" ", "_").lower()
     project_dir = Path("projects") / dir_name
@@ -251,22 +247,16 @@ async def browse(request: Request, entity_type: str = None, entity_id: int = Non
     """Main two-panel browser view."""
     db_path = _require_project(request)
 
-    # Build tree data: counts per entity type
     tree_data = {}
     for name, edef in get_all_entities().items():
         if name == "project":
             continue
         try:
             items = db.list_entities(db_path, name)
-            tree_data[name] = {
-                "def": edef,
-                "records": items,
-                "count": len(items),
-            }
+            tree_data[name] = {"def": edef, "records": items, "count": len(items)}
         except Exception:
             tree_data[name] = {"def": edef, "records": [], "count": 0}
 
-    # Selected entity data
     selected = None
     selected_def = None
     if entity_type and entity_id:
@@ -274,7 +264,6 @@ async def browse(request: Request, entity_type: str = None, entity_id: int = Non
         if selected_def:
             selected = db.get_entity_by_id(db_path, entity_type, entity_id)
 
-    # Reference field resolution (populate dropdowns for reference fields)
     reference_options = {}
     if selected_def:
         for f in selected_def.fields:
@@ -287,13 +276,11 @@ async def browse(request: Request, entity_type: str = None, entity_id: int = Non
                         for item in ref_items
                     ]
 
-    # Linked entities data for inline relationship panels
     linked_data = {}
     reverse_links = []
     if entity_type and entity_id:
         linked_data, reverse_links = _get_relationship_data(db_path, entity_type, entity_id)
 
-    # Get project info
     project_info = db.list_entities(db_path, "project", limit=1)
     project_name = project_info[0]["name"] if project_info else "Untitled"
 
@@ -312,6 +299,521 @@ async def browse(request: Request, entity_type: str = None, entity_id: int = Non
 
 
 # =============================================================================
+# Screenplay Editor — Page Routes
+# =============================================================================
+
+@app.get("/screenplay", response_class=HTMLResponse)
+async def screenplay_page(request: Request):
+    """Screenplay Editor page."""
+    db_path = _require_project(request)
+    proj = _get_current_project(request)
+    project_dir = Path("projects") / proj
+
+    fountain_files = list(project_dir.glob("*.fountain"))
+    has_fountain = len(fountain_files) > 0
+
+    project_info = db.list_entities(db_path, "project", limit=1)
+    project_name = project_info[0]["name"] if project_info else "Untitled"
+
+    return templates.TemplateResponse("screenplay.html", _add_template_context(
+        request,
+        has_fountain=has_fountain,
+        project_name=project_name,
+    ))
+
+
+@app.post("/project/import-fountain-into-current")
+async def project_import_fountain_into_current(
+    request: Request,
+    file: UploadFile = File(...),
+):
+    """Import a .fountain file into the current project (no new project created)."""
+    if not file.filename or not file.filename.endswith(".fountain"):
+        return RedirectResponse("/screenplay", status_code=302)
+
+    db_path = _require_project(request)
+    proj = _get_current_project(request)
+    project_dir = Path("projects") / proj
+
+    content = await file.read()
+    text = content.decode("utf-8", errors="replace")
+
+    data = fountain_parse(text)
+    summary, anchor_maps = fountain_import._write_to_project(
+        data, db_path, merge=True, fountain_text=text
+    )
+
+    anchored_text = text
+    if anchor_maps:
+        scene_map, char_map, loc_map = anchor_maps
+        anchored_text = fountain_anchors.inject_anchors(
+            text, scene_map, char_map, loc_map
+        )
+
+    fountain_dest = project_dir / f"{proj}.fountain"
+    fountain_dest.write_text(anchored_text, encoding="utf-8")
+
+    response = RedirectResponse("/screenplay", status_code=302)
+    return response
+
+
+@app.post("/project/create-fountain")
+async def project_create_fountain(request: Request):
+    """Create a blank .fountain file in the current project directory."""
+    db_path = _require_project(request)
+    proj = _get_current_project(request)
+    project_dir = Path("projects") / proj
+
+    project_info = db.list_entities(db_path, "project", limit=1)
+    project_name = project_info[0]["name"] if project_info else "Untitled"
+
+    today = date.today().strftime("%Y-%m-%d")
+    blank_fountain = f"""Title: {project_name}
+Author:
+Draft date: {today}
+
+EXT. LOCATION - DAY
+
+Action description.
+
+CHARACTER
+Dialogue.
+"""
+
+    fountain_dest = project_dir / f"{proj}.fountain"
+    fountain_dest.write_text(blank_fountain, encoding="utf-8")
+
+    conn = db.get_connection(db_path)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO screenplay_meta (id, fountain_path, title) VALUES (1, ?, ?)",
+            (str(fountain_dest), project_name)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    response = RedirectResponse("/screenplay", status_code=302)
+    return response
+
+
+# =============================================================================
+# Screenplay Editor — API Routes
+# IMPORTANT: These MUST be defined BEFORE the generic CRUD routes below,
+# otherwise FastAPI matches /api/screenplay/save as PUT /api/{entity_type}/{entity_id}
+# with entity_type="screenplay" and entity_id="save" (→ 422).
+# =============================================================================
+
+@app.get("/api/screenplay/load")
+async def api_screenplay_load(request: Request):
+    """Load the .fountain file for editing — anchors stripped for clean display."""
+    proj = _get_current_project(request)
+    if not proj:
+        raise HTTPException(status_code=400, detail="No project selected")
+    project_dir = Path("projects") / proj
+    db_path = _require_project(request)
+
+    fountain_files = list(project_dir.glob("*.fountain"))
+    if not fountain_files:
+        return JSONResponse({"has_fountain": False})
+
+    raw_text = fountain_files[0].read_text(encoding="utf-8")
+    clean_text = fountain_anchors.strip_anchors(raw_text)
+
+    title = ""
+    author = ""
+    conn = db.get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT title, author FROM screenplay_meta WHERE id = 1"
+        ).fetchone()
+        if row:
+            title = row["title"] or ""
+            author = row["author"] or ""
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+    return JSONResponse({
+        "has_fountain": True,
+        "text": clean_text,
+        "title": title,
+        "author": author,
+    })
+
+
+@app.put("/api/screenplay/save")
+async def api_screenplay_save(request: Request):
+    """Save editor content back to .fountain file, re-injecting anchors."""
+    proj = _get_current_project(request)
+    if not proj:
+        raise HTTPException(status_code=400, detail="No project selected")
+    project_dir = Path("projects") / proj
+
+    fountain_files = list(project_dir.glob("*.fountain"))
+    if not fountain_files:
+        raise HTTPException(status_code=404, detail="No fountain file to save to")
+
+    fountain_path = fountain_files[0]
+    body = await request.json()
+    new_text = body.get("text", "")
+
+    old_text = fountain_path.read_text(encoding="utf-8")
+    reanchored = _reanchor_text(old_text, new_text)
+
+    fountain_path.write_text(reanchored, encoding="utf-8")
+
+    db_path = _require_project(request)
+    sync_report = fountain_sync.sync(db_path, fountain_path)
+
+    return JSONResponse({
+        "success": True,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "sync": sync_report.to_dict(),
+    })
+
+
+@app.get("/api/screenplay/scenes")
+async def api_screenplay_scenes(request: Request):
+    """Return scene list parsed from the stripped fountain text."""
+    proj = _get_current_project(request)
+    if not proj:
+        raise HTTPException(status_code=400, detail="No project selected")
+    project_dir = Path("projects") / proj
+    db_path = _require_project(request)
+
+    fountain_files = list(project_dir.glob("*.fountain"))
+    if not fountain_files:
+        return JSONResponse([])
+
+    raw_text = fountain_files[0].read_text(encoding="utf-8")
+    stripped = fountain_anchors.strip_anchors(raw_text)
+    lines = stripped.splitlines()
+
+    conn = db.get_connection(db_path)
+    scene_map_by_heading = {}
+    try:
+        for row in conn.execute("SELECT scene_id, heading_text, scene_order FROM screenplay_scene_map WHERE in_screenplay = 1").fetchall():
+            key = row["heading_text"].lower() if row["heading_text"] else ""
+            scene_map_by_heading.setdefault(key, []).append({
+                "scene_id": row["scene_id"], "scene_order": row["scene_order"]
+            })
+        for entries in scene_map_by_heading.values():
+            entries.sort(key=lambda e: e["scene_order"] or 0)
+    finally:
+        conn.close()
+
+    scenes = []
+    heading_counters = {}
+
+    for i, line in enumerate(lines):
+        stripped_line = line.strip()
+        match = _match_scene_heading(stripped_line) if stripped_line else None
+        if match:
+            heading_lower = stripped_line.lower()
+            occ = heading_counters.get(heading_lower, 0)
+            heading_counters[heading_lower] = occ + 1
+
+            int_ext_raw, loc_part, time_part = match
+            from fountain_parser import _INT_EXT_MAP, _TIME_MAP
+            int_ext = _INT_EXT_MAP.get(int_ext_raw.upper().rstrip("."), "")
+            time_of_day = _TIME_MAP.get(time_part.upper(), time_part.title()) if time_part else ""
+
+            scene_id = None
+            entries = scene_map_by_heading.get(heading_lower)
+            if entries and occ < len(entries):
+                scene_id = entries[occ]["scene_id"]
+
+            scenes.append({
+                "scene_number": len(scenes) + 1,
+                "name": stripped_line,
+                "line_number": i,
+                "character_count": 0,
+                "characters": [],
+                "int_ext": int_ext,
+                "time_of_day": time_of_day,
+                "scene_id": scene_id,
+            })
+
+    for s_idx, scene in enumerate(scenes):
+        start = scene["line_number"] + 1
+        end = scenes[s_idx + 1]["line_number"] if s_idx + 1 < len(scenes) else len(lines)
+        chars_in_scene = set()
+        prev_blank = True
+        for j in range(start, end):
+            l = lines[j].strip()
+            if l == "":
+                prev_blank = True
+                continue
+            if prev_blank and l and _is_character_cue(l):
+                char_name = _CHAR_EXTENSION_RE.sub('', l).strip()
+                if '(' in char_name:
+                    char_name = re.sub(r'\([^)]*\)', '', char_name).strip()
+                    char_name = re.sub(r'\s{2,}', ' ', char_name)
+                if char_name:
+                    chars_in_scene.add(char_name.upper())
+            prev_blank = (l == "")
+        scene["character_count"] = len(chars_in_scene)
+        scene["characters"] = sorted(chars_in_scene)
+
+    return JSONResponse(scenes)
+
+
+@app.get("/api/screenplay/characters")
+async def api_screenplay_characters(request: Request):
+    """Return character list with scene counts and entity links."""
+    proj = _get_current_project(request)
+    if not proj:
+        raise HTTPException(status_code=400, detail="No project selected")
+    project_dir = Path("projects") / proj
+    db_path = _require_project(request)
+
+    fountain_files = list(project_dir.glob("*.fountain"))
+    if not fountain_files:
+        return JSONResponse([])
+
+    raw_text = fountain_files[0].read_text(encoding="utf-8")
+    stripped = fountain_anchors.strip_anchors(raw_text)
+    lines = stripped.splitlines()
+
+    char_scenes = {}
+    current_scene = -1
+    prev_blank = True
+    for i, line in enumerate(lines):
+        stripped_line = line.strip()
+        if stripped_line == "":
+            prev_blank = True
+            continue
+        if _match_scene_heading(stripped_line):
+            current_scene += 1
+            prev_blank = False
+            continue
+        if prev_blank and stripped_line and _is_character_cue(stripped_line):
+            char_name = _CHAR_EXTENSION_RE.sub('', stripped_line).strip()
+            if '(' in char_name:
+                char_name = re.sub(r'\([^)]*\)', '', char_name).strip()
+                char_name = re.sub(r'\s{2,}', ' ', char_name)
+            if char_name and current_scene >= 0:
+                upper = char_name.upper()
+                char_scenes.setdefault(upper, set()).add(current_scene)
+        prev_blank = (stripped_line == "")
+
+    conn = db.get_connection(db_path)
+    try:
+        char_map = {}
+        for row in conn.execute(
+            """SELECT cm.text_name, cm.character_id, c.name
+               FROM screenplay_character_map cm
+               LEFT JOIN character c ON cm.character_id = c.id"""
+        ).fetchall():
+            char_map[row["text_name"].upper()] = {
+                "character_id": row["character_id"],
+                "display_name": row["name"] or row["text_name"].title(),
+            }
+    finally:
+        conn.close()
+
+    result = []
+    for upper_name, scene_set in char_scenes.items():
+        mapped = char_map.get(upper_name)
+        result.append({
+            "name": upper_name,
+            "display_name": mapped["display_name"] if mapped else upper_name.title(),
+            "scene_count": len(scene_set),
+            "character_id": mapped["character_id"] if mapped else None,
+            "is_mapped": mapped is not None,
+        })
+
+    result.sort(key=lambda x: x["scene_count"], reverse=True)
+    return JSONResponse(result)
+
+
+@app.get("/api/screenplay/locations")
+async def api_screenplay_locations(request: Request):
+    """Return location list with scene counts and entity links."""
+    proj = _get_current_project(request)
+    if not proj:
+        raise HTTPException(status_code=400, detail="No project selected")
+    project_dir = Path("projects") / proj
+    db_path = _require_project(request)
+
+    fountain_files = list(project_dir.glob("*.fountain"))
+    if not fountain_files:
+        return JSONResponse([])
+
+    raw_text = fountain_files[0].read_text(encoding="utf-8")
+    stripped = fountain_anchors.strip_anchors(raw_text)
+    lines = stripped.splitlines()
+
+    loc_scenes = {}
+    scene_idx = -1
+    for line in lines:
+        stripped_line = line.strip()
+        match = _match_scene_heading(stripped_line) if stripped_line else None
+        if match:
+            scene_idx += 1
+            _, loc_part, _ = match
+            loc_key = loc_part.strip().lower()
+            if loc_key:
+                loc_scenes.setdefault(loc_key, set()).add(scene_idx)
+
+    conn = db.get_connection(db_path)
+    try:
+        loc_map = {}
+        for row in conn.execute(
+            """SELECT lm.text_name, lm.location_id, l.name
+               FROM screenplay_location_map lm
+               LEFT JOIN location l ON lm.location_id = l.id"""
+        ).fetchall():
+            loc_map[row["text_name"].lower()] = {
+                "location_id": row["location_id"],
+                "display_name": row["name"] or row["text_name"].title(),
+            }
+    finally:
+        conn.close()
+
+    result = []
+    for loc_key, scene_set in loc_scenes.items():
+        mapped = loc_map.get(loc_key)
+        result.append({
+            "name": mapped["display_name"] if mapped else loc_key.title(),
+            "scene_count": len(scene_set),
+            "location_id": mapped["location_id"] if mapped else None,
+            "is_mapped": mapped is not None,
+        })
+
+    result.sort(key=lambda x: x["scene_count"], reverse=True)
+    return JSONResponse(result)
+
+
+@app.get("/api/screenplay/export")
+async def api_screenplay_export(request: Request):
+    """Download a clean .fountain file with all anchors stripped."""
+    proj = _get_current_project(request)
+    if not proj:
+        raise HTTPException(status_code=400, detail="No project selected")
+    project_dir = Path("projects") / proj
+    db_path = _require_project(request)
+
+    fountain_files = list(project_dir.glob("*.fountain"))
+    if not fountain_files:
+        raise HTTPException(status_code=404, detail="No fountain file found")
+
+    raw_text = fountain_files[0].read_text(encoding="utf-8")
+    clean_text = fountain_anchors.strip_anchors(raw_text)
+
+    project_info = db.list_entities(db_path, "project", limit=1)
+    project_name = project_info[0]["name"] if project_info else proj
+
+    safe_name = "".join(c for c in project_name if c.isalnum() or c in " -_").strip()
+    safe_name = safe_name.replace(" ", "_") or proj
+
+    return PlainTextResponse(
+        clean_text,
+        media_type="text/plain",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}.fountain"',
+        },
+    )
+
+@app.get("/api/screenplay/autocomplete-characters")
+async def api_screenplay_autocomplete_characters(request: Request, q: str = Query("")):
+    """Autocomplete character names from mapping table and character entities."""
+    if not q or len(q) < 2:
+        return JSONResponse([])
+    db_path = _require_project(request)
+
+    conn = db.get_connection(db_path)
+    try:
+        results = {}  # name_upper -> dict
+
+        # Search screenplay_character_map
+        for row in conn.execute(
+            """SELECT cm.text_name, cm.character_id, c.name AS display_name
+               FROM screenplay_character_map cm
+               LEFT JOIN character c ON cm.character_id = c.id
+               WHERE cm.text_name LIKE ? COLLATE NOCASE
+               LIMIT 10""",
+            (f"{q}%",)
+        ).fetchall():
+            key = row["text_name"].upper()
+            results[key] = {
+                "name": key,
+                "display_name": row["display_name"] or row["text_name"].title(),
+                "character_id": row["character_id"],
+                "is_mapped": True,
+            }
+
+        # Search character table for unmapped characters
+        for row in conn.execute(
+            """SELECT id, name FROM character
+               WHERE upper(name) LIKE ? COLLATE NOCASE
+               LIMIT 10""",
+            (f"{q}%",)
+        ).fetchall():
+            key = row["name"].upper()
+            if key not in results:
+                results[key] = {
+                    "name": key,
+                    "display_name": row["name"],
+                    "character_id": row["id"],
+                    "is_mapped": False,
+                }
+
+        return JSONResponse(list(results.values())[:8])
+    finally:
+        conn.close()
+
+
+@app.get("/api/screenplay/autocomplete-locations")
+async def api_screenplay_autocomplete_locations(request: Request, q: str = Query("")):
+    """Autocomplete location names from mapping table and location entities."""
+    if not q or len(q) < 1:
+        return JSONResponse([])
+    db_path = _require_project(request)
+
+    conn = db.get_connection(db_path)
+    try:
+        results = {}  # name_lower -> dict
+
+        # Search screenplay_location_map
+        for row in conn.execute(
+            """SELECT lm.text_name, lm.location_id, l.name AS display_name
+               FROM screenplay_location_map lm
+               LEFT JOIN location l ON lm.location_id = l.id
+               WHERE lm.text_name LIKE ? COLLATE NOCASE
+               LIMIT 10""",
+            (f"%{q}%",)
+        ).fetchall():
+            key = row["text_name"].lower()
+            results[key] = {
+                "name": row["display_name"] or row["text_name"].title(),
+                "location_id": row["location_id"],
+                "is_mapped": True,
+            }
+
+        # Search location table for unmapped locations
+        for row in conn.execute(
+            """SELECT id, name FROM location
+               WHERE name LIKE ? COLLATE NOCASE
+               LIMIT 10""",
+            (f"%{q}%",)
+        ).fetchall():
+            key = row["name"].lower()
+            if key not in results:
+                results[key] = {
+                    "name": row["name"],
+                    "location_id": row["id"],
+                    "is_mapped": False,
+                }
+
+        return JSONResponse(list(results.values())[:8])
+    finally:
+        conn.close()
+
+
+# =============================================================================
 # HTMX Partial routes (for dynamic updates without full page reload)
 # =============================================================================
 
@@ -327,7 +829,6 @@ async def htmx_entity_form(request: Request, entity_type: str, entity_id: int):
     if not entity_data:
         raise HTTPException(status_code=404, detail="Entity not found")
 
-    # Resolve references
     reference_options = {}
     for f in entity_def.fields:
         if f.field_type == "reference" and f.reference_entity:
@@ -339,7 +840,6 @@ async def htmx_entity_form(request: Request, entity_type: str, entity_id: int):
                     for item in ref_items
                 ]
 
-    # Linked entities data
     linked_data, reverse_links = _get_relationship_data(db_path, entity_type, entity_id)
 
     return templates.TemplateResponse("partials/entity_form.html", {
@@ -378,7 +878,9 @@ async def htmx_tree(request: Request):
 
 
 # =============================================================================
-# API routes (CRUD)
+# API routes (CRUD) — Generic routes
+# NOTE: Screenplay-specific /api/screenplay/* routes are defined ABOVE
+# so they match before these generic wildcard routes.
 # =============================================================================
 
 @app.post("/api/{entity_type}")
@@ -392,7 +894,6 @@ async def api_create(request: Request, entity_type: str):
     form = await request.form()
     data = dict(form)
 
-    # Set a default name if not provided
     if entity_def.name_field not in data or not data[entity_def.name_field]:
         count = db.count_entities(db_path, entity_type)
         data[entity_def.name_field] = f"New {entity_def.label} {count + 1}"
@@ -400,7 +901,6 @@ async def api_create(request: Request, entity_type: str):
     new_id = db.create_entity(db_path, entity_type, data)
     _auto_name_junction(db_path, entity_type, new_id)
 
-    # If htmx request, redirect to browse
     if request.headers.get("HX-Request"):
         return HTMLResponse(
             status_code=200,
@@ -420,7 +920,6 @@ async def api_update(request: Request, entity_type: str, entity_id: int):
     form = await request.form()
     data = dict(form)
 
-    # Clean up empty strings for integer/float fields
     for f in entity_def.fields:
         if f.name in data:
             if f.field_type in ("integer", "float") and data[f.name] == "":
@@ -430,7 +929,6 @@ async def api_update(request: Request, entity_type: str, entity_id: int):
     _auto_name_junction(db_path, entity_type, entity_id)
 
     if request.headers.get("HX-Request"):
-        # Return updated form with a success indicator
         entity_data = db.get_entity_by_id(db_path, entity_type, entity_id)
         reference_options = {}
         for f in entity_def.fields:
@@ -505,7 +1003,6 @@ async def query_page(request: Request):
     """Query Explorer page."""
     db_path = _require_project(request)
 
-    # Load entity lists for dropdowns
     characters = db.list_entities(db_path, "character")
     locations = db.list_entities(db_path, "location")
     scenes = db.list_entities(db_path, "scene")
@@ -560,457 +1057,16 @@ async def api_query_project_stats(request: Request):
 
 
 # =============================================================================
-# Screenplay Editor
+# Anchor re-injection helper
 # =============================================================================
 
-@app.get("/screenplay", response_class=HTMLResponse)
-async def screenplay_page(request: Request):
-    """Screenplay Editor page."""
-    db_path = _require_project(request)
-    proj = _get_current_project(request)
-    project_dir = Path("projects") / proj
-
-    # Check for .fountain file
-    fountain_files = list(project_dir.glob("*.fountain"))
-    has_fountain = len(fountain_files) > 0
-
-    project_info = db.list_entities(db_path, "project", limit=1)
-    project_name = project_info[0]["name"] if project_info else "Untitled"
-
-    return templates.TemplateResponse("screenplay.html", _add_template_context(
-        request,
-        has_fountain=has_fountain,
-        project_name=project_name,
-    ))
-
-
-@app.post("/project/import-fountain-into-current")
-async def project_import_fountain_into_current(
-    request: Request,
-    file: UploadFile = File(...),
-):
-    """Import a .fountain file into the current project (no new project created)."""
-    if not file.filename or not file.filename.endswith(".fountain"):
-        return RedirectResponse("/screenplay", status_code=302)
-
-    db_path = _require_project(request)
-    proj = _get_current_project(request)
-    project_dir = Path("projects") / proj
-
-    content = await file.read()
-    text = content.decode("utf-8", errors="replace")
-
-    # Parse and write entities into the existing project (merge mode for safety)
-    data = fountain_parse(text)
-    summary, anchor_maps = fountain_import._write_to_project(
-        data, db_path, merge=True, fountain_text=text
-    )
-
-    # Inject anchors into the fountain text
-    anchored_text = text
-    if anchor_maps:
-        scene_map, char_map, loc_map = anchor_maps
-        anchored_text = fountain_anchors.inject_anchors(
-            text, scene_map, char_map, loc_map
-        )
-
-    # Save the anchored .fountain file into the project directory
-    fountain_dest = project_dir / f"{proj}.fountain"
-    fountain_dest.write_text(anchored_text, encoding="utf-8")
-
-    response = RedirectResponse("/screenplay", status_code=302)
-    return response
-
-
-@app.post("/project/create-fountain")
-async def project_create_fountain(request: Request):
-    """Create a blank .fountain file in the current project directory."""
-    db_path = _require_project(request)
-    proj = _get_current_project(request)
-    project_dir = Path("projects") / proj
-
-    project_info = db.list_entities(db_path, "project", limit=1)
-    project_name = project_info[0]["name"] if project_info else "Untitled"
-
-    today = date.today().strftime("%Y-%m-%d")
-    blank_fountain = f"""Title: {project_name}
-Author:
-Draft date: {today}
-
-EXT. LOCATION - DAY
-
-Action description.
-
-CHARACTER
-Dialogue.
-"""
-
-    fountain_dest = project_dir / f"{proj}.fountain"
-    fountain_dest.write_text(blank_fountain, encoding="utf-8")
-
-    # Create screenplay_meta record
-    conn = db.get_connection(db_path)
-    try:
-        conn.execute(
-            "INSERT OR REPLACE INTO screenplay_meta (id, fountain_path, title) VALUES (1, ?, ?)",
-            (str(fountain_dest), project_name)
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    response = RedirectResponse("/screenplay", status_code=302)
-    return response
-
-
-@app.get("/api/screenplay/load")
-async def api_screenplay_load(request: Request):
-    """Load the .fountain file for editing — anchors stripped for clean display."""
-    proj = _get_current_project(request)
-    if not proj:
-        raise HTTPException(status_code=400, detail="No project selected")
-    project_dir = Path("projects") / proj
-    db_path = _require_project(request)
-
-    fountain_files = list(project_dir.glob("*.fountain"))
-    if not fountain_files:
-        return JSONResponse({"has_fountain": False})
-
-    raw_text = fountain_files[0].read_text(encoding="utf-8")
-    clean_text = fountain_anchors.strip_anchors(raw_text)
-
-    # Read screenplay_meta for title/author
-    title = ""
-    author = ""
-    conn = db.get_connection(db_path)
-    try:
-        row = conn.execute(
-            "SELECT title, author FROM screenplay_meta WHERE id = 1"
-        ).fetchone()
-        if row:
-            title = row["title"] or ""
-            author = row["author"] or ""
-    except Exception:
-        pass
-    finally:
-        conn.close()
-
-    return JSONResponse({
-        "has_fountain": True,
-        "text": clean_text,
-        "title": title,
-        "author": author,
-    })
-
-
-@app.put("/api/screenplay/save")
-async def api_screenplay_save(request: Request):
-    """Save editor content back to .fountain file, re-injecting anchors."""
-    proj = _get_current_project(request)
-    if not proj:
-        raise HTTPException(status_code=400, detail="No project selected")
-    project_dir = Path("projects") / proj
-
-    fountain_files = list(project_dir.glob("*.fountain"))
-    if not fountain_files:
-        raise HTTPException(status_code=404, detail="No fountain file to save to")
-
-    fountain_path = fountain_files[0]
-    body = await request.json()
-    new_text = body.get("text", "")
-
-    # Read existing file to extract current anchors
-    old_text = fountain_path.read_text(encoding="utf-8")
-    reanchored = _reanchor_text(old_text, new_text)
-
-    fountain_path.write_text(reanchored, encoding="utf-8")
-
-    # Run sync engine — parse screenplay and update database
-    db_path = _require_project(request)
-    sync_report = fountain_sync.sync(db_path, fountain_path)
-
-    return JSONResponse({
-        "success": True,
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "sync": sync_report.to_dict(),
-    })
-
-
-@app.get("/api/screenplay/scenes")
-async def api_screenplay_scenes(request: Request):
-    """Return scene list parsed from the stripped fountain text."""
-    proj = _get_current_project(request)
-    if not proj:
-        raise HTTPException(status_code=400, detail="No project selected")
-    project_dir = Path("projects") / proj
-    db_path = _require_project(request)
-
-    fountain_files = list(project_dir.glob("*.fountain"))
-    if not fountain_files:
-        return JSONResponse([])
-
-    raw_text = fountain_files[0].read_text(encoding="utf-8")
-    stripped = fountain_anchors.strip_anchors(raw_text)
-    lines = stripped.splitlines()
-
-    # Load scene_map for scene_id lookup
-    conn = db.get_connection(db_path)
-    scene_map_by_heading = {}  # heading_lower -> [{"scene_id": N, "scene_order": M}]
-    try:
-        for row in conn.execute("SELECT scene_id, heading_text, scene_order FROM screenplay_scene_map WHERE in_screenplay = 1").fetchall():
-            key = row["heading_text"].lower() if row["heading_text"] else ""
-            scene_map_by_heading.setdefault(key, []).append({
-                "scene_id": row["scene_id"], "scene_order": row["scene_order"]
-            })
-        # Sort by scene_order
-        for entries in scene_map_by_heading.values():
-            entries.sort(key=lambda e: e["scene_order"] or 0)
-    finally:
-        conn.close()
-
-    # Scan stripped text for scene headings
-    scenes = []
-    heading_counters = {}  # heading_lower -> occurrence index
-
-    for i, line in enumerate(lines):
-        stripped_line = line.strip()
-        match = _match_scene_heading(stripped_line) if stripped_line else None
-        if match:
-            heading_lower = stripped_line.lower()
-            occ = heading_counters.get(heading_lower, 0)
-            heading_counters[heading_lower] = occ + 1
-
-            int_ext_raw, loc_part, time_part = match
-            from fountain_parser import _INT_EXT_MAP, _TIME_MAP
-            int_ext = _INT_EXT_MAP.get(int_ext_raw.upper().rstrip("."), "")
-            time_of_day = _TIME_MAP.get(time_part.upper(), time_part.title()) if time_part else ""
-
-            # Lookup scene_id
-            scene_id = None
-            entries = scene_map_by_heading.get(heading_lower)
-            if entries and occ < len(entries):
-                scene_id = entries[occ]["scene_id"]
-
-            scenes.append({
-                "scene_number": len(scenes) + 1,
-                "name": stripped_line,
-                "line_number": i,
-                "character_count": 0,  # filled below
-                "characters": [],      # filled below
-                "int_ext": int_ext,
-                "time_of_day": time_of_day,
-                "scene_id": scene_id,
-            })
-
-    # Count characters per scene by scanning between headings
-    for s_idx, scene in enumerate(scenes):
-        start = scene["line_number"] + 1
-        end = scenes[s_idx + 1]["line_number"] if s_idx + 1 < len(scenes) else len(lines)
-        chars_in_scene = set()
-        prev_blank = True
-        for j in range(start, end):
-            l = lines[j].strip()
-            if l == "":
-                prev_blank = True
-                continue
-            if prev_blank and l and _is_character_cue(l):
-                char_name = _CHAR_EXTENSION_RE.sub('', l).strip()
-                if '(' in char_name:
-                    char_name = re.sub(r'\([^)]*\)', '', char_name).strip()
-                    char_name = re.sub(r'\s{2,}', ' ', char_name)
-                if char_name:
-                    chars_in_scene.add(char_name.upper())
-            prev_blank = (l == "")
-        scene["character_count"] = len(chars_in_scene)
-        scene["characters"] = sorted(chars_in_scene)
-
-    return JSONResponse(scenes)
-
-
-@app.get("/api/screenplay/characters")
-async def api_screenplay_characters(request: Request):
-    """Return character list with scene counts and entity links."""
-    proj = _get_current_project(request)
-    if not proj:
-        raise HTTPException(status_code=400, detail="No project selected")
-    project_dir = Path("projects") / proj
-    db_path = _require_project(request)
-
-    fountain_files = list(project_dir.glob("*.fountain"))
-    if not fountain_files:
-        return JSONResponse([])
-
-    raw_text = fountain_files[0].read_text(encoding="utf-8")
-    stripped = fountain_anchors.strip_anchors(raw_text)
-    lines = stripped.splitlines()
-
-    # Scan the stripped text for character cues and count scenes per character
-    # character_name_upper -> set of scene_indices
-    char_scenes = {}
-    current_scene = -1
-    prev_blank = True
-    for i, line in enumerate(lines):
-        stripped_line = line.strip()
-        if stripped_line == "":
-            prev_blank = True
-            continue
-        if _match_scene_heading(stripped_line):
-            current_scene += 1
-            prev_blank = False
-            continue
-        if prev_blank and stripped_line and _is_character_cue(stripped_line):
-            char_name = _CHAR_EXTENSION_RE.sub('', stripped_line).strip()
-            if '(' in char_name:
-                char_name = re.sub(r'\([^)]*\)', '', char_name).strip()
-                char_name = re.sub(r'\s{2,}', ' ', char_name)
-            if char_name and current_scene >= 0:
-                upper = char_name.upper()
-                char_scenes.setdefault(upper, set()).add(current_scene)
-        prev_blank = (stripped_line == "")
-
-    # Load character mappings from DB
-    conn = db.get_connection(db_path)
-    try:
-        char_map = {}  # text_name_upper -> {character_id, display_name}
-        for row in conn.execute(
-            """SELECT cm.text_name, cm.character_id, c.name
-               FROM screenplay_character_map cm
-               LEFT JOIN character c ON cm.character_id = c.id"""
-        ).fetchall():
-            char_map[row["text_name"].upper()] = {
-                "character_id": row["character_id"],
-                "display_name": row["name"] or row["text_name"].title(),
-            }
-    finally:
-        conn.close()
-
-    result = []
-    for upper_name, scene_set in char_scenes.items():
-        mapped = char_map.get(upper_name)
-        result.append({
-            "name": upper_name,
-            "display_name": mapped["display_name"] if mapped else upper_name.title(),
-            "scene_count": len(scene_set),
-            "character_id": mapped["character_id"] if mapped else None,
-            "is_mapped": mapped is not None,
-        })
-
-    # Sort by scene_count descending
-    result.sort(key=lambda x: x["scene_count"], reverse=True)
-    return JSONResponse(result)
-
-
-@app.get("/api/screenplay/locations")
-async def api_screenplay_locations(request: Request):
-    """Return location list with scene counts and entity links."""
-    proj = _get_current_project(request)
-    if not proj:
-        raise HTTPException(status_code=400, detail="No project selected")
-    project_dir = Path("projects") / proj
-    db_path = _require_project(request)
-
-    fountain_files = list(project_dir.glob("*.fountain"))
-    if not fountain_files:
-        return JSONResponse([])
-
-    raw_text = fountain_files[0].read_text(encoding="utf-8")
-    stripped = fountain_anchors.strip_anchors(raw_text)
-    lines = stripped.splitlines()
-
-    # Scan for locations from scene headings
-    loc_scenes = {}  # loc_name_lower -> set of scene indices
-    scene_idx = -1
-    for line in lines:
-        stripped_line = line.strip()
-        match = _match_scene_heading(stripped_line) if stripped_line else None
-        if match:
-            scene_idx += 1
-            _, loc_part, _ = match
-            loc_key = loc_part.strip().lower()
-            if loc_key:
-                loc_scenes.setdefault(loc_key, set()).add(scene_idx)
-
-    # Load location mappings
-    conn = db.get_connection(db_path)
-    try:
-        loc_map = {}  # text_name_lower -> {location_id, display_name}
-        for row in conn.execute(
-            """SELECT lm.text_name, lm.location_id, l.name
-               FROM screenplay_location_map lm
-               LEFT JOIN location l ON lm.location_id = l.id"""
-        ).fetchall():
-            loc_map[row["text_name"].lower()] = {
-                "location_id": row["location_id"],
-                "display_name": row["name"] or row["text_name"].title(),
-            }
-    finally:
-        conn.close()
-
-    result = []
-    for loc_key, scene_set in loc_scenes.items():
-        mapped = loc_map.get(loc_key)
-        result.append({
-            "name": mapped["display_name"] if mapped else loc_key.title(),
-            "scene_count": len(scene_set),
-            "location_id": mapped["location_id"] if mapped else None,
-            "is_mapped": mapped is not None,
-        })
-
-    result.sort(key=lambda x: x["scene_count"], reverse=True)
-    return JSONResponse(result)
-
-
-@app.get("/api/screenplay/export")
-async def api_screenplay_export(request: Request):
-    """Download a clean .fountain file with all anchors stripped."""
-    proj = _get_current_project(request)
-    if not proj:
-        raise HTTPException(status_code=400, detail="No project selected")
-    project_dir = Path("projects") / proj
-    db_path = _require_project(request)
-
-    fountain_files = list(project_dir.glob("*.fountain"))
-    if not fountain_files:
-        raise HTTPException(status_code=404, detail="No fountain file found")
-
-    raw_text = fountain_files[0].read_text(encoding="utf-8")
-    clean_text = fountain_anchors.strip_anchors(raw_text)
-
-    # Get project name for the filename
-    project_info = db.list_entities(db_path, "project", limit=1)
-    project_name = project_info[0]["name"] if project_info else proj
-
-    # Sanitise for filename
-    safe_name = "".join(c for c in project_name if c.isalnum() or c in " -_").strip()
-    safe_name = safe_name.replace(" ", "_") or proj
-
-    return PlainTextResponse(
-        clean_text,
-        media_type="text/plain",
-        headers={
-            "Content-Disposition": f'attachment; filename="{safe_name}.fountain"',
-        },
-    )
-
-
 def _reanchor_text(old_text: str, new_text: str) -> str:
-    """Re-inject anchors from old_text into new_text by matching content lines.
-
-    Strategy: build a map of anchor_tag → associated clean content from the old
-    file, then scan the new text for matching lines and re-attach the anchors.
-    Scene heading anchors match by heading text; character anchors match by
-    character cue name.
-    """
-    # Build mapping: for each line in old_text that has anchors, record
-    # { anchor_tag: clean_line_content_stripped }
+    """Re-inject anchors from old_text into new_text by matching content lines."""
     old_lines = old_text.splitlines()
     anchor_re = fountain_anchors._SCF_ANCHOR_RE
 
-    # For scene headings: collect (clean_heading_lower, [anchor_tags_on_line])
-    # grouped by heading text to handle repeated headings in order
-    heading_anchors = {}   # clean_heading_lower -> [ [tag1, tag2], [tag1, tag2], ... ]
-    # For character cues: collect (CHAR_NAME_UPPER, anchor_tag) — first occurrence per scene
-    char_anchors = {}      # CHAR_NAME_UPPER -> tag  (keep last mapping)
+    heading_anchors = {}
+    char_anchors = {}
 
     prev_blank = True
     for line in old_lines:
@@ -1023,19 +1079,16 @@ def _reanchor_text(old_text: str, new_text: str) -> str:
         tags = [f"[[scf:{t}:{i}]]" for t, i in anchors_on_line]
         clean = fountain_anchors.strip_anchor_from_line(stripped).strip()
 
-        # Is this a scene heading?
         if _match_scene_heading(clean):
             key = clean.lower()
             heading_anchors.setdefault(key, [])
             heading_anchors[key].append(tags)
-        # Is this a character cue?
         elif prev_blank and clean and _is_character_cue(clean):
             char_name = _CHAR_EXTENSION_RE.sub('', clean).strip()
             if '(' in char_name:
                 char_name = re.sub(r'\([^)]*\)', '', char_name).strip()
                 char_name = re.sub(r'\s{2,}', ' ', char_name)
             char_upper = char_name.upper()
-            # Only keep char anchors (type "char")
             for tag in tags:
                 if '[[scf:char:' in tag:
                     char_anchors[char_upper] = tag
@@ -1043,9 +1096,7 @@ def _reanchor_text(old_text: str, new_text: str) -> str:
 
         prev_blank = (stripped == '')
 
-    # Track heading occurrence counters for ordering
-    heading_counters = {}  # heading_lower -> int (next index)
-    # Track which characters have been anchored in the current scene
+    heading_counters = {}
     chars_anchored_this_scene = set()
 
     new_lines = new_text.splitlines()
@@ -1060,7 +1111,6 @@ def _reanchor_text(old_text: str, new_text: str) -> str:
             prev_blank = True
             continue
 
-        # Check scene heading
         if _match_scene_heading(stripped):
             chars_anchored_this_scene = set()
             key = stripped.lower()
@@ -1077,7 +1127,6 @@ def _reanchor_text(old_text: str, new_text: str) -> str:
             prev_blank = False
             continue
 
-        # Check character cue
         if prev_blank and _is_character_cue(stripped):
             char_name = _CHAR_EXTENSION_RE.sub('', stripped).strip()
             if '(' in char_name:
@@ -1103,7 +1152,6 @@ def _reanchor_text(old_text: str, new_text: str) -> str:
 # Inline Relationship Linking API
 # =============================================================================
 
-# Config for junction types: maps URL slug to DB/entity details
 _LINK_CONFIG = {
     "scene-character": {
         "junction_table": "scene_character",
@@ -1162,14 +1210,12 @@ async def api_link_create(request: Request, junction_type: str):
     if not parent_id:
         raise HTTPException(status_code=400, detail="parent_id required")
 
-    # Create new child entity if needed
     if not child_id and new_name:
         child_id = db.create_entity(db_path, cfg["child_entity"], {"name": new_name})
         is_new = True
     elif not child_id:
         raise HTTPException(status_code=400, detail="child_id or new_name required")
 
-    # Check for duplicate link
     conn = db.get_connection(db_path)
     try:
         existing = conn.execute(
@@ -1181,11 +1227,10 @@ async def api_link_create(request: Request, junction_type: str):
     finally:
         conn.close()
 
-    # Build junction data
     junction_data = {
         cfg["parent_field"]: parent_id,
         cfg["child_field"]: child_id,
-        "name": "",  # auto-named later
+        "name": "",
     }
     for mf in cfg["meta_fields"]:
         if mf in body:
@@ -1217,7 +1262,6 @@ async def api_link_update(request: Request, junction_type: str, link_id: int):
     db_path = _require_project(request)
     body = await request.json()
 
-    # Only allow updating meta fields
     update_data = {k: v for k, v in body.items() if k in cfg["meta_fields"]}
     if not update_data:
         return JSONResponse({"success": False, "detail": "No valid fields"})
@@ -1228,7 +1272,7 @@ async def api_link_update(request: Request, junction_type: str, link_id: int):
 
 @app.get("/api/links/{parent_type}/{parent_id}/{link_type}")
 async def api_links_list(request: Request, parent_type: str, parent_id: int, link_type: str):
-    """List linked entities for a parent. Handles both forward and reverse lookups."""
+    """List linked entities for a parent."""
     db_path = _require_project(request)
     conn = db.get_connection(db_path)
     try:
@@ -1274,7 +1318,6 @@ def _query_links(conn, parent_type: str, parent_id: int, link_type: str) -> list
         """, (parent_id,)).fetchall()
         return [dict(r) for r in rows]
 
-    # Reverse lookups
     elif parent_type == "character" and link_type == "scenes":
         rows = conn.execute("""
             SELECT sc.id AS link_id, sc.role_in_scene,
@@ -1333,7 +1376,6 @@ async def project_import_fountain(
     content = await file.read()
     text = content.decode("utf-8", errors="replace")
 
-    # Use filename as project name if none provided
     if not project_name.strip():
         project_name = file.filename.rsplit(".", 1)[0].replace("-", " ").replace("_", " ").title()
 
@@ -1349,7 +1391,6 @@ async def project_import_fountain(
             "error": f"Project '{project_name}' already exists.",
         })
 
-    # Save the anchored .fountain file into the project directory
     project_dir = db_path.parent
     fountain_dest = project_dir / f"{project_dir.name}.fountain"
     fountain_dest.write_text(anchored_text, encoding="utf-8")

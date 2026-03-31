@@ -1,11 +1,7 @@
 /**
- * Screenplay Editor — CodeMirror 6 + Fountain Language Mode
- * ===========================================================
- * Single-file module. The Fountain language mode is defined inline
- * to avoid cross-module duplicate @codemirror/state instances.
- *
- * All CM6 imports use esm.sh with ?deps to pin @codemirror/state
- * to a single version across all transitive dependencies.
+ * Screenplay Editor — CodeMirror 6 + Fountain Language Mode + Autocomplete
+ * ==========================================================================
+ * DEBUG VERSION — console.log in autocomplete functions
  */
 
 const CM_STATE_DEP = '@codemirror/state@6.5.2';
@@ -21,7 +17,7 @@ const { StreamLanguage } =
 console.log('[SCF] All CodeMirror modules loaded');
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Fountain Language Mode (inline — avoids cross-file import issues)
+// Fountain Language Mode (inline)
 // ═══════════════════════════════════════════════════════════════════════════
 
 const SCENE_HEADING_MODE_RE = /^(\.(?=[A-Z])|(?:INT|EXT|EST|I\/E|INT\.\/EXT\.)[\s./])(.*)$/i;
@@ -36,29 +32,23 @@ const SYNOPSIS_RE = /^=\s/;
 
 const fountainStreamMode = {
     name: 'fountain',
-    startState() {
-        return { inBoneyard: false, inTitlePage: true, prevLineBlank: true, inDialogue: false };
-    },
+    startState() { return { inBoneyard: false, inTitlePage: true, prevLineBlank: true, inDialogue: false }; },
     copyState(s) { return { ...s }; },
     token(stream, state) {
         if (state.inBoneyard) {
             const ci = stream.string.indexOf('*/', stream.pos);
-            if (ci >= 0) { stream.pos = ci + 2; state.inBoneyard = false; }
-            else stream.skipToEnd();
+            if (ci >= 0) { stream.pos = ci + 2; state.inBoneyard = false; } else stream.skipToEnd();
             return 'fountain-boneyard';
         }
         if (stream.match('/*')) {
             state.inBoneyard = true;
             const ci = stream.string.indexOf('*/', stream.pos);
-            if (ci >= 0) { stream.pos = ci + 2; state.inBoneyard = false; }
-            else stream.skipToEnd();
+            if (ci >= 0) { stream.pos = ci + 2; state.inBoneyard = false; } else stream.skipToEnd();
             return 'fountain-boneyard';
         }
         if (stream.sol()) {
             const line = stream.string, trimmed = line.trim();
-            if (trimmed === '') {
-                stream.skipToEnd(); state.prevLineBlank = true; state.inDialogue = false; return null;
-            }
+            if (trimmed === '') { stream.skipToEnd(); state.prevLineBlank = true; state.inDialogue = false; return null; }
             if (state.inTitlePage) {
                 if (TITLE_KEY_RE.test(line)) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-titleKey'; }
                 if (!state.prevLineBlank && trimmed !== '') { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-titleValue'; }
@@ -106,23 +96,16 @@ function detectElementType(lineText, prevLineBlank) {
 const CYCLE_ORDER = ['action', 'heading', 'character', 'transition'];
 
 function cycleElementType(view, direction) {
-    const state = view.state;
-    const sel = state.selection.main;
-    const fromLine = state.doc.lineAt(sel.from);
-    const toLine = state.doc.lineAt(sel.to);
+    const state = view.state, sel = state.selection.main;
+    const fromLine = state.doc.lineAt(sel.from), toLine = state.doc.lineAt(sel.to);
     if (fromLine.number !== toLine.number) return false;
     const line = fromLine;
-    let prevLineBlank = true;
-    if (line.number > 1) prevLineBlank = state.doc.line(line.number - 1).text.trim() === '';
+    let prevLineBlank = line.number <= 1 || state.doc.line(line.number - 1).text.trim() === '';
     const currentType = detectElementType(line.text, prevLineBlank);
     const idx = CYCLE_ORDER.indexOf(currentType);
     const nextIdx = (idx + direction + CYCLE_ORDER.length) % CYCLE_ORDER.length;
     const nextType = CYCLE_ORDER[nextIdx];
-    let content = line.text;
-    content = content.replace(/^\.(?=[A-Z])/i, '');
-    content = content.replace(/^(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s*/i, '');
-    content = content.replace(/:(\s*)$/, '$1');
-    content = content.trim();
+    let content = line.text.replace(/^\.(?=[A-Z])/i, '').replace(/^(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s*/i, '').replace(/:(\s*)$/, '$1').trim();
     let newText = content, changes = [], needBlankAbove = false;
     switch (nextType) {
         case 'action': newText = content; break;
@@ -130,14 +113,9 @@ function cycleElementType(view, direction) {
         case 'character': newText = content.toUpperCase().replace(/[.,;!?]+$/, ''); needBlankAbove = true; break;
         case 'transition': newText = content.toUpperCase(); if (!newText.endsWith(':')) newText += ':'; needBlankAbove = true; break;
     }
-    if (needBlankAbove && line.number > 1 && state.doc.line(line.number - 1).text.trim() !== '') {
-        changes.push({ from: line.from, insert: '\n' });
-    }
+    if (needBlankAbove && line.number > 1 && state.doc.line(line.number - 1).text.trim() !== '') changes.push({ from: line.from, insert: '\n' });
     changes.push({ from: line.from, to: line.to, insert: newText });
-    view.dispatch({
-        changes,
-        selection: { anchor: line.from + newText.length + (needBlankAbove && line.number > 1 && state.doc.line(line.number - 1).text.trim() !== '' ? 1 : 0) },
-    });
+    view.dispatch({ changes, selection: { anchor: line.from + newText.length + (needBlankAbove && line.number > 1 && state.doc.line(line.number - 1).text.trim() !== '' ? 1 : 0) } });
     return true;
 }
 
@@ -150,26 +128,18 @@ const tabCycleKeymap = keymap.of([
 // Auto-Uppercase
 // ═══════════════════════════════════════════════════════════════════════════
 
-function isAllUpperContent(text) {
-    return text.length === 0 || /^[A-Z0-9 ._\-'()]*$/.test(text);
-}
-function isSceneHeadingLine(text) {
-    return /^(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s/i.test(text.trim());
-}
+function isAllUpperContent(text) { return text.length === 0 || /^[A-Z0-9 ._\-'()]*$/.test(text); }
+function isSceneHeadingLine(text) { return /^(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s/i.test(text.trim()); }
 
 const autoUppercaseHandler = EditorView.inputHandler.of((view, from, to, text) => {
     if (text.length !== 1 || !/[a-z]/.test(text)) return false;
-    const state = view.state;
-    const line = state.doc.lineAt(from);
-    const textBefore = state.doc.sliceString(line.from, from);
-    const textAfter = state.doc.sliceString(to, line.to);
+    const state = view.state, line = state.doc.lineAt(from);
+    const textBefore = state.doc.sliceString(line.from, from), textAfter = state.doc.sliceString(to, line.to);
     if (isSceneHeadingLine(textBefore + text + textAfter)) {
-        view.dispatch({ changes: { from, to, insert: text.toUpperCase() }, selection: { anchor: from + 1 } });
-        return true;
+        view.dispatch({ changes: { from, to, insert: text.toUpperCase() }, selection: { anchor: from + 1 } }); return true;
     }
     if (line.number > 1 && state.doc.line(line.number - 1).text.trim() === '' && isAllUpperContent(textBefore) && isAllUpperContent(textAfter)) {
-        view.dispatch({ changes: { from, to, insert: text.toUpperCase() }, selection: { anchor: from + 1 } });
-        return true;
+        view.dispatch({ changes: { from, to, insert: text.toUpperCase() }, selection: { anchor: from + 1 } }); return true;
     }
     return false;
 });
@@ -189,9 +159,7 @@ function isInDialogueContext(state, lineNumber) {
 }
 
 function handleEnter(view) {
-    const state = view.state;
-    const sel = state.selection.main;
-    const line = state.doc.lineAt(sel.head);
+    const state = view.state, sel = state.selection.main, line = state.doc.lineAt(sel.head);
     const trimmed = line.text.trim();
     const prevLineBlank = line.number <= 1 || state.doc.line(line.number - 1).text.trim() === '';
     if (prevLineBlank && CHARACTER_CUE_RE.test(trimmed) && trimmed.length > 1 && sel.head === line.to) {
@@ -215,14 +183,175 @@ const enterKeymap = keymap.of([{ key: 'Enter', run: handleEnter }]);
 // Anchor Tag Hiding
 // ═══════════════════════════════════════════════════════════════════════════
 
-const anchorMatcher = new MatchDecorator({
-    regexp: /\[\[scf:\w+:\d+\]\]/g,
-    decoration: () => Decoration.replace({}),
-});
+const anchorMatcher = new MatchDecorator({ regexp: /\[\[scf:\w+:\d+\]\]/g, decoration: () => Decoration.replace({}) });
 const anchorHidingPlugin = ViewPlugin.fromClass(class {
     constructor(view) { this.decorations = anchorMatcher.createDeco(view); }
     update(update) { this.decorations = anchorMatcher.updateDeco(update, this.decorations); }
 }, { decorations: v => v.decorations });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Autocomplete (with DEBUG logging)
+// ═══════════════════════════════════════════════════════════════════════════
+
+let acDropdown = null;
+let acItems = [];
+let acHighlight = -1;
+let acType = null;
+let acQuery = '';
+let acDebounce = null;
+let acNewTimer = null;
+
+function getOrCreateDropdown() {
+    if (!acDropdown) {
+        acDropdown = document.createElement('div');
+        acDropdown.className = 'screenplay-autocomplete hidden';
+        document.body.appendChild(acDropdown);
+        document.addEventListener('click', (e) => {
+            if (acDropdown && !acDropdown.contains(e.target)) hideAutocomplete();
+        });
+    }
+    return acDropdown;
+}
+
+function isAutocompleteVisible() {
+    return acDropdown && !acDropdown.classList.contains('hidden');
+}
+
+function hideAutocomplete() {
+    if (acDropdown) { acDropdown.classList.add('hidden'); acDropdown.innerHTML = ''; }
+    acItems = []; acHighlight = -1; acType = null; acQuery = '';
+    if (acDebounce) { clearTimeout(acDebounce); acDebounce = null; }
+    if (acNewTimer) { clearTimeout(acNewTimer); acNewTimer = null; }
+}
+
+function updateAcHighlight() {
+    if (!acDropdown) return;
+    acDropdown.querySelectorAll('.screenplay-ac-item').forEach((el, i) => el.classList.toggle('highlighted', i === acHighlight));
+    const hl = acDropdown.querySelector('.highlighted');
+    if (hl) hl.scrollIntoView({ block: 'nearest' });
+}
+
+function showAutocompleteDropdown(items, type, coords) {
+    console.log('[AC] Showing dropdown with', items.length, 'items');
+    const dd = getOrCreateDropdown();
+    acItems = items; acHighlight = items.length > 0 ? 0 : -1; acType = type;
+    dd.innerHTML = '';
+    items.forEach((item, i) => {
+        const el = document.createElement('div');
+        el.className = 'screenplay-ac-item' + (i === 0 ? ' highlighted' : '');
+        el.dataset.index = i;
+        const icon = type === 'character' ? '\ud83d\udc64' : '\ud83d\udccd';
+        const name = type === 'character' ? (item.display_name || item.name) : item.name;
+        el.innerHTML = `<span class="screenplay-ac-icon">${icon}</span><span class="screenplay-ac-name">${esc(name)}</span>`;
+        el.addEventListener('click', (e) => { e.stopPropagation(); selectSuggestion(i); });
+        el.addEventListener('mouseenter', () => { acHighlight = i; updateAcHighlight(); });
+        dd.appendChild(el);
+    });
+    dd.style.left = Math.max(0, coords.left) + 'px';
+    dd.style.top = (coords.bottom + 4) + 'px';
+    dd.classList.remove('hidden');
+}
+
+function selectSuggestion(index) {
+    if (index < 0 || index >= acItems.length || !editorView) return;
+    const item = acItems[index], state = editorView.state, line = state.doc.lineAt(state.selection.main.head);
+    if (acType === 'character') {
+        editorView.dispatch({ changes: { from: line.from, to: line.to, insert: item.name }, selection: { anchor: line.from + item.name.length } });
+    } else if (acType === 'location') {
+        const prefixMatch = line.text.match(/^(\.?(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s*)/i);
+        const prefix = prefixMatch ? prefixMatch[1] : '';
+        const newText = prefix + item.name.toUpperCase() + ' - ';
+        editorView.dispatch({ changes: { from: line.from, to: line.to, insert: newText }, selection: { anchor: line.from + newText.length } });
+    }
+    hideAutocomplete(); editorView.focus();
+}
+
+function checkAutocompleteContext() {
+    if (!editorView) return;
+    const state = editorView.state, sel = state.selection.main;
+    if (!sel.empty) { hideAutocomplete(); return; }
+    const line = state.doc.lineAt(sel.head), trimmed = line.text.trim();
+    if (!trimmed) { hideAutocomplete(); return; }
+
+    // ─── DEBUG ───
+    console.log('[AC] check:', JSON.stringify(trimmed), 'lineNum:', line.number, 'len:', trimmed.length);
+
+    // Location: line starts with INT./EXT.
+    const locPrefixMatch = trimmed.match(/^(\.?(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s+)(.+)/i);
+    if (locPrefixMatch) {
+        const afterPrefix = locPrefixMatch[2];
+        if (!afterPrefix.includes(' - ') && afterPrefix.trim().length >= 1) {
+            console.log('[AC] → location trigger:', afterPrefix.trim());
+            triggerAutocomplete('location', afterPrefix.replace(/\s*-\s*$/, '').trim());
+            return;
+        }
+    }
+
+    // Character: previous line blank, current all-caps, ≥2 chars
+    if (line.number > 1) {
+        const prevLine = state.doc.line(line.number - 1);
+        const prevBlank = prevLine.text.trim() === '';
+        const allCaps = /^[A-Z][A-Z0-9 ._\-']*$/.test(trimmed);
+        console.log('[AC] char check — prevBlank:', prevBlank, 'allCaps:', allCaps, 'len≥2:', trimmed.length >= 2);
+        if (prevBlank && allCaps && trimmed.length >= 2) {
+            console.log('[AC] → character trigger:', trimmed);
+            triggerAutocomplete('character', trimmed);
+            return;
+        }
+    } else {
+        console.log('[AC] skipped char check — line.number is', line.number);
+    }
+
+    hideAutocomplete();
+}
+
+function triggerAutocomplete(type, query) {
+    if (query === acQuery && type === acType && isAutocompleteVisible()) {
+        console.log('[AC] same query, skip');
+        return;
+    }
+    acQuery = query;
+    if (acDebounce) clearTimeout(acDebounce);
+    console.log('[AC] debounce set for', type, query);
+    acDebounce = setTimeout(async () => {
+        const endpoint = type === 'character'
+            ? `/api/screenplay/autocomplete-characters?q=${encodeURIComponent(query)}`
+            : `/api/screenplay/autocomplete-locations?q=${encodeURIComponent(query)}`;
+        console.log('[AC] fetching:', endpoint);
+        try {
+            const res = await fetch(endpoint);
+            if (!res.ok) { console.log('[AC] fetch failed:', res.status); return; }
+            const items = await res.json();
+            console.log('[AC] got', items.length, 'results');
+            if (!editorView) return;
+            if (!items.length) {
+                if (type === 'character' && query.length >= 2) showNewEntityIndicator(query);
+                else hideAutocomplete();
+                return;
+            }
+            const coords = editorView.coordsAtPos(editorView.state.selection.main.head);
+            if (coords) showAutocompleteDropdown(items, type, coords);
+        } catch (e) { console.error('[AC] fetch error:', e); }
+    }, 200);
+}
+
+function showNewEntityIndicator(name) {
+    const dd = getOrCreateDropdown();
+    acItems = []; acHighlight = -1;
+    dd.innerHTML = `<div class="screenplay-ac-new">New character "${esc(name)}" \u2014 will be created on save</div>`;
+    const coords = editorView.coordsAtPos(editorView.state.selection.main.head);
+    if (coords) { dd.style.left = Math.max(0, coords.left) + 'px'; dd.style.top = (coords.bottom + 4) + 'px'; dd.classList.remove('hidden'); }
+    if (acNewTimer) clearTimeout(acNewTimer);
+    acNewTimer = setTimeout(() => { if (dd.querySelector('.screenplay-ac-new')) hideAutocomplete(); }, 2000);
+}
+
+const autocompleteKeymap = keymap.of([
+    { key: 'ArrowDown', run() { if (!isAutocompleteVisible() || !acItems.length) return false; acHighlight = Math.min(acHighlight + 1, acItems.length - 1); updateAcHighlight(); return true; } },
+    { key: 'ArrowUp', run() { if (!isAutocompleteVisible() || !acItems.length) return false; acHighlight = Math.max(acHighlight - 1, 0); updateAcHighlight(); return true; } },
+    { key: 'Enter', run() { if (!isAutocompleteVisible() || acHighlight < 0 || !acItems.length) return false; selectSuggestion(acHighlight); return true; } },
+    { key: 'Tab', run() { if (!isAutocompleteVisible() || acHighlight < 0 || !acItems.length) return false; selectSuggestion(acHighlight); return true; } },
+    { key: 'Escape', run() { if (!isAutocompleteVisible()) return false; hideAutocomplete(); return true; } },
+]);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // State
@@ -234,13 +363,10 @@ let navScenes = [], navCharacters = [], navLocations = [];
 let activeFilter = null, liveScanTimer = null;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Toast
+// Toast + helpers
 // ═══════════════════════════════════════════════════════════════════════════
 
-function showToast(msg) {
-    const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg;
-    document.body.appendChild(t); setTimeout(() => t.remove(), 2500);
-}
+function showToast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2500); }
 function showSyncToast(sync) {
     const parts = [];
     if (sync.scenes_created) parts.push(`${sync.scenes_created} new scene${sync.scenes_created > 1 ? 's' : ''}`);
@@ -250,14 +376,14 @@ function showSyncToast(sync) {
     if (parts.length) showToast('Synced: ' + parts.join(', '));
     if (sync.errors?.length) sync.errors.forEach(e => showToast('\u26a0 ' + e));
 }
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Navigator panel resize
 // ═══════════════════════════════════════════════════════════════════════════
 
 function initNavigatorResize() {
-    const panel = document.getElementById('navigator-panel');
-    if (!panel) return;
+    const panel = document.getElementById('navigator-panel'); if (!panel) return;
     const KEY = 'scf-panel-navigator-width', MIN = 180, MAX = 500;
     const saved = localStorage.getItem(KEY);
     if (saved) panel.style.width = Math.max(MIN, Math.min(MAX, parseInt(saved, 10))) + 'px';
@@ -292,8 +418,7 @@ function initCollapseHandlers() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function renderScenes() {
-    const c = document.getElementById('nav-scenes-items'), b = document.getElementById('nav-scenes-count');
-    if (!c) return;
+    const c = document.getElementById('nav-scenes-items'), b = document.getElementById('nav-scenes-count'); if (!c) return;
     if (!navScenes.length) { c.innerHTML = '<span class="nav-empty-msg">No scenes found</span>'; if (b) b.textContent = ''; return; }
     if (b) b.textContent = navScenes.length;
     const f = document.createDocumentFragment();
@@ -308,15 +433,13 @@ function renderScenes() {
         name.textContent = dn || sc.name; name.title = sc.name;
         item.appendChild(num); item.appendChild(name);
         if (sc.character_count > 0) { const bg = document.createElement('span'); bg.className = 'nav-item-badge'; bg.textContent = sc.character_count; item.appendChild(bg); }
-        item.addEventListener('click', () => scrollToLine(sc.line_number));
-        f.appendChild(item);
+        item.addEventListener('click', () => scrollToLine(sc.line_number)); f.appendChild(item);
     }
     c.innerHTML = ''; c.appendChild(f); applyFilter(); updateCurrentScene();
 }
 
 function renderCharacters() {
-    const c = document.getElementById('nav-characters-items'), b = document.getElementById('nav-characters-count');
-    if (!c) return;
+    const c = document.getElementById('nav-characters-items'), b = document.getElementById('nav-characters-count'); if (!c) return;
     if (!navCharacters.length) { c.innerHTML = '<span class="nav-empty-msg">No characters found</span>'; if (b) b.textContent = ''; return; }
     if (b) b.textContent = navCharacters.length;
     const f = document.createDocumentFragment();
@@ -333,8 +456,7 @@ function renderCharacters() {
 }
 
 function renderLocations() {
-    const c = document.getElementById('nav-locations-items'), b = document.getElementById('nav-locations-count');
-    if (!c) return;
+    const c = document.getElementById('nav-locations-items'), b = document.getElementById('nav-locations-count'); if (!c) return;
     if (!navLocations.length) { c.innerHTML = '<span class="nav-empty-msg">No locations found</span>'; if (b) b.textContent = ''; return; }
     if (b) b.textContent = navLocations.length;
     const f = document.createDocumentFragment();
@@ -350,16 +472,11 @@ function renderLocations() {
     c.innerHTML = ''; c.appendChild(f); applyFilterHighlight();
 }
 
-function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-
 // ═══════════════════════════════════════════════════════════════════════════
 // Filtering
 // ═══════════════════════════════════════════════════════════════════════════
 
-function toggleFilter(type, name) {
-    activeFilter = (activeFilter && activeFilter.type === type && activeFilter.name === name) ? null : { type, name };
-    applyFilter(); applyFilterHighlight();
-}
+function toggleFilter(type, name) { activeFilter = (activeFilter && activeFilter.type === type && activeFilter.name === name) ? null : { type, name }; applyFilter(); applyFilterHighlight(); }
 function applyFilter() {
     const items = document.querySelectorAll('.nav-scene-item'), ind = document.getElementById('nav-scenes-filter');
     if (!activeFilter) { items.forEach(i => i.classList.remove('filtered-out')); if (ind) ind.classList.remove('active'); return; }
@@ -381,10 +498,8 @@ function applyFilterHighlight() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function scrollToLine(ln) {
-    if (!editorView) return;
-    const n = ln + 1; if (n < 1 || n > editorView.state.doc.lines) return;
-    const line = editorView.state.doc.line(n);
-    editorView.dispatch({ selection: { anchor: line.from }, scrollIntoView: true }); editorView.focus();
+    if (!editorView) return; const n = ln + 1; if (n < 1 || n > editorView.state.doc.lines) return;
+    editorView.dispatch({ selection: { anchor: editorView.state.doc.line(n).from }, scrollIntoView: true }); editorView.focus();
 }
 
 function updateCurrentScene() {
@@ -404,8 +519,7 @@ function updateCurrentScene() {
 }
 
 function updateCharsStatus(idx) {
-    const el = document.getElementById('status-chars');
-    if (!el) return;
+    const el = document.getElementById('status-chars'); if (!el) return;
     if (idx < 0 || !navScenes[idx]) { el.textContent = ''; return; }
     const chars = navScenes[idx].characters || [];
     if (!chars.length) { el.textContent = ''; return; }
@@ -436,8 +550,7 @@ function markSaveFailed() { saving = false; setSaveStatus('Save failed', 'var(--
 
 function liveScanScenes() {
     if (!editorView) return;
-    const lines = editorView.state.doc.toString().split('\n'), scanned = [];
-    let prevBlank = true;
+    const lines = editorView.state.doc.toString().split('\n'), scanned = []; let prevBlank = true;
     for (let i = 0; i < lines.length; i++) {
         const stripped = lines[i].trim(), clean = stripped.replace(/\[\[scf:\w+:\d+\]\]/g, '').trim();
         if (clean === '') { prevBlank = true; continue; }
@@ -480,16 +593,14 @@ async function fetchNavigatorData() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function saveScreenplay() {
-    if (!editorView || saving) return; markSaving();
+    if (!editorView || saving) return; markSaving(); hideAutocomplete();
     try {
         const res = await fetch('/api/screenplay/save', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: editorView.state.doc.toString() }) });
         if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Save failed');
         const data = await res.json(); markSaved(); if (data.sync) showSyncToast(data.sync); fetchNavigatorData();
     } catch (e) { markSaveFailed(); showToast(`Save error: ${e.message}`); }
 }
-
 function exportScreenplay() { const a = document.createElement('a'); a.href = '/api/screenplay/export'; a.click(); }
-
 async function loadScreenplay() {
     if (!editorView) return;
     try {
@@ -513,20 +624,17 @@ function createEditor(container) {
     const state = EditorState.create({
         doc: '',
         extensions: [
-            fountainLanguage,
-            history(),
-            drawSelection(),
-            EditorView.lineWrapping,
+            fountainLanguage, history(), drawSelection(), EditorView.lineWrapping,
             placeholder('Loading screenplay\u2026'),
-            tabCycleKeymap,
-            enterKeymap,
-            autoUppercaseHandler,
-            anchorHidingPlugin,
+            autocompleteKeymap,  // FIRST — priority over tab/enter when dropdown visible
+            tabCycleKeymap, enterKeymap, autoUppercaseHandler, anchorHidingPlugin,
             keymap.of([{ key: 'Mod-s', run() { saveScreenplay(); return true; } }, ...defaultKeymap, ...historyKeymap]),
             EditorView.updateListener.of((update) => {
                 if (update.selectionSet || update.docChanged) updateCursorStatus(update.state);
-                if (update.docChanged) { markUnsaved(); scheduleLiveScan(); }
+                if (update.docChanged) { markUnsaved(); scheduleLiveScan(); checkAutocompleteContext(); }
+                else if (update.selectionSet) checkAutocompleteContext();
             }),
+            EditorView.domEventHandlers({ blur() { setTimeout(hideAutocomplete, 150); } }),
             EditorView.theme({
                 '&': { backgroundColor: 'var(--bg-base)', color: 'var(--text-primary)', fontFamily: "'Courier Prime', 'Courier New', Courier, monospace", fontSize: '15px', lineHeight: '1.5', flex: '1' },
                 '.cm-content': { caretColor: 'var(--accent)', padding: '24px 0' },
@@ -558,7 +666,6 @@ function createEditor(container) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 console.log('[SCF] Screenplay editor module loaded');
-
 const container = document.getElementById('screenplay-panel');
 if (container) {
     console.log('[SCF] Initializing CodeMirror...');
