@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Screenplay — {{ project_name }} — SCF Editor</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/screenplay.css">
+</head>
+<body>
+    <div class="app-layout">
+
+        <!-- Header -->
+        <header class="app-header">
+            <span class="logo">SCF</span>
+            <span class="header-sep">/</span>
+            <span class="project-name">{{ project_name }}</span>
+            <div class="header-spacer"></div>
+            <a href="/browse" class="btn header-btn btn-sm">Entity Browser</a>
+            <a href="/screenplay" class="btn header-btn btn-sm header-btn-active">Screenplay</a>
+            <a href="/query" class="btn header-btn btn-sm">Query Explorer</a>
+            <a href="/project/close" class="btn header-btn btn-sm">Close Project</a>
+        </header>
+
+        {% if has_fountain %}
+        <!-- ============================================================== -->
+        <!-- Editor State: three-panel layout                               -->
+        <!-- ============================================================== -->
+        <div class="screenplay-layout">
+
+            <!-- Left Panel: Scene Navigator -->
+            <nav class="panel-navigator" id="navigator-panel">
+                <div class="navigator-scroll">
+
+                    <div class="nav-section">
+                        <div class="nav-section-header">
+                            <span class="chevron">▸</span>
+                            <span class="nav-section-label">Scenes</span>
+                        </div>
+                        <div class="nav-section-items">
+                            <span class="nav-empty-msg">Save screenplay to populate</span>
+                        </div>
+                    </div>
+
+                    <div class="nav-section">
+                        <div class="nav-section-header">
+                            <span class="chevron">▸</span>
+                            <span class="nav-section-label">Characters</span>
+                        </div>
+                        <div class="nav-section-items">
+                            <span class="nav-empty-msg">Save screenplay to populate</span>
+                        </div>
+                    </div>
+
+                    <div class="nav-section">
+                        <div class="nav-section-header">
+                            <span class="chevron">▸</span>
+                            <span class="nav-section-label">Locations</span>
+                        </div>
+                        <div class="nav-section-items">
+                            <span class="nav-empty-msg">Save screenplay to populate</span>
+                        </div>
+                    </div>
+
+                </div>
+            </nav>
+
+            <!-- Center Panel: CodeMirror Editor -->
+            <main class="panel-screenplay" id="screenplay-panel"></main>
+
+        </div>
+
+        <!-- Status Bar -->
+        <div class="screenplay-status-bar">
+            <span class="status-item" id="status-scene">Sc &mdash;</span>
+            <span class="status-divider"></span>
+            <span class="status-item" id="status-line">Ln 1</span>
+            <span class="status-divider"></span>
+            <span class="status-item" id="status-page">Pg ~1</span>
+            <span class="status-divider"></span>
+            <span class="status-item" id="status-save">Ready</span>
+        </div>
+
+        {% else %}
+        <!-- ============================================================== -->
+        <!-- Empty State: onboarding card                                   -->
+        <!-- ============================================================== -->
+        <div class="screenplay-empty">
+            <div class="screenplay-empty-card">
+                <h2>Screenplay Editor</h2>
+                <p class="screenplay-empty-desc">
+                    No screenplay file found for this project. Import an existing
+                    Fountain file or start fresh.
+                </p>
+
+                <div class="screenplay-empty-options">
+                    <!-- Import Fountain -->
+                    <form class="screenplay-option" action="/project/import-fountain-into-current" method="post" enctype="multipart/form-data">
+                        <div class="screenplay-option-icon">📄</div>
+                        <h3>Import Screenplay</h3>
+                        <p>Upload an existing <code>.fountain</code> file. Entities will be extracted and linked automatically.</p>
+                        <label class="btn btn-primary btn-sm screenplay-file-label">
+                            Choose .fountain file
+                            <input type="file" name="file" accept=".fountain" hidden
+                                   onchange="this.closest('form').submit()">
+                        </label>
+                    </form>
+
+                    <!-- Start New -->
+                    <form class="screenplay-option" action="/project/create-fountain" method="post">
+                        <div class="screenplay-option-icon">✏️</div>
+                        <h3>Start New Screenplay</h3>
+                        <p>Create a blank screenplay with a title page template. You can start writing immediately.</p>
+                        <button type="submit" class="btn btn-primary btn-sm">Create Blank Screenplay</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+    </div>
+
+    {% if has_fountain %}
+    <script type="module" src="/static/js/screenplay-editor.js"></script>
+    {% endif %}
+</body>
+</html>

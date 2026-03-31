@@ -1,0 +1,327 @@
+/* ==========================================================================
+   Screenplay Editor — Styles
+   ========================================================================== */
+
+/* --- Layout --------------------------------------------------------------- */
+
+.screenplay-layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
+}
+
+/* --- Navigator Panel (left sidebar) --------------------------------------- */
+
+.panel-navigator {
+    width: 260px;
+    min-width: 180px;
+    max-width: 500px;
+    background: var(--bg-surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    flex-shrink: 0;
+}
+
+.navigator-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+}
+
+/* Navigator resize handle — injected by JS, same pattern as panel-tree */
+.panel-navigator .panel-resize-handle {
+    position: absolute;
+    top: 0;
+    right: -3px;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 10;
+    background: transparent;
+    transition: background 0.15s;
+}
+.panel-navigator .panel-resize-handle:hover,
+.panel-navigator .panel-resize-handle.dragging {
+    background: var(--accent);
+}
+
+/* Navigator sections */
+.nav-section {
+    margin-bottom: 2px;
+}
+
+.nav-section-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    user-select: none;
+    transition: color 0.15s;
+}
+.nav-section-header:hover {
+    color: var(--text-primary);
+}
+
+.nav-section-header .chevron {
+    font-size: 9px;
+    transition: transform 0.15s;
+    display: inline-block;
+}
+.nav-section.collapsed .nav-section-header .chevron {
+    transform: rotate(-90deg);
+}
+
+.nav-section-items {
+    padding: 0 12px 4px 24px;
+}
+.nav-section.collapsed .nav-section-items {
+    display: none;
+}
+
+.nav-empty-msg {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* --- Screenplay Panel (center — CodeMirror host) -------------------------- */
+
+.panel-screenplay {
+    flex: 1;
+    overflow: hidden;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* CodeMirror fills its container */
+.panel-screenplay .cm-editor {
+    flex: 1;
+    overflow: hidden;
+}
+
+.panel-screenplay .cm-scroller {
+    overflow: auto !important;
+    padding: 24px 40px;
+}
+
+/* --- Status Bar ----------------------------------------------------------- */
+
+.screenplay-status-bar {
+    height: 28px;
+    min-height: 28px;
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0;
+    padding: 0 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.status-item {
+    padding: 0 10px;
+}
+
+.status-divider {
+    width: 1px;
+    height: 14px;
+    background: var(--border);
+}
+
+/* --- Empty State ---------------------------------------------------------- */
+
+.screenplay-empty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+}
+
+.screenplay-empty-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 40px 48px;
+    max-width: 640px;
+    width: 100%;
+    text-align: center;
+}
+
+.screenplay-empty-card h2 {
+    margin: 0 0 8px;
+    font-size: 20px;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.screenplay-empty-desc {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin: 0 0 32px;
+    line-height: 1.5;
+}
+
+.screenplay-empty-options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    text-align: left;
+}
+
+.screenplay-option {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.screenplay-option-icon {
+    font-size: 24px;
+    line-height: 1;
+}
+
+.screenplay-option h3 {
+    margin: 0;
+    font-size: 15px;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.screenplay-option p {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    flex: 1;
+}
+
+.screenplay-option code {
+    background: var(--bg-input);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 11px;
+}
+
+.screenplay-file-label {
+    cursor: pointer;
+    text-align: center;
+    margin-top: 4px;
+}
+
+.screenplay-option .btn {
+    margin-top: 4px;
+    align-self: flex-start;
+}
+
+/* --- CodeMirror Theme Overrides ------------------------------------------- */
+
+.cm-editor {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: 'Courier Prime', 'Courier New', Courier, monospace;
+    font-size: 15px;
+    line-height: 1.5;
+}
+
+.cm-editor .cm-content {
+    caret-color: var(--accent);
+}
+
+.cm-editor .cm-cursor,
+.cm-editor .cm-dropCursor {
+    border-left-color: var(--accent);
+    border-left-width: 2px;
+}
+
+.cm-editor .cm-selectionBackground,
+.cm-editor.cm-focused .cm-selectionBackground {
+    background: var(--accent-subtle) !important;
+}
+
+.cm-editor .cm-activeLine {
+    background: rgba(42, 42, 56, 0.3);
+}
+
+.cm-editor .cm-gutters {
+    background: var(--bg-surface);
+    border-right: 1px solid var(--border);
+    color: var(--text-muted);
+}
+
+/* Hide line numbers for screenplay */
+.cm-editor .cm-lineNumbers {
+    display: none;
+}
+
+/* Fountain syntax highlighting */
+.cm-fountain-heading {
+    color: var(--text-primary);
+    font-weight: bold;
+    letter-spacing: 0.02em;
+}
+
+.cm-fountain-character {
+    color: var(--text-accent, #8b8bff);
+}
+
+.cm-fountain-dialogue {
+    color: var(--text-primary);
+}
+
+.cm-fountain-parenthetical {
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+.cm-fountain-transition {
+    color: var(--text-muted);
+}
+
+.cm-fountain-note {
+    color: var(--text-muted);
+    opacity: 0.5;
+}
+
+.cm-fountain-boneyard {
+    color: var(--text-muted);
+    opacity: 0.4;
+}
+
+.cm-fountain-centered {
+    color: var(--text-primary);
+    text-align: center;
+}
+
+.cm-fountain-synopsis {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.cm-fountain-section {
+    color: var(--text-secondary);
+    font-weight: bold;
+}
+
+.cm-fountain-titleKey {
+    color: var(--text-muted);
+}
+
+.cm-fountain-titleValue {
+    color: var(--text-secondary);
+}

@@ -11,7 +11,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Form, HTTPException, Query, UploadFile, File
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -21,6 +21,9 @@ from entity_registry import (
 import database as db
 import queries
 import fountain_import
+import fountain_anchors
+from fountain_parser import parse as fountain_parse
+from datetime import date
 
 
 # =============================================================================
@@ -552,6 +555,126 @@ async def api_query_project_stats(request: Request):
     db_path = _require_project(request)
     results = queries.project_stats(db_path)
     return JSONResponse(results)
+
+
+# =============================================================================
+# Screenplay Editor
+# =============================================================================
+
+@app.get("/screenplay", response_class=HTMLResponse)
+async def screenplay_page(request: Request):
+    """Screenplay Editor page."""
+    db_path = _require_project(request)
+    proj = _get_current_project(request)
+    project_dir = Path("projects") / proj
+
+    # Check for .fountain file
+    fountain_files = list(project_dir.glob("*.fountain"))
+    has_fountain = len(fountain_files) > 0
+
+    project_info = db.list_entities(db_path, "project", limit=1)
+    project_name = project_info[0]["name"] if project_info else "Untitled"
+
+    return templates.TemplateResponse("screenplay.html", _add_template_context(
+        request,
+        has_fountain=has_fountain,
+        project_name=project_name,
+    ))
+
+
+@app.post("/project/import-fountain-into-current")
+async def project_import_fountain_into_current(
+    request: Request,
+    file: UploadFile = File(...),
+):
+    """Import a .fountain file into the current project (no new project created)."""
+    if not file.filename or not file.filename.endswith(".fountain"):
+        return RedirectResponse("/screenplay", status_code=302)
+
+    db_path = _require_project(request)
+    proj = _get_current_project(request)
+    project_dir = Path("projects") / proj
+
+    content = await file.read()
+    text = content.decode("utf-8", errors="replace")
+
+    # Parse and write entities into the existing project (merge mode for safety)
+    data = fountain_parse(text)
+    summary, anchor_maps = fountain_import._write_to_project(
+        data, db_path, merge=True, fountain_text=text
+    )
+
+    # Inject anchors into the fountain text
+    anchored_text = text
+    if anchor_maps:
+        scene_map, char_map, loc_map = anchor_maps
+        anchored_text = fountain_anchors.inject_anchors(
+            text, scene_map, char_map, loc_map
+        )
+
+    # Save the anchored .fountain file into the project directory
+    fountain_dest = project_dir / f"{proj}.fountain"
+    fountain_dest.write_text(anchored_text, encoding="utf-8")
+
+    response = RedirectResponse("/screenplay", status_code=302)
+    return response
+
+
+@app.post("/project/create-fountain")
+async def project_create_fountain(request: Request):
+    """Create a blank .fountain file in the current project directory."""
+    db_path = _require_project(request)
+    proj = _get_current_project(request)
+    project_dir = Path("projects") / proj
+
+    project_info = db.list_entities(db_path, "project", limit=1)
+    project_name = project_info[0]["name"] if project_info else "Untitled"
+
+    today = date.today().strftime("%Y-%m-%d")
+    blank_fountain = f"""Title: {project_name}
+Author:
+Draft date: {today}
+
+EXT. LOCATION - DAY
+
+Action description.
+
+CHARACTER
+Dialogue.
+"""
+
+    fountain_dest = project_dir / f"{proj}.fountain"
+    fountain_dest.write_text(blank_fountain, encoding="utf-8")
+
+    # Create screenplay_meta record
+    conn = db.get_connection(db_path)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO screenplay_meta (id, fountain_path, title) VALUES (1, ?, ?)",
+            (str(fountain_dest), project_name)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    response = RedirectResponse("/screenplay", status_code=302)
+    return response
+
+
+@app.get("/api/screenplay/content")
+async def api_screenplay_content(request: Request):
+    """Return the raw .fountain file content for the current project."""
+    proj = _get_current_project(request)
+    if not proj:
+        raise HTTPException(status_code=400, detail="No project selected")
+    project_dir = Path("projects") / proj
+
+    fountain_files = list(project_dir.glob("*.fountain"))
+    if not fountain_files:
+        raise HTTPException(status_code=404, detail="No fountain file found")
+
+    text = fountain_files[0].read_text(encoding="utf-8")
+    return PlainTextResponse(text)
 
 
 # =============================================================================
