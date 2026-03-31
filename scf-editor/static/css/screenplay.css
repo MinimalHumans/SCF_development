@@ -1,100 +1,28 @@
 /* ==========================================================================
    Screenplay Editor — Styles
-   Proper screenplay page formatting: headings left, characters centered,
-   dialogue narrower, transitions right-aligned.
    ========================================================================== */
 
 /* --- Layout --------------------------------------------------------------- */
 
-.screenplay-layout {
-    display: flex;
-    flex: 1;
-    overflow: hidden;
-    min-height: 0;
-}
+.screenplay-layout { display: flex; flex: 1; overflow: hidden; min-height: 0; }
 
-/* --- Navigator Panel (left sidebar) --------------------------------------- */
+/* --- Navigator Panel ------------------------------------------------------ */
 
-.panel-navigator {
-    width: 260px;
-    min-width: 180px;
-    max-width: 500px;
-    background: var(--bg-surface);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    position: relative;
-    flex-shrink: 0;
-}
+.panel-navigator { width: 260px; min-width: 180px; max-width: 500px; background: var(--bg-surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: relative; flex-shrink: 0; }
+.navigator-scroll { flex: 1; overflow-y: auto; padding: 8px 0; }
+.panel-navigator .panel-resize-handle { position: absolute; top: 0; right: -3px; width: 6px; height: 100%; cursor: col-resize; z-index: 10; background: transparent; transition: background 0.15s; }
+.panel-navigator .panel-resize-handle:hover, .panel-navigator .panel-resize-handle.dragging { background: var(--accent); }
 
-.navigator-scroll {
-    flex: 1;
-    overflow-y: auto;
-    padding: 8px 0;
-}
-
-.panel-navigator .panel-resize-handle {
-    position: absolute;
-    top: 0;
-    right: -3px;
-    width: 6px;
-    height: 100%;
-    cursor: col-resize;
-    z-index: 10;
-    background: transparent;
-    transition: background 0.15s;
-}
-.panel-navigator .panel-resize-handle:hover,
-.panel-navigator .panel-resize-handle.dragging {
-    background: var(--accent);
-}
-
-/* Navigator sections */
 .nav-section { margin-bottom: 2px; }
-
-.nav-section-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    cursor: pointer;
-    color: var(--text-secondary);
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    user-select: none;
-    transition: color 0.15s;
-}
+.nav-section-header { display: flex; align-items: center; gap: 6px; padding: 6px 12px; cursor: pointer; color: var(--text-secondary); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; user-select: none; transition: color 0.15s; }
 .nav-section-header:hover { color: var(--text-primary); }
-
-.nav-section-header .chevron {
-    font-size: 9px;
-    transition: transform 0.15s;
-    display: inline-block;
-}
+.nav-section-header .chevron { font-size: 9px; transition: transform 0.15s; display: inline-block; }
 .nav-section.collapsed .nav-section-header .chevron { transform: rotate(-90deg); }
-
 .nav-section-items { padding: 0 12px 4px 24px; }
 .nav-section.collapsed .nav-section-items { display: none; }
-
 .nav-empty-msg { font-size: 11px; color: var(--text-muted); font-style: italic; }
 
-/* Navigator items */
-.nav-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 8px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 12px;
-    color: var(--text-secondary);
-    transition: background 0.1s, color 0.1s;
-    user-select: none;
-    white-space: nowrap;
-    overflow: hidden;
-}
+.nav-item { display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; color: var(--text-secondary); transition: background 0.1s, color 0.1s; user-select: none; white-space: nowrap; overflow: hidden; }
 .nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
 .nav-item.active { background: var(--accent-subtle); color: var(--text-accent); font-weight: 500; }
 .nav-item.filtered-out { display: none; }
@@ -107,66 +35,30 @@
 .nav-item-link { flex-shrink: 0; font-size: 10px; color: var(--text-muted); text-decoration: none; opacity: 0; transition: opacity 0.15s; padding: 0 2px; }
 .nav-item:hover .nav-item-link { opacity: 1; }
 .nav-item-link:hover { color: var(--accent); }
-
 .nav-section-header .nav-count-badge { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); margin-left: auto; }
-
 .nav-section-header .nav-filter-indicator { font-size: 9px; color: var(--accent); margin-left: 4px; display: none; }
 .nav-section-header .nav-filter-indicator.active { display: inline; }
-
 .status-chars { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* --- Screenplay Panel (center — CodeMirror host) -------------------------- */
+/* --- Screenplay Panel ----------------------------------------------------- */
 
-.panel-screenplay {
-    flex: 1;
-    overflow: hidden;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-}
-
+.panel-screenplay { flex: 1; overflow: hidden; min-width: 0; display: flex; flex-direction: column; }
 .panel-screenplay .cm-editor { flex: 1; overflow: hidden; }
 .panel-screenplay .cm-scroller { overflow: auto !important; }
 
 /* --- Status Bar ----------------------------------------------------------- */
 
-.screenplay-status-bar {
-    height: 28px;
-    min-height: 28px;
-    background: var(--bg-surface);
-    border-top: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 0;
-    padding: 0 12px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-muted);
-}
-
+.screenplay-status-bar { height: 28px; min-height: 28px; background: var(--bg-surface); border-top: 1px solid var(--border); display: flex; align-items: center; gap: 0; padding: 0 12px; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
 .status-item { padding: 0 10px; }
 .status-divider { width: 1px; height: 14px; background: var(--border); }
 
+/* Mode indicator — highlighted with accent color */
+.status-mode-item { color: var(--text-accent); font-weight: 600; letter-spacing: 0.03em; }
+
 /* --- Empty State ---------------------------------------------------------- */
 
-.screenplay-empty {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 40px;
-}
-
-.screenplay-empty-card {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 40px 48px;
-    max-width: 640px;
-    width: 100%;
-    text-align: center;
-}
-
+.screenplay-empty { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px; }
+.screenplay-empty-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 12px; padding: 40px 48px; max-width: 640px; width: 100%; text-align: center; }
 .screenplay-empty-card h2 { margin: 0 0 8px; font-size: 20px; color: var(--text-primary); font-weight: 600; }
 .screenplay-empty-desc { color: var(--text-secondary); font-size: 14px; margin: 0 0 32px; line-height: 1.5; }
 .screenplay-empty-options { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; text-align: left; }
@@ -179,17 +71,10 @@
 .screenplay-option .btn { margin-top: 4px; align-self: flex-start; }
 
 /* ==========================================================================
-   CodeMirror — Base Theme
+   CodeMirror Base
    ========================================================================== */
 
-.cm-editor {
-    background: var(--bg-base);
-    color: var(--text-primary);
-    font-family: 'Courier Prime', 'Courier New', Courier, monospace;
-    font-size: 15px;
-    line-height: 1.5;
-}
-
+.cm-editor { background: var(--bg-base); color: var(--text-primary); font-family: 'Courier Prime', 'Courier New', Courier, monospace; font-size: 15px; line-height: 1.5; }
 .cm-editor .cm-content { caret-color: var(--accent); padding: 24px 0; }
 .cm-editor .cm-cursor, .cm-editor .cm-dropCursor { border-left-color: var(--accent); border-left-width: 2px; }
 .cm-editor .cm-selectionBackground, .cm-editor.cm-focused .cm-selectionBackground { background: var(--accent-subtle) !important; }
@@ -199,113 +84,42 @@
 
 /* ==========================================================================
    Screenplay Page Layout — Line-level formatting
-   Applied via ViewPlugin line decorations (cm-scf-* classes on .cm-line)
+   Applied via lineDecorationPlugin (cm-scf-* classes on .cm-line)
    ========================================================================== */
 
-/* Screenplay "page" feel — constrained width with auto margins */
-.cm-editor .cm-scroller {
-    padding: 24px 0;
-    overflow: auto;
-}
+.cm-editor .cm-scroller { padding: 24px 0; overflow: auto; }
+.cm-editor .cm-content { max-width: 680px; margin: 0 auto; padding: 24px 20px; }
 
-.cm-editor .cm-content {
-    max-width: 680px;    /* ~screenplay page width */
-    margin: 0 auto;
-    padding: 24px 20px;
-}
+/* Scene Heading — left-aligned, bold, top padding for visual scene break */
+.cm-line.cm-scf-heading { font-weight: bold; letter-spacing: 0.03em; padding-top: 12px; color: var(--text-primary); }
 
-/* --- Scene Heading ---
-   Left-aligned, bold, all-caps, full width.
-   Distinct from action with slight top margin for scene breaks. */
-.cm-line.cm-scf-heading {
-    font-weight: bold;
-    letter-spacing: 0.03em;
-    padding-top: 12px;
-    color: var(--text-primary);
-}
+/* Action — default, no special styling */
+.cm-line.cm-scf-action { }
 
-/* --- Action ---
-   Left-aligned, full width, normal weight.
-   The "default" look — no special indentation needed. */
-.cm-line.cm-scf-action {
-    /* default — no special styling */
-}
+/* Character Name — centered (screenplay convention: ~35-40% from left) */
+.cm-line.cm-scf-character { padding-left: 35%; color: var(--text-accent); }
 
-/* --- Character Name ---
-   Centered on the page. In screenplay format, character names sit
-   roughly 35-40% from the left margin. */
-.cm-line.cm-scf-character {
-    padding-left: 35%;
-    color: var(--text-accent);
-}
+/* Dialogue — narrower column, indented from both sides */
+.cm-line.cm-scf-dialogue { padding-left: 20%; padding-right: 20%; }
 
-/* --- Dialogue ---
-   Narrower column, indented from both sides.
-   Standard screenplay: ~25% from left, ~25% from right. */
-.cm-line.cm-scf-dialogue {
-    padding-left: 20%;
-    padding-right: 20%;
-}
+/* Parenthetical — more indented than dialogue, italic */
+.cm-line.cm-scf-parenthetical { padding-left: 28%; padding-right: 28%; font-style: italic; color: var(--text-secondary); }
 
-/* --- Parenthetical ---
-   More indented than dialogue, italic.
-   Sits between character and dialogue or within dialogue. */
-.cm-line.cm-scf-parenthetical {
-    padding-left: 28%;
-    padding-right: 28%;
-    font-style: italic;
-    color: var(--text-secondary);
-}
+/* Transition — right-aligned */
+.cm-line.cm-scf-transition { text-align: right; color: var(--text-muted); }
 
-/* --- Transition ---
-   Right-aligned, all-caps. */
-.cm-line.cm-scf-transition {
-    text-align: right;
-    color: var(--text-muted);
-}
+/* Title page */
+.cm-line.cm-scf-titleKey { color: var(--text-muted); }
+.cm-line.cm-scf-titleValue { color: var(--text-secondary); }
 
-/* --- Title Page ---
-   Centered, slightly muted. */
-.cm-line.cm-scf-titleKey {
-    color: var(--text-muted);
-}
-
-.cm-line.cm-scf-titleValue {
-    color: var(--text-secondary);
-}
-
-/* --- Section / Synopsis ---
-   Muted, for organizational markers. */
-.cm-line.cm-scf-section {
-    font-weight: bold;
-    color: var(--text-secondary);
-}
-
-.cm-line.cm-scf-synopsis {
-    font-style: italic;
-    color: var(--text-muted);
-}
-
-/* --- Centered text (> text <) --- */
-.cm-line.cm-scf-centered {
-    text-align: center;
-}
-
-/* --- Boneyard (comments) --- */
-.cm-line.cm-scf-boneyard {
-    color: var(--text-muted);
-    opacity: 0.4;
-}
-
-/* --- Blank lines --- */
-.cm-line.cm-scf-blank {
-    /* no special styling, just occupies space */
-}
+/* Section / Synopsis / Centered / Boneyard */
+.cm-line.cm-scf-section { font-weight: bold; color: var(--text-secondary); }
+.cm-line.cm-scf-synopsis { font-style: italic; color: var(--text-muted); }
+.cm-line.cm-scf-centered { text-align: center; }
+.cm-line.cm-scf-boneyard { color: var(--text-muted); opacity: 0.4; }
 
 /* ==========================================================================
-   Fountain Syntax Token Colors (span-level, from StreamLanguage)
-   These color the TEXT within lines. The line-level classes above
-   handle layout/positioning.
+   Fountain Token Colors (span-level from StreamLanguage)
    ========================================================================== */
 
 .cm-fountain-heading { color: var(--text-primary); font-weight: bold; }
@@ -325,76 +139,20 @@
    Autocomplete Dropdown
    ========================================================================== */
 
-.screenplay-autocomplete {
-    position: fixed;
-    background: var(--bg-raised);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-lg);
-    max-height: 240px;
-    overflow-y: auto;
-    z-index: 100;
-    min-width: 200px;
-    max-width: 400px;
-}
-
+.screenplay-autocomplete { position: fixed; background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); max-height: 240px; overflow-y: auto; z-index: 100; min-width: 200px; max-width: 400px; }
 .screenplay-autocomplete.hidden { display: none; }
-
-.screenplay-ac-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
-    cursor: pointer;
-    font-size: 13px;
-    color: var(--text-primary);
-    transition: background 0.1s;
-}
-
-.screenplay-ac-item:hover,
-.screenplay-ac-item.highlighted { background: var(--bg-hover); }
+.screenplay-ac-item { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px; color: var(--text-primary); transition: background 0.1s; }
+.screenplay-ac-item:hover, .screenplay-ac-item.highlighted { background: var(--bg-hover); }
 .screenplay-ac-item.highlighted { background: var(--accent-subtle); color: var(--text-accent); }
-
 .screenplay-ac-icon { font-size: 12px; flex-shrink: 0; }
 .screenplay-ac-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .screenplay-ac-meta { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); flex-shrink: 0; }
 .screenplay-ac-new { font-size: 11px; color: var(--success); font-style: italic; padding: 6px 12px; }
 
-/* --- Load error ----------------------------------------------------------- */
+/* --- Misc ----------------------------------------------------------------- */
 
-.screenplay-load-error {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: 1;
-    color: var(--text-muted);
-    font-size: 14px;
-    padding: 40px;
-}
+.screenplay-load-error { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--text-muted); font-size: 14px; padding: 40px; }
 
-/* --- Toast ---------------------------------------------------------------- */
-
-.toast {
-    position: fixed;
-    bottom: 48px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--bg-raised);
-    color: var(--text-primary);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 8px 16px;
-    font-size: 13px;
-    z-index: 1000;
-    animation: toast-in 0.2s ease, toast-out 0.3s ease 2.2s forwards;
-    pointer-events: none;
-}
-
-@keyframes toast-in {
-    from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-}
-@keyframes toast-out {
-    from { opacity: 1; }
-    to   { opacity: 0; }
-}
+.toast { position: fixed; bottom: 48px; left: 50%; transform: translateX(-50%); background: var(--bg-raised); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; padding: 8px 16px; font-size: 13px; z-index: 1000; animation: toast-in 0.2s ease, toast-out 0.3s ease 2.2s forwards; pointer-events: none; }
+@keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+@keyframes toast-out { from { opacity: 1; } to { opacity: 0; } }

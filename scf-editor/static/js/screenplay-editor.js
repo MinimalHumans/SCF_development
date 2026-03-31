@@ -1,11 +1,16 @@
 /**
- * Screenplay Editor — CodeMirror 6 + Fountain Language Mode
- * + Screenplay Page Layout (line decorations)
- * + Character/Location Autocomplete
+ * Screenplay Editor — Modal Writing System
+ * ==========================================
+ * Four writing modes driven by Enter/Tab:
+ *   Description (default) → Scene (Enter on blank) → Description (Enter)
+ *   Description → Tab → Character → Enter → Dialogue → Enter → Character ...
+ *   Character + Enter on empty → Description
+ *
+ * Mode is EXPLICITLY set by Enter/Tab and protected from context-detection
+ * for 300ms to prevent cursor-update listeners from overriding transitions.
  */
 
 const CM_STATE_DEP = '@codemirror/state@6.5.2';
-
 const { EditorState } = await import(`https://esm.sh/@codemirror/state@6.5.2`);
 const { EditorView, keymap, placeholder, drawSelection, Decoration, ViewPlugin, MatchDecorator } =
     await import(`https://esm.sh/@codemirror/view@6.36.5?deps=${CM_STATE_DEP}`);
@@ -17,11 +22,10 @@ const { StreamLanguage } =
 console.log('[SCF] All CodeMirror modules loaded');
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Shared Regex Patterns
+// Shared Patterns
 // ═══════════════════════════════════════════════════════════════════════════
 
 const HEADING_RE = /^(\.(?=[A-Z])|(?:INT|EXT|EST|I\/E|INT\.\/EXT\.)[\s./])/i;
-const HEADING_PREFIX_RE = /^\.?(?:INT|EXT|EST|I\/E|INT\.\/EXT\.)/i;  // looser — matches even without trailing space
 const CHARACTER_CUE_RE = /^[A-Z][A-Z0-9 ._\-']+(?:\s*\((?:V\.?O\.?|O\.?S\.?|CONT'?D?|O\.?C\.?)\))?$/;
 const TRANSITION_RE = /^[A-Z\s]+(?:TO|IN|OUT|UP):?\s*$/;
 const FORCED_TRANSITION_RE = /^>\s*.+/;
@@ -32,7 +36,7 @@ const SECTION_RE = /^#{1,6}\s/;
 const SYNOPSIS_RE = /^=\s/;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Fountain Language Mode (inline StreamLanguage tokenizer)
+// Fountain Language Mode (StreamLanguage — syntax coloring)
 // ═══════════════════════════════════════════════════════════════════════════
 
 const fountainStreamMode = {
@@ -60,13 +64,13 @@ const fountainStreamMode = {
                 if (state.prevLineBlank && trimmed !== '' && !TITLE_KEY_RE.test(line)) state.inTitlePage = false;
             }
             if (HEADING_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-heading'; }
-            if (SECTION_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-section'; }
-            if (SYNOPSIS_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-synopsis'; }
-            if (CENTERED_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-centered'; }
-            if (FORCED_TRANSITION_RE.test(trimmed) && !CENTERED_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-transition'; }
+            if (SECTION_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-section'; }
+            if (SYNOPSIS_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-synopsis'; }
+            if (CENTERED_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-centered'; }
+            if (FORCED_TRANSITION_RE.test(trimmed) && !CENTERED_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-transition'; }
             if (state.inDialogue && PARENTHETICAL_RE_LINE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-parenthetical'; }
             if (state.inDialogue) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-dialogue'; }
-            if (state.prevLineBlank && TRANSITION_RE.test(trimmed) && trimmed.length > 2) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-transition'; }
+            if (state.prevLineBlank && TRANSITION_RE.test(trimmed) && trimmed.length > 2) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-transition'; }
             if (state.prevLineBlank && CHARACTER_CUE_RE.test(trimmed) && trimmed.length > 1 && !TRANSITION_RE.test(trimmed)) {
                 stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = true; return 'fountain-character';
             }
@@ -78,204 +82,210 @@ const fountainStreamMode = {
     blankLine(state) { state.prevLineBlank = true; state.inDialogue = false; },
     languageData: { commentTokens: { block: { open: '/*', close: '*/' } } },
 };
-
 const fountainLanguage = StreamLanguage.define(fountainStreamMode);
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Line Decoration Plugin — Screenplay Page Layout
-// Scans lines and applies CSS classes to .cm-line divs for proper
-// screenplay formatting (centered characters, indented dialogue, etc.)
+// Line Decoration Plugin — visual screenplay formatting
+// Classifies lines by CONTENT for display. Mode system handles behavior.
 // ═══════════════════════════════════════════════════════════════════════════
 
-function classifyLine(trimmed, state) {
-    if (trimmed === '') { state.prevBlank = true; state.inDialogue = false; return 'blank'; }
-
-    if (state.inBoneyard) {
-        if (trimmed.includes('*/')) state.inBoneyard = false;
-        state.prevBlank = false; return 'boneyard';
+function classifyLine(trimmed, st) {
+    if (trimmed === '') { st.prevBlank = true; st.inDialogue = false; return 'blank'; }
+    if (st.inBoneyard) { if (trimmed.includes('*/')) st.inBoneyard = false; st.prevBlank = false; return 'boneyard'; }
+    if (trimmed.startsWith('/*')) { st.inBoneyard = true; if (trimmed.includes('*/')) st.inBoneyard = false; st.prevBlank = false; return 'boneyard'; }
+    if (st.inTitlePage) {
+        if (TITLE_KEY_RE.test(trimmed)) { st.prevBlank = false; return 'titleKey'; }
+        if (!st.prevBlank) { st.prevBlank = false; return 'titleValue'; }
+        st.inTitlePage = false;
     }
-    if (trimmed.startsWith('/*')) {
-        state.inBoneyard = true;
-        if (trimmed.includes('*/')) state.inBoneyard = false;
-        state.prevBlank = false; return 'boneyard';
+    if (HEADING_RE.test(trimmed)) { st.prevBlank = false; st.inDialogue = false; return 'heading'; }
+    if (SECTION_RE.test(trimmed)) { st.prevBlank = false; return 'section'; }
+    if (SYNOPSIS_RE.test(trimmed)) { st.prevBlank = false; return 'synopsis'; }
+    if (CENTERED_RE.test(trimmed)) { st.prevBlank = false; return 'centered'; }
+    if (FORCED_TRANSITION_RE.test(trimmed) && !CENTERED_RE.test(trimmed)) { st.prevBlank = false; return 'transition'; }
+    if (st.inDialogue && PARENTHETICAL_RE_LINE.test(trimmed)) { st.prevBlank = false; return 'parenthetical'; }
+    if (st.inDialogue) { st.prevBlank = false; return 'dialogue'; }
+    if (st.prevBlank && TRANSITION_RE.test(trimmed) && trimmed.length > 2) { st.prevBlank = false; return 'transition'; }
+    if (st.prevBlank && CHARACTER_CUE_RE.test(trimmed) && trimmed.length > 1 && !TRANSITION_RE.test(trimmed)) {
+        st.prevBlank = false; st.inDialogue = true; return 'character';
     }
-
-    if (state.inTitlePage) {
-        if (TITLE_KEY_RE.test(trimmed)) { state.prevBlank = false; return 'titleKey'; }
-        if (!state.prevBlank) { state.prevBlank = false; return 'titleValue'; }
-        state.inTitlePage = false; // blank line or non-key after blank ends title page
-    }
-
-    if (HEADING_RE.test(trimmed)) { state.prevBlank = false; state.inDialogue = false; return 'heading'; }
-    if (SECTION_RE.test(trimmed)) { state.prevBlank = false; state.inDialogue = false; return 'section'; }
-    if (SYNOPSIS_RE.test(trimmed)) { state.prevBlank = false; state.inDialogue = false; return 'synopsis'; }
-    if (CENTERED_RE.test(trimmed)) { state.prevBlank = false; state.inDialogue = false; return 'centered'; }
-    if (FORCED_TRANSITION_RE.test(trimmed) && !CENTERED_RE.test(trimmed)) { state.prevBlank = false; state.inDialogue = false; return 'transition'; }
-    if (state.inDialogue && PARENTHETICAL_RE_LINE.test(trimmed)) { state.prevBlank = false; return 'parenthetical'; }
-    if (state.inDialogue) { state.prevBlank = false; return 'dialogue'; }
-    if (state.prevBlank && TRANSITION_RE.test(trimmed) && trimmed.length > 2) { state.prevBlank = false; state.inDialogue = false; return 'transition'; }
-    if (state.prevBlank && CHARACTER_CUE_RE.test(trimmed) && trimmed.length > 1 && !TRANSITION_RE.test(trimmed)) {
-        state.prevBlank = false; state.inDialogue = true; return 'character';
-    }
-    if (trimmed.startsWith('@')) { state.prevBlank = false; state.inDialogue = true; return 'character'; }
-
-    state.prevBlank = false; state.inDialogue = false; return 'action';
+    if (trimmed.startsWith('@')) { st.prevBlank = false; st.inDialogue = true; return 'character'; }
+    st.prevBlank = false; st.inDialogue = false; return 'action';
 }
 
-const LINE_CLASS_MAP = {
+const LINE_CLS = {
     heading: 'cm-scf-heading', action: 'cm-scf-action', character: 'cm-scf-character',
     dialogue: 'cm-scf-dialogue', parenthetical: 'cm-scf-parenthetical',
     transition: 'cm-scf-transition', titleKey: 'cm-scf-titleKey', titleValue: 'cm-scf-titleValue',
     section: 'cm-scf-section', synopsis: 'cm-scf-synopsis', centered: 'cm-scf-centered',
-    boneyard: 'cm-scf-boneyard', blank: 'cm-scf-blank',
+    boneyard: 'cm-scf-boneyard',
 };
 
 const lineDecorationPlugin = ViewPlugin.fromClass(class {
     constructor(view) { this.decorations = this.build(view); }
     update(update) { if (update.docChanged || update.viewportChanged) this.decorations = this.build(update.view); }
     build(view) {
-        const decos = [];
-        const doc = view.state.doc;
-        const state = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
-
+        const decos = [], doc = view.state.doc;
+        const st = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
         for (let i = 1; i <= doc.lines; i++) {
-            const line = doc.line(i);
-            const trimmed = line.text.trim();
-            const type = classifyLine(trimmed, state);
-            const cls = LINE_CLASS_MAP[type];
-            if (cls && type !== 'blank') {
-                decos.push(Decoration.line({ attributes: { class: cls } }).range(line.from));
-            }
+            const type = classifyLine(doc.line(i).text.trim(), st);
+            const cls = LINE_CLS[type];
+            if (cls) decos.push(Decoration.line({ attributes: { class: cls } }).range(doc.line(i).from));
         }
         return Decoration.set(decos, true);
     }
 }, { decorations: v => v.decorations });
 
-// Also expose the classifyLine function for use in autocomplete context detection
-// We'll re-classify the current line and previous lines to know what element type we're on.
-
-function getLineContext(view) {
-    const doc = view.state.doc;
-    const sel = view.state.selection.main;
-    const curLine = doc.lineAt(sel.head);
-    const curNum = curLine.number;
-    const state = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
-
-    // Re-scan from start to current line to get accurate state
-    // For performance, start from max(1, curNum - 50) — dialogue context doesn't span that far
-    const startLine = Math.max(1, curNum - 50);
-    if (startLine > 1) {
-        // Approximate: assume not in title page or boneyard if we're far into the doc
-        state.inTitlePage = false;
-    }
-
-    let currentType = 'action';
-    for (let i = startLine; i <= curNum; i++) {
-        const trimmed = doc.line(i).text.trim();
-        currentType = classifyLine(trimmed, state);
-    }
-
-    return {
-        type: currentType,
-        inDialogue: state.inDialogue,
-        prevBlank: curNum > 1 ? doc.line(curNum - 1).text.trim() === '' : true,
-        lineText: curLine.text,
-        trimmed: curLine.text.trim(),
-    };
+// Get the Fountain element type at current cursor by scanning context
+function getLineType(view) {
+    const doc = view.state.doc, curNum = doc.lineAt(view.state.selection.main.head).number;
+    const st = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
+    const start = Math.max(1, curNum - 60);
+    if (start > 1) st.inTitlePage = false;
+    let type = 'action';
+    for (let i = start; i <= curNum; i++) type = classifyLine(doc.line(i).text.trim(), st);
+    return type;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Tab cycling — uses Celtx-style element switching
+// MODE STATE MACHINE
 // ═══════════════════════════════════════════════════════════════════════════
 
-const CYCLE_ORDER = ['action', 'heading', 'character', 'transition'];
+let currentMode = 'description';
+let modeLockUntil = 0;   // timestamp — context detection blocked until this
 
-function cycleElementType(view, direction) {
-    const state = view.state, sel = state.selection.main;
-    const fromLine = state.doc.lineAt(sel.from), toLine = state.doc.lineAt(sel.to);
-    if (fromLine.number !== toLine.number) return false;
-    const line = fromLine;
-    const ctx = getLineContext(view);
-    const currentType = CYCLE_ORDER.includes(ctx.type) ? ctx.type : 'action';
-    const idx = CYCLE_ORDER.indexOf(currentType);
-    const nextIdx = (idx + direction + CYCLE_ORDER.length) % CYCLE_ORDER.length;
-    const nextType = CYCLE_ORDER[nextIdx];
-
-    // Strip existing formatting markers to get raw content
-    let content = line.text;
-    content = content.replace(/^\.(?=[A-Z])/i, '');
-    content = content.replace(/^(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s*/i, '');
-    content = content.replace(/:(\s*)$/, '$1');
-    content = content.trim();
-
-    let newText = content, changes = [], needBlankAbove = false;
-    switch (nextType) {
-        case 'action': newText = content; break;
-        case 'heading': newText = 'INT. ' + content.toUpperCase(); needBlankAbove = true; break;
-        case 'character': newText = content.toUpperCase().replace(/[.,;!?]+$/, ''); needBlankAbove = true; break;
-        case 'transition': newText = content.toUpperCase(); if (!newText.endsWith(':')) newText += ':'; needBlankAbove = true; break;
+/**
+ * Set mode explicitly (from Enter/Tab). The 'explicit' flag
+ * activates a 300ms lock preventing detectModeFromContext from
+ * overriding the mode during the next few update cycles.
+ */
+function setMode(mode, explicit) {
+    currentMode = mode;
+    if (explicit) modeLockUntil = Date.now() + 300;
+    const el = document.getElementById('status-mode');
+    if (el) {
+        const labels = { description: 'Description', scene: 'Scene', character: 'Character', dialogue: 'Dialogue' };
+        el.textContent = labels[mode] || 'Description';
     }
-    if (needBlankAbove && line.number > 1 && state.doc.line(line.number - 1).text.trim() !== '') changes.push({ from: line.from, insert: '\n' });
-    changes.push({ from: line.from, to: line.to, insert: newText });
-    view.dispatch({ changes, selection: { anchor: line.from + newText.length + (needBlankAbove && line.number > 1 && state.doc.line(line.number - 1).text.trim() !== '' ? 1 : 0) } });
-    return true;
 }
 
-const tabCycleKeymap = keymap.of([
-    { key: 'Tab', run(view) { if (isAutocompleteVisible()) return false; return cycleElementType(view, 1); } },
-    { key: 'Shift-Tab', run(view) { if (isAutocompleteVisible()) return false; return cycleElementType(view, -1); } },
-]);
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Auto-Uppercase
-// ═══════════════════════════════════════════════════════════════════════════
-
-function isAllUpperContent(text) { return text.length === 0 || /^[A-Z0-9 ._\-'()]*$/.test(text); }
-function isSceneHeadingLine(text) { return /^(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s/i.test(text.trim()); }
-
-const autoUppercaseHandler = EditorView.inputHandler.of((view, from, to, text) => {
-    if (text.length !== 1 || !/[a-z]/.test(text)) return false;
-    const state = view.state, line = state.doc.lineAt(from);
-    const textBefore = state.doc.sliceString(line.from, from), textAfter = state.doc.sliceString(to, line.to);
-    if (isSceneHeadingLine(textBefore + text + textAfter)) {
-        view.dispatch({ changes: { from, to, insert: text.toUpperCase() }, selection: { anchor: from + 1 } }); return true;
+function detectModeFromContext(view) {
+    const type = getLineType(view);
+    switch (type) {
+        case 'heading': return 'scene';
+        case 'character': return 'character';
+        case 'dialogue': return 'dialogue';
+        case 'parenthetical': return 'dialogue';
+        default: return 'description';
     }
-    if (line.number > 1 && state.doc.line(line.number - 1).text.trim() === '' && isAllUpperContent(textBefore) && isAllUpperContent(textAfter)) {
-        view.dispatch({ changes: { from, to, insert: text.toUpperCase() }, selection: { anchor: from + 1 } }); return true;
-    }
-    return false;
-});
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Enter Key Behaviors
+// ENTER — modal transitions
+//
+// Description + content  → newline, stay Description
+// Description + empty    → newline, → Scene
+// Scene + content        → newline + blank, → Description
+// Scene + empty          → → Description (changed mind)
+// Character + content    → newline, → Dialogue
+// Character + empty      → newline, → Description (exit dialogue block)
+// Dialogue + content     → blank + newline, → Character (next speaker)
+// Dialogue + empty       → newline, → Character
 // ═══════════════════════════════════════════════════════════════════════════
 
 function handleEnter(view) {
-    if (isAutocompleteVisible()) return false; // let autocomplete keymap handle it
-    const state = view.state, sel = state.selection.main, line = state.doc.lineAt(sel.head);
-    const trimmed = line.text.trim();
-    const ctx = getLineContext(view);
+    if (isAutocompleteVisible()) return false;
 
-    // After character cue → drop into dialogue (single newline, no blank)
-    if (ctx.type === 'character' && sel.head === line.to) {
-        view.dispatch({ changes: { from: sel.head, insert: '\n' }, selection: { anchor: sel.head + 1 } }); return true;
-    }
-    // Empty line in dialogue → exit dialogue (add blank line separator)
-    if (trimmed === '' && ctx.inDialogue) {
-        view.dispatch({ changes: { from: sel.head, insert: '\n' }, selection: { anchor: sel.head + 1 } }); return true;
-    }
-    // After parenthetical → back to dialogue
-    if (ctx.type === 'parenthetical') {
-        view.dispatch({ changes: { from: sel.head, insert: '\n' }, selection: { anchor: sel.head + 1 } }); return true;
-    }
-    // After scene heading → blank line then action
-    if (ctx.type === 'heading') {
-        view.dispatch({ changes: { from: sel.head, insert: '\n\n' }, selection: { anchor: sel.head + 2 } }); return true;
+    const st = view.state, sel = st.selection.main;
+    const line = st.doc.lineAt(sel.head);
+    const hasContent = line.text.trim().length > 0;
+
+    switch (currentMode) {
+
+        case 'description':
+            if (hasContent) {
+                // Normal newline, stay in description
+                view.dispatch({ changes: { from: sel.head, insert: '\n' }, selection: { anchor: sel.head + 1 } });
+                // mode stays description — no explicit set needed
+                return true;
+            }
+            // Empty line → enter Scene Mode on next line
+            setMode('scene', true);
+            view.dispatch({ changes: { from: sel.head, insert: '\n' }, selection: { anchor: sel.head + 1 } });
+            return true;
+
+        case 'scene':
+            if (hasContent) {
+                // Typed a heading → blank line + newline, back to Description
+                setMode('description', true);
+                view.dispatch({ changes: { from: sel.head, insert: '\n\n' }, selection: { anchor: sel.head + 2 } });
+                return true;
+            }
+            // Empty scene line (changed mind) → just go to Description
+            setMode('description', true);
+            view.dispatch({ changes: { from: sel.head, insert: '\n' }, selection: { anchor: sel.head + 1 } });
+            return true;
+
+        case 'character':
+            if (hasContent) {
+                // Typed a character name → newline, enter Dialogue
+                setMode('dialogue', true);
+                view.dispatch({ changes: { from: sel.head, insert: '\n' }, selection: { anchor: sel.head + 1 } });
+                return true;
+            }
+            // Empty character line → exit dialogue block, back to Description
+            setMode('description', true);
+            view.dispatch({ changes: { from: sel.head, insert: '\n' }, selection: { anchor: sel.head + 1 } });
+            return true;
+
+        case 'dialogue':
+            if (hasContent) {
+                // Typed dialogue → blank line + newline, enter Character (next speaker)
+                setMode('character', true);
+                view.dispatch({ changes: { from: sel.head, insert: '\n\n' }, selection: { anchor: sel.head + 2 } });
+                return true;
+            }
+            // Empty dialogue line → go to Character
+            setMode('character', true);
+            view.dispatch({ changes: { from: sel.head, insert: '\n' }, selection: { anchor: sel.head + 1 } });
+            return true;
     }
     return false;
 }
 
 const enterKeymap = keymap.of([{ key: 'Enter', run: handleEnter }]);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TAB — enter Character Mode / Shift+Tab → Description
+// ═══════════════════════════════════════════════════════════════════════════
+
+function handleTab(view) {
+    if (isAutocompleteVisible()) return false;
+    // Tab → enter Character Mode (from any mode except dialogue-with-content)
+    setMode('character', true);
+    return true;
+}
+
+const tabKeymap = keymap.of([
+    { key: 'Tab', run: handleTab },
+    { key: 'Shift-Tab', run() { setMode('description', true); return true; } },
+]);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Auto-Uppercase — active in Scene and Character modes only
+// ═══════════════════════════════════════════════════════════════════════════
+
+const autoUppercaseHandler = EditorView.inputHandler.of((view, from, to, text) => {
+    if (text.length !== 1 || !/[a-z]/.test(text)) return false;
+    if (currentMode === 'scene' || currentMode === 'character') {
+        view.dispatch({
+            changes: { from, to, insert: text.toUpperCase() },
+            selection: { anchor: from + 1 },
+        });
+        return true;
+    }
+    return false;
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Anchor Tag Hiding
@@ -288,7 +298,7 @@ const anchorHidingPlugin = ViewPlugin.fromClass(class {
 }, { decorations: v => v.decorations });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Autocomplete — context-aware for characters and locations
+// Autocomplete — triggered by MODE, not by text patterns
 // ═══════════════════════════════════════════════════════════════════════════
 
 let acDropdown = null, acItems = [], acHighlight = -1, acType = null, acQuery = '', acDebounce = null, acNewTimer = null;
@@ -336,12 +346,12 @@ function showAutocompleteDropdown(items, type, coords) {
 
 function selectSuggestion(index) {
     if (index < 0 || index >= acItems.length || !editorView) return;
-    const item = acItems[index], state = editorView.state, line = state.doc.lineAt(state.selection.main.head);
+    const item = acItems[index], st = editorView.state, line = st.doc.lineAt(st.selection.main.head);
     if (acType === 'character') {
         editorView.dispatch({ changes: { from: line.from, to: line.to, insert: item.name }, selection: { anchor: line.from + item.name.length } });
     } else if (acType === 'location') {
-        const prefixMatch = line.text.match(/^(\.?(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s*)/i);
-        const prefix = prefixMatch ? prefixMatch[1] : '';
+        const m = line.text.match(/^(\.?(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s*)/i);
+        const prefix = m ? m[1] : '';
         const newText = prefix + item.name.toUpperCase() + ' - ';
         editorView.dispatch({ changes: { from: line.from, to: line.to, insert: newText }, selection: { anchor: line.from + newText.length } });
     }
@@ -350,33 +360,20 @@ function selectSuggestion(index) {
 
 function checkAutocompleteContext() {
     if (!editorView) return;
-    const state = editorView.state, sel = state.selection.main;
+    const st = editorView.state, sel = st.selection.main;
     if (!sel.empty) { hideAutocomplete(); return; }
-    const line = state.doc.lineAt(sel.head), trimmed = line.text.trim();
-    if (!trimmed) { hideAutocomplete(); return; }
+    const trimmed = st.doc.lineAt(sel.head).text.trim();
+    if (!trimmed || trimmed.length < 2) { hideAutocomplete(); return; }
 
-    const ctx = getLineContext(editorView);
-
-    // LOCATION autocomplete: only when the line IS a scene heading and has content after prefix
-    if (ctx.type === 'heading') {
-        const locPrefixMatch = trimmed.match(/^(\.?(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s+)(.+)/i);
-        if (locPrefixMatch) {
-            const afterPrefix = locPrefixMatch[2];
-            // Only suggest before " - " separator (location part, not time-of-day)
-            if (!afterPrefix.includes(' - ') && afterPrefix.trim().length >= 1) {
-                triggerAutocomplete('location', afterPrefix.replace(/\s*-\s*$/, '').trim());
-                return;
-            }
-        }
-        hideAutocomplete(); return;
+    if (currentMode === 'character') {
+        const query = trimmed.replace(/\s*\([^)]*\)\s*$/g, '').trim();
+        if (query.length >= 2) { triggerAutocomplete('character', query); return; }
     }
 
-    // CHARACTER autocomplete: only when the line IS classified as a character cue
-    if (ctx.type === 'character' && trimmed.length >= 2) {
-        // Strip extensions for the query
-        const charQuery = trimmed.replace(/\s*\([^)]*\)\s*$/g, '').trim();
-        if (charQuery.length >= 2) {
-            triggerAutocomplete('character', charQuery);
+    if (currentMode === 'scene') {
+        const m = trimmed.match(/^(\.?(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s+)(.+)/i);
+        if (m && !m[2].includes(' - ') && m[2].trim().length >= 1) {
+            triggerAutocomplete('location', m[2].replace(/\s*-\s*$/, '').trim());
             return;
         }
     }
@@ -393,8 +390,7 @@ function triggerAutocomplete(type, query) {
             ? `/api/screenplay/autocomplete-characters?q=${encodeURIComponent(query)}`
             : `/api/screenplay/autocomplete-locations?q=${encodeURIComponent(query)}`;
         try {
-            const res = await fetch(endpoint);
-            if (!res.ok) return;
+            const res = await fetch(endpoint); if (!res.ok) return;
             const items = await res.json();
             if (!editorView) return;
             if (!items.length) {
@@ -426,7 +422,7 @@ const autocompleteKeymap = keymap.of([
 ]);
 
 // ═══════════════════════════════════════════════════════════════════════════
-// State
+// Editor state
 // ═══════════════════════════════════════════════════════════════════════════
 
 let editorView = null;
@@ -435,23 +431,23 @@ let navScenes = [], navCharacters = [], navLocations = [];
 let activeFilter = null, liveScanTimer = null;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Toast + helpers
+// Helpers
 // ═══════════════════════════════════════════════════════════════════════════
 
 function showToast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2500); }
 function showSyncToast(sync) {
     const parts = [];
-    if (sync.scenes_created) parts.push(`${sync.scenes_created} new scene${sync.scenes_created > 1 ? 's' : ''}`);
-    if (sync.characters_created) parts.push(`${sync.characters_created} new character${sync.characters_created > 1 ? 's' : ''}`);
-    if (sync.locations_created) parts.push(`${sync.locations_created} new location${sync.locations_created > 1 ? 's' : ''}`);
-    if (sync.props_created) parts.push(`${sync.props_created} new prop${sync.props_created > 1 ? 's' : ''}`);
+    if (sync.scenes_created) parts.push(`${sync.scenes_created} scene${sync.scenes_created > 1 ? 's' : ''}`);
+    if (sync.characters_created) parts.push(`${sync.characters_created} character${sync.characters_created > 1 ? 's' : ''}`);
+    if (sync.locations_created) parts.push(`${sync.locations_created} location${sync.locations_created > 1 ? 's' : ''}`);
+    if (sync.props_created) parts.push(`${sync.props_created} prop${sync.props_created > 1 ? 's' : ''}`);
     if (parts.length) showToast('Synced: ' + parts.join(', '));
     if (sync.errors?.length) sync.errors.forEach(e => showToast('\u26a0 ' + e));
 }
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Navigator panel resize
+// Navigator
 // ═══════════════════════════════════════════════════════════════════════════
 
 function initNavigatorResize() {
@@ -469,10 +465,6 @@ function initNavigatorResize() {
     });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Navigator collapse
-// ═══════════════════════════════════════════════════════════════════════════
-
 const COLLAPSE_KEY = 'scf-navigator-collapse-state';
 function loadCollapseState() { try { return JSON.parse(localStorage.getItem(COLLAPSE_KEY)) || {}; } catch { return {}; } }
 function saveCollapseState(s) { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(s)); }
@@ -484,10 +476,6 @@ function initCollapseHandlers() {
         if (hdr) hdr.addEventListener('click', () => { sec.classList.toggle('collapsed'); const s = loadCollapseState(); s[sec.id] = sec.classList.contains('collapsed'); saveCollapseState(s); });
     });
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Navigator rendering
-// ═══════════════════════════════════════════════════════════════════════════
 
 function renderScenes() {
     const c = document.getElementById('nav-scenes-items'), b = document.getElementById('nav-scenes-count'); if (!c) return;
@@ -519,9 +507,7 @@ function renderCharacters() {
         const item = document.createElement('div'); item.className = 'nav-item nav-char-item';
         if (!ch.is_mapped) item.classList.add('unmapped'); item.dataset.charName = ch.name;
         item.innerHTML = `<span class="nav-item-icon">\ud83d\udc64</span><span class="nav-item-name">${esc(ch.display_name)}</span><span class="nav-item-badge">${ch.scene_count}</span>`;
-        if (ch.is_mapped && ch.character_id) {
-            const lk = document.createElement('a'); lk.className = 'nav-item-link'; lk.href = `/browse?entity_type=character&entity_id=${ch.character_id}`; lk.textContent = '\u2192'; lk.title = 'Open in Entity Browser'; lk.addEventListener('click', e => e.stopPropagation()); item.appendChild(lk);
-        }
+        if (ch.is_mapped && ch.character_id) { const lk = document.createElement('a'); lk.className = 'nav-item-link'; lk.href = `/browse?entity_type=character&entity_id=${ch.character_id}`; lk.textContent = '\u2192'; lk.title = 'Open in Entity Browser'; lk.addEventListener('click', e => e.stopPropagation()); item.appendChild(lk); }
         item.addEventListener('click', () => toggleFilter('character', ch.name)); f.appendChild(item);
     }
     c.innerHTML = ''; c.appendChild(f); applyFilterHighlight();
@@ -536,17 +522,11 @@ function renderLocations() {
         const item = document.createElement('div'); item.className = 'nav-item nav-loc-item';
         if (!loc.is_mapped) item.classList.add('unmapped'); item.dataset.locName = loc.name.toUpperCase();
         item.innerHTML = `<span class="nav-item-icon">\ud83d\udccd</span><span class="nav-item-name">${esc(loc.name)}</span><span class="nav-item-badge">${loc.scene_count}</span>`;
-        if (loc.is_mapped && loc.location_id) {
-            const lk = document.createElement('a'); lk.className = 'nav-item-link'; lk.href = `/browse?entity_type=location&entity_id=${loc.location_id}`; lk.textContent = '\u2192'; lk.title = 'Open in Entity Browser'; lk.addEventListener('click', e => e.stopPropagation()); item.appendChild(lk);
-        }
+        if (loc.is_mapped && loc.location_id) { const lk = document.createElement('a'); lk.className = 'nav-item-link'; lk.href = `/browse?entity_type=location&entity_id=${loc.location_id}`; lk.textContent = '\u2192'; lk.title = 'Open in Entity Browser'; lk.addEventListener('click', e => e.stopPropagation()); item.appendChild(lk); }
         item.addEventListener('click', () => toggleFilter('location', loc.name.toUpperCase())); f.appendChild(item);
     }
     c.innerHTML = ''; c.appendChild(f); applyFilterHighlight();
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Filtering
-// ═══════════════════════════════════════════════════════════════════════════
 
 function toggleFilter(type, name) { activeFilter = (activeFilter && activeFilter.type === type && activeFilter.name === name) ? null : { type, name }; applyFilter(); applyFilterHighlight(); }
 function applyFilter() {
@@ -565,10 +545,6 @@ function applyFilterHighlight() {
     document.querySelectorAll('.nav-loc-item').forEach(i => i.classList.toggle('active', !!(activeFilter && activeFilter.type === 'location' && i.dataset.locName === activeFilter.name)));
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Click-to-scroll & scene tracking
-// ═══════════════════════════════════════════════════════════════════════════
-
 function scrollToLine(ln) {
     if (!editorView) return; const n = ln + 1; if (n < 1 || n > editorView.state.doc.lines) return;
     editorView.dispatch({ selection: { anchor: editorView.state.doc.line(n).from }, scrollIntoView: true }); editorView.focus();
@@ -579,21 +555,18 @@ function updateCurrentScene() {
     const cur0 = editorView.state.doc.lineAt(editorView.state.selection.main.head).number - 1;
     let idx = -1;
     for (let i = navScenes.length - 1; i >= 0; i--) { if (cur0 >= navScenes[i].line_number) { idx = i; break; } }
-    const items = document.querySelectorAll('.nav-scene-item');
-    items.forEach((el, i) => el.classList.toggle('active', i === idx));
-    if (idx >= 0 && items[idx]) { const el = items[idx], ct = document.getElementById('nav-scenes-items'); if (ct) { const er = el.getBoundingClientRect(), cr = ct.getBoundingClientRect(); if (er.top < cr.top || er.bottom > cr.bottom) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } }
+    document.querySelectorAll('.nav-scene-item').forEach((el, i) => el.classList.toggle('active', i === idx));
     const se = document.getElementById('status-scene');
     if (se) se.textContent = idx >= 0 ? `Sc ${navScenes[idx].scene_number}/${navScenes.length}` : `Sc \u2014/${navScenes.length}`;
-    updateCharsStatus(idx);
-}
-
-function updateCharsStatus(idx) {
-    const el = document.getElementById('status-chars'); if (!el) return;
-    if (idx < 0 || !navScenes[idx]) { el.textContent = ''; return; }
-    const chars = navScenes[idx].characters || [];
-    if (!chars.length) { el.textContent = ''; return; }
-    const tc = s => s.split(' ').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
-    el.textContent = chars.length <= 3 ? 'Chars: ' + chars.map(tc).join(', ') : 'Chars: ' + chars.slice(0, 3).map(tc).join(', ') + `, +${chars.length - 3}`;
+    const charsEl = document.getElementById('status-chars');
+    if (charsEl) {
+        if (idx < 0 || !navScenes[idx]) { charsEl.textContent = ''; }
+        else {
+            const chars = navScenes[idx].characters || [];
+            const tc = s => s.split(' ').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+            charsEl.textContent = !chars.length ? '' : chars.length <= 3 ? 'Chars: ' + chars.map(tc).join(', ') : 'Chars: ' + chars.slice(0, 3).map(tc).join(', ') + `, +${chars.length - 3}`;
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -619,10 +592,10 @@ function markSaveFailed() { saving = false; setSaveStatus('Save failed', 'var(--
 
 function liveScanScenes() {
     if (!editorView) return;
-    const lines = editorView.state.doc.toString().split('\n'), scanned = []; let prevBlank = true;
+    const lines = editorView.state.doc.toString().split('\n'), scanned = [];
     for (let i = 0; i < lines.length; i++) {
-        const stripped = lines[i].trim(), clean = stripped.replace(/\[\[scf:\w+:\d+\]\]/g, '').trim();
-        if (clean === '') { prevBlank = true; continue; }
+        const clean = lines[i].trim().replace(/\[\[scf:\w+:\d+\]\]/g, '').trim();
+        if (clean === '') continue;
         if (HEADING_RE.test(clean)) {
             const cs = new Set(); let pb = true;
             for (let j = i + 1; j < lines.length; j++) {
@@ -633,7 +606,6 @@ function liveScanScenes() {
             }
             scanned.push({ scene_number: scanned.length + 1, name: clean, line_number: i, character_count: cs.size, characters: Array.from(cs).sort(), scene_id: null });
         }
-        prevBlank = (stripped === '');
     }
     if (navScenes.length) {
         const old = {}, oc = {}; for (const s of navScenes) { const k = s.name.toUpperCase(), o = oc[k] || 0; oc[k] = o + 1; old[k + ':' + o] = s.scene_id; }
@@ -642,10 +614,6 @@ function liveScanScenes() {
     navScenes = scanned; renderScenes();
 }
 function scheduleLiveScan() { if (liveScanTimer) clearTimeout(liveScanTimer); liveScanTimer = setTimeout(liveScanScenes, 500); }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Navigator data fetching
-// ═══════════════════════════════════════════════════════════════════════════
 
 async function fetchNavigatorData() {
     try {
@@ -693,14 +661,33 @@ function createEditor(container) {
         extensions: [
             fountainLanguage, history(), drawSelection(), EditorView.lineWrapping,
             placeholder('Loading screenplay\u2026'),
-            lineDecorationPlugin,   // screenplay page layout
-            autocompleteKeymap,     // priority over tab/enter when dropdown visible
-            tabCycleKeymap, enterKeymap, autoUppercaseHandler, anchorHidingPlugin,
-            keymap.of([{ key: 'Mod-s', run() { saveScreenplay(); return true; } }, ...defaultKeymap, ...historyKeymap]),
+            lineDecorationPlugin,
+            autocompleteKeymap,     // highest priority when dropdown visible
+            tabKeymap,              // Tab/Shift-Tab for mode switching
+            enterKeymap,            // Enter for mode transitions
+            autoUppercaseHandler,
+            anchorHidingPlugin,
+            keymap.of([
+                { key: 'Mod-s', run() { saveScreenplay(); return true; } },
+                ...defaultKeymap,
+                ...historyKeymap,
+            ]),
             EditorView.updateListener.of((update) => {
                 if (update.selectionSet || update.docChanged) updateCursorStatus(update.state);
-                if (update.docChanged) { markUnsaved(); scheduleLiveScan(); checkAutocompleteContext(); }
-                else if (update.selectionSet) checkAutocompleteContext();
+
+                if (update.docChanged) {
+                    markUnsaved();
+                    scheduleLiveScan();
+                    checkAutocompleteContext();
+                } else if (update.selectionSet) {
+                    // Cursor moved (click, arrow keys) without doc change.
+                    // Only detect mode from context if we're NOT in a
+                    // mode-lock window from a recent Enter/Tab.
+                    if (Date.now() > modeLockUntil) {
+                        setMode(detectModeFromContext(update.view));
+                    }
+                    checkAutocompleteContext();
+                }
             }),
             EditorView.domEventHandlers({ blur() { setTimeout(hideAutocomplete, 150); } }),
             EditorView.theme({
@@ -720,16 +707,14 @@ function createEditor(container) {
 // Initialize
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('[SCF] Screenplay editor module loaded');
 const container = document.getElementById('screenplay-panel');
 if (container) {
-    console.log('[SCF] Initializing CodeMirror...');
     editorView = createEditor(container);
-    console.log('[SCF] CodeMirror initialized successfully');
     initNavigatorResize(); initCollapseHandlers(); loadScreenplay();
     document.getElementById('btn-save-screenplay')?.addEventListener('click', saveScreenplay);
     document.getElementById('btn-export-screenplay')?.addEventListener('click', exportScreenplay);
     window.addEventListener('beforeunload', (e) => { if (unsaved) { e.preventDefault(); e.returnValue = ''; } });
+    setMode('description', true);
 }
 
 export { editorView, saveScreenplay, exportScreenplay };

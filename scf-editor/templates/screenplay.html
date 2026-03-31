@@ -9,8 +9,6 @@
 </head>
 <body>
     <div class="app-layout">
-
-        <!-- Header -->
         <header class="app-header">
             <span class="logo">SCF</span>
             <span class="header-sep">/</span>
@@ -67,6 +65,8 @@
         </div>
 
         <div class="screenplay-status-bar">
+            <span class="status-item status-mode-item" id="status-mode">Description</span>
+            <span class="status-divider"></span>
             <span class="status-item" id="status-scene">Sc &mdash;</span>
             <span class="status-divider"></span>
             <span class="status-item status-chars" id="status-chars"></span>
@@ -107,7 +107,6 @@
             </div>
         </div>
         {% endif %}
-
     </div>
 
     {% if has_fountain %}
