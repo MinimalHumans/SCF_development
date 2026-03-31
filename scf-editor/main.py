@@ -22,6 +22,7 @@ import database as db
 import queries
 import fountain_import
 import fountain_anchors
+import fountain_sync
 from fountain_parser import parse as fountain_parse, _match_scene_heading, _is_character_cue, _CHAR_EXTENSION_RE
 from datetime import date, datetime
 import re
@@ -724,9 +725,14 @@ async def api_screenplay_save(request: Request):
 
     fountain_path.write_text(reanchored, encoding="utf-8")
 
+    # Run sync engine — parse screenplay and update database
+    db_path = _require_project(request)
+    sync_report = fountain_sync.sync(db_path, fountain_path)
+
     return JSONResponse({
         "success": True,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "sync": sync_report.to_dict(),
     })
 
 

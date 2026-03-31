@@ -281,6 +281,18 @@ function showToast(message) {
     setTimeout(() => toast.remove(), 2500);
 }
 
+function showSyncToast(sync) {
+    const parts = [];
+    if (sync.scenes_created)     parts.push(`${sync.scenes_created} new scene${sync.scenes_created > 1 ? 's' : ''}`);
+    if (sync.characters_created) parts.push(`${sync.characters_created} new character${sync.characters_created > 1 ? 's' : ''}`);
+    if (sync.locations_created)  parts.push(`${sync.locations_created} new location${sync.locations_created > 1 ? 's' : ''}`);
+    if (sync.props_created)      parts.push(`${sync.props_created} new prop${sync.props_created > 1 ? 's' : ''}`);
+    if (parts.length) showToast('Synced: ' + parts.join(', '));
+    if (sync.errors && sync.errors.length) {
+        for (const err of sync.errors) showToast('\u26a0 ' + err);
+    }
+}
+
 // ── Navigator panel resize ──────────────────────────────────────────────────
 
 function initNavigatorResize() {
@@ -398,7 +410,9 @@ async function saveScreenplay() {
             const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
             throw new Error(err.detail || 'Save failed');
         }
+        const data = await res.json();
         markSaved();
+        if (data.sync) showSyncToast(data.sync);
     } catch (e) {
         markSaveFailed();
         showToast(`Save error: ${e.message}`);
