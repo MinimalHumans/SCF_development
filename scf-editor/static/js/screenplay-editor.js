@@ -1,7 +1,7 @@
 /**
- * Screenplay Editor — CodeMirror 6 + Fountain Language Mode + Autocomplete
- * ==========================================================================
- * DEBUG VERSION — console.log in autocomplete functions
+ * Screenplay Editor — CodeMirror 6 + Fountain Language Mode
+ * + Screenplay Page Layout (line decorations)
+ * + Character/Location Autocomplete
  */
 
 const CM_STATE_DEP = '@codemirror/state@6.5.2';
@@ -17,18 +17,23 @@ const { StreamLanguage } =
 console.log('[SCF] All CodeMirror modules loaded');
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Fountain Language Mode (inline)
+// Shared Regex Patterns
 // ═══════════════════════════════════════════════════════════════════════════
 
-const SCENE_HEADING_MODE_RE = /^(\.(?=[A-Z])|(?:INT|EXT|EST|I\/E|INT\.\/EXT\.)[\s./])(.*)$/i;
-const TRANSITION_MODE_RE = /^[A-Z\s]+(?:TO|IN|OUT|UP):?\s*$/;
+const HEADING_RE = /^(\.(?=[A-Z])|(?:INT|EXT|EST|I\/E|INT\.\/EXT\.)[\s./])/i;
+const HEADING_PREFIX_RE = /^\.?(?:INT|EXT|EST|I\/E|INT\.\/EXT\.)/i;  // looser — matches even without trailing space
+const CHARACTER_CUE_RE = /^[A-Z][A-Z0-9 ._\-']+(?:\s*\((?:V\.?O\.?|O\.?S\.?|CONT'?D?|O\.?C\.?)\))?$/;
+const TRANSITION_RE = /^[A-Z\s]+(?:TO|IN|OUT|UP):?\s*$/;
 const FORCED_TRANSITION_RE = /^>\s*.+/;
-const CHAR_CUE_MODE_RE = /^[A-Z][A-Z0-9 ._\-']+(?:\s*\((?:V\.?O\.?|O\.?S\.?|CONT'?D?|O\.?C\.?)\))?$/;
-const PARENTHETICAL_MODE_RE = /^\s*\(.*\)\s*$/;
+const PARENTHETICAL_RE_LINE = /^\s*\(.*\)\s*$/;
 const TITLE_KEY_RE = /^(Title|Credit|Author|Authors|Source|Notes|Draft date|Date|Contact|Copyright|Revision|Font)\s*:/i;
 const CENTERED_RE = /^>.*<$/;
 const SECTION_RE = /^#{1,6}\s/;
 const SYNOPSIS_RE = /^=\s/;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Fountain Language Mode (inline StreamLanguage tokenizer)
+// ═══════════════════════════════════════════════════════════════════════════
 
 const fountainStreamMode = {
     name: 'fountain',
@@ -54,15 +59,15 @@ const fountainStreamMode = {
                 if (!state.prevLineBlank && trimmed !== '') { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-titleValue'; }
                 if (state.prevLineBlank && trimmed !== '' && !TITLE_KEY_RE.test(line)) state.inTitlePage = false;
             }
-            if (SCENE_HEADING_MODE_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-heading'; }
+            if (HEADING_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-heading'; }
             if (SECTION_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-section'; }
             if (SYNOPSIS_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-synopsis'; }
             if (CENTERED_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-centered'; }
             if (FORCED_TRANSITION_RE.test(trimmed) && !CENTERED_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-transition'; }
-            if (state.inDialogue && PARENTHETICAL_MODE_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-parenthetical'; }
+            if (state.inDialogue && PARENTHETICAL_RE_LINE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-parenthetical'; }
             if (state.inDialogue) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-dialogue'; }
-            if (state.prevLineBlank && TRANSITION_MODE_RE.test(trimmed) && trimmed.length > 2) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-transition'; }
-            if (state.prevLineBlank && CHAR_CUE_MODE_RE.test(trimmed) && trimmed.length > 1 && !TRANSITION_MODE_RE.test(trimmed)) {
+            if (state.prevLineBlank && TRANSITION_RE.test(trimmed) && trimmed.length > 2) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-transition'; }
+            if (state.prevLineBlank && CHARACTER_CUE_RE.test(trimmed) && trimmed.length > 1 && !TRANSITION_RE.test(trimmed)) {
                 stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = true; return 'fountain-character';
             }
             if (trimmed.startsWith('@')) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = true; return 'fountain-character'; }
@@ -77,21 +82,111 @@ const fountainStreamMode = {
 const fountainLanguage = StreamLanguage.define(fountainStreamMode);
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Element type detection & Tab cycling
+// Line Decoration Plugin — Screenplay Page Layout
+// Scans lines and applies CSS classes to .cm-line divs for proper
+// screenplay formatting (centered characters, indented dialogue, etc.)
 // ═══════════════════════════════════════════════════════════════════════════
 
-const HEADING_RE = /^(\.(?=[A-Z])|(?:INT|EXT|EST|I\/E|INT\.\/EXT\.)[\s./])/i;
-const CHARACTER_CUE_RE = /^[A-Z][A-Z0-9 ._\-']+(?:\s*\((?:V\.?O\.?|O\.?S\.?|CONT'?D?|O\.?C\.?)\))?$/;
+function classifyLine(trimmed, state) {
+    if (trimmed === '') { state.prevBlank = true; state.inDialogue = false; return 'blank'; }
 
-function detectElementType(lineText, prevLineBlank) {
-    const trimmed = lineText.trim();
-    if (trimmed === '') return 'action';
-    if (HEADING_RE.test(trimmed)) return 'heading';
-    if (/^[A-Z][A-Z\s]+:$/.test(trimmed)) return 'transition';
-    if (prevLineBlank && CHARACTER_CUE_RE.test(trimmed) && !/[.,;!?]$/.test(trimmed)) return 'character';
-    if (prevLineBlank && /^[A-Z][A-Z0-9 ._\-']{1,}$/.test(trimmed)) return 'character';
-    return 'action';
+    if (state.inBoneyard) {
+        if (trimmed.includes('*/')) state.inBoneyard = false;
+        state.prevBlank = false; return 'boneyard';
+    }
+    if (trimmed.startsWith('/*')) {
+        state.inBoneyard = true;
+        if (trimmed.includes('*/')) state.inBoneyard = false;
+        state.prevBlank = false; return 'boneyard';
+    }
+
+    if (state.inTitlePage) {
+        if (TITLE_KEY_RE.test(trimmed)) { state.prevBlank = false; return 'titleKey'; }
+        if (!state.prevBlank) { state.prevBlank = false; return 'titleValue'; }
+        state.inTitlePage = false; // blank line or non-key after blank ends title page
+    }
+
+    if (HEADING_RE.test(trimmed)) { state.prevBlank = false; state.inDialogue = false; return 'heading'; }
+    if (SECTION_RE.test(trimmed)) { state.prevBlank = false; state.inDialogue = false; return 'section'; }
+    if (SYNOPSIS_RE.test(trimmed)) { state.prevBlank = false; state.inDialogue = false; return 'synopsis'; }
+    if (CENTERED_RE.test(trimmed)) { state.prevBlank = false; state.inDialogue = false; return 'centered'; }
+    if (FORCED_TRANSITION_RE.test(trimmed) && !CENTERED_RE.test(trimmed)) { state.prevBlank = false; state.inDialogue = false; return 'transition'; }
+    if (state.inDialogue && PARENTHETICAL_RE_LINE.test(trimmed)) { state.prevBlank = false; return 'parenthetical'; }
+    if (state.inDialogue) { state.prevBlank = false; return 'dialogue'; }
+    if (state.prevBlank && TRANSITION_RE.test(trimmed) && trimmed.length > 2) { state.prevBlank = false; state.inDialogue = false; return 'transition'; }
+    if (state.prevBlank && CHARACTER_CUE_RE.test(trimmed) && trimmed.length > 1 && !TRANSITION_RE.test(trimmed)) {
+        state.prevBlank = false; state.inDialogue = true; return 'character';
+    }
+    if (trimmed.startsWith('@')) { state.prevBlank = false; state.inDialogue = true; return 'character'; }
+
+    state.prevBlank = false; state.inDialogue = false; return 'action';
 }
+
+const LINE_CLASS_MAP = {
+    heading: 'cm-scf-heading', action: 'cm-scf-action', character: 'cm-scf-character',
+    dialogue: 'cm-scf-dialogue', parenthetical: 'cm-scf-parenthetical',
+    transition: 'cm-scf-transition', titleKey: 'cm-scf-titleKey', titleValue: 'cm-scf-titleValue',
+    section: 'cm-scf-section', synopsis: 'cm-scf-synopsis', centered: 'cm-scf-centered',
+    boneyard: 'cm-scf-boneyard', blank: 'cm-scf-blank',
+};
+
+const lineDecorationPlugin = ViewPlugin.fromClass(class {
+    constructor(view) { this.decorations = this.build(view); }
+    update(update) { if (update.docChanged || update.viewportChanged) this.decorations = this.build(update.view); }
+    build(view) {
+        const decos = [];
+        const doc = view.state.doc;
+        const state = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
+
+        for (let i = 1; i <= doc.lines; i++) {
+            const line = doc.line(i);
+            const trimmed = line.text.trim();
+            const type = classifyLine(trimmed, state);
+            const cls = LINE_CLASS_MAP[type];
+            if (cls && type !== 'blank') {
+                decos.push(Decoration.line({ attributes: { class: cls } }).range(line.from));
+            }
+        }
+        return Decoration.set(decos, true);
+    }
+}, { decorations: v => v.decorations });
+
+// Also expose the classifyLine function for use in autocomplete context detection
+// We'll re-classify the current line and previous lines to know what element type we're on.
+
+function getLineContext(view) {
+    const doc = view.state.doc;
+    const sel = view.state.selection.main;
+    const curLine = doc.lineAt(sel.head);
+    const curNum = curLine.number;
+    const state = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
+
+    // Re-scan from start to current line to get accurate state
+    // For performance, start from max(1, curNum - 50) — dialogue context doesn't span that far
+    const startLine = Math.max(1, curNum - 50);
+    if (startLine > 1) {
+        // Approximate: assume not in title page or boneyard if we're far into the doc
+        state.inTitlePage = false;
+    }
+
+    let currentType = 'action';
+    for (let i = startLine; i <= curNum; i++) {
+        const trimmed = doc.line(i).text.trim();
+        currentType = classifyLine(trimmed, state);
+    }
+
+    return {
+        type: currentType,
+        inDialogue: state.inDialogue,
+        prevBlank: curNum > 1 ? doc.line(curNum - 1).text.trim() === '' : true,
+        lineText: curLine.text,
+        trimmed: curLine.text.trim(),
+    };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Tab cycling — uses Celtx-style element switching
+// ═══════════════════════════════════════════════════════════════════════════
 
 const CYCLE_ORDER = ['action', 'heading', 'character', 'transition'];
 
@@ -100,12 +195,19 @@ function cycleElementType(view, direction) {
     const fromLine = state.doc.lineAt(sel.from), toLine = state.doc.lineAt(sel.to);
     if (fromLine.number !== toLine.number) return false;
     const line = fromLine;
-    let prevLineBlank = line.number <= 1 || state.doc.line(line.number - 1).text.trim() === '';
-    const currentType = detectElementType(line.text, prevLineBlank);
+    const ctx = getLineContext(view);
+    const currentType = CYCLE_ORDER.includes(ctx.type) ? ctx.type : 'action';
     const idx = CYCLE_ORDER.indexOf(currentType);
     const nextIdx = (idx + direction + CYCLE_ORDER.length) % CYCLE_ORDER.length;
     const nextType = CYCLE_ORDER[nextIdx];
-    let content = line.text.replace(/^\.(?=[A-Z])/i, '').replace(/^(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s*/i, '').replace(/:(\s*)$/, '$1').trim();
+
+    // Strip existing formatting markers to get raw content
+    let content = line.text;
+    content = content.replace(/^\.(?=[A-Z])/i, '');
+    content = content.replace(/^(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s*/i, '');
+    content = content.replace(/:(\s*)$/, '$1');
+    content = content.trim();
+
     let newText = content, changes = [], needBlankAbove = false;
     switch (nextType) {
         case 'action': newText = content; break;
@@ -120,8 +222,8 @@ function cycleElementType(view, direction) {
 }
 
 const tabCycleKeymap = keymap.of([
-    { key: 'Tab', run(view) { return cycleElementType(view, 1); } },
-    { key: 'Shift-Tab', run(view) { return cycleElementType(view, -1); } },
+    { key: 'Tab', run(view) { if (isAutocompleteVisible()) return false; return cycleElementType(view, 1); } },
+    { key: 'Shift-Tab', run(view) { if (isAutocompleteVisible()) return false; return cycleElementType(view, -1); } },
 ]);
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -148,30 +250,26 @@ const autoUppercaseHandler = EditorView.inputHandler.of((view, from, to, text) =
 // Enter Key Behaviors
 // ═══════════════════════════════════════════════════════════════════════════
 
-function isInDialogueContext(state, lineNumber) {
-    for (let i = lineNumber - 1; i >= 1; i--) {
-        const text = state.doc.line(i).text.trim();
-        if (text === '') return false;
-        if (i >= 2 && state.doc.line(i - 1).text.trim() === '' && CHARACTER_CUE_RE.test(text)) return true;
-        if (i === 1 && CHARACTER_CUE_RE.test(text)) return true;
-    }
-    return false;
-}
-
 function handleEnter(view) {
+    if (isAutocompleteVisible()) return false; // let autocomplete keymap handle it
     const state = view.state, sel = state.selection.main, line = state.doc.lineAt(sel.head);
     const trimmed = line.text.trim();
-    const prevLineBlank = line.number <= 1 || state.doc.line(line.number - 1).text.trim() === '';
-    if (prevLineBlank && CHARACTER_CUE_RE.test(trimmed) && trimmed.length > 1 && sel.head === line.to) {
+    const ctx = getLineContext(view);
+
+    // After character cue → drop into dialogue (single newline, no blank)
+    if (ctx.type === 'character' && sel.head === line.to) {
         view.dispatch({ changes: { from: sel.head, insert: '\n' }, selection: { anchor: sel.head + 1 } }); return true;
     }
-    if (trimmed === '' && line.number > 1 && isInDialogueContext(state, line.number)) {
+    // Empty line in dialogue → exit dialogue (add blank line separator)
+    if (trimmed === '' && ctx.inDialogue) {
         view.dispatch({ changes: { from: sel.head, insert: '\n' }, selection: { anchor: sel.head + 1 } }); return true;
     }
-    if (/^\s*\(.*\)\s*$/.test(line.text) && isInDialogueContext(state, line.number)) {
+    // After parenthetical → back to dialogue
+    if (ctx.type === 'parenthetical') {
         view.dispatch({ changes: { from: sel.head, insert: '\n' }, selection: { anchor: sel.head + 1 } }); return true;
     }
-    if (HEADING_RE.test(trimmed)) {
+    // After scene heading → blank line then action
+    if (ctx.type === 'heading') {
         view.dispatch({ changes: { from: sel.head, insert: '\n\n' }, selection: { anchor: sel.head + 2 } }); return true;
     }
     return false;
@@ -190,56 +288,40 @@ const anchorHidingPlugin = ViewPlugin.fromClass(class {
 }, { decorations: v => v.decorations });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Autocomplete (with DEBUG logging)
+// Autocomplete — context-aware for characters and locations
 // ═══════════════════════════════════════════════════════════════════════════
 
-let acDropdown = null;
-let acItems = [];
-let acHighlight = -1;
-let acType = null;
-let acQuery = '';
-let acDebounce = null;
-let acNewTimer = null;
+let acDropdown = null, acItems = [], acHighlight = -1, acType = null, acQuery = '', acDebounce = null, acNewTimer = null;
 
 function getOrCreateDropdown() {
     if (!acDropdown) {
         acDropdown = document.createElement('div');
         acDropdown.className = 'screenplay-autocomplete hidden';
         document.body.appendChild(acDropdown);
-        document.addEventListener('click', (e) => {
-            if (acDropdown && !acDropdown.contains(e.target)) hideAutocomplete();
-        });
+        document.addEventListener('click', (e) => { if (acDropdown && !acDropdown.contains(e.target)) hideAutocomplete(); });
     }
     return acDropdown;
 }
-
-function isAutocompleteVisible() {
-    return acDropdown && !acDropdown.classList.contains('hidden');
-}
-
+function isAutocompleteVisible() { return acDropdown && !acDropdown.classList.contains('hidden'); }
 function hideAutocomplete() {
     if (acDropdown) { acDropdown.classList.add('hidden'); acDropdown.innerHTML = ''; }
     acItems = []; acHighlight = -1; acType = null; acQuery = '';
     if (acDebounce) { clearTimeout(acDebounce); acDebounce = null; }
     if (acNewTimer) { clearTimeout(acNewTimer); acNewTimer = null; }
 }
-
 function updateAcHighlight() {
     if (!acDropdown) return;
     acDropdown.querySelectorAll('.screenplay-ac-item').forEach((el, i) => el.classList.toggle('highlighted', i === acHighlight));
-    const hl = acDropdown.querySelector('.highlighted');
-    if (hl) hl.scrollIntoView({ block: 'nearest' });
+    const hl = acDropdown.querySelector('.highlighted'); if (hl) hl.scrollIntoView({ block: 'nearest' });
 }
 
 function showAutocompleteDropdown(items, type, coords) {
-    console.log('[AC] Showing dropdown with', items.length, 'items');
     const dd = getOrCreateDropdown();
     acItems = items; acHighlight = items.length > 0 ? 0 : -1; acType = type;
     dd.innerHTML = '';
     items.forEach((item, i) => {
         const el = document.createElement('div');
         el.className = 'screenplay-ac-item' + (i === 0 ? ' highlighted' : '');
-        el.dataset.index = i;
         const icon = type === 'character' ? '\ud83d\udc64' : '\ud83d\udccd';
         const name = type === 'character' ? (item.display_name || item.name) : item.name;
         el.innerHTML = `<span class="screenplay-ac-icon">${icon}</span><span class="screenplay-ac-name">${esc(name)}</span>`;
@@ -273,56 +355,47 @@ function checkAutocompleteContext() {
     const line = state.doc.lineAt(sel.head), trimmed = line.text.trim();
     if (!trimmed) { hideAutocomplete(); return; }
 
-    // ─── DEBUG ───
-    console.log('[AC] check:', JSON.stringify(trimmed), 'lineNum:', line.number, 'len:', trimmed.length);
+    const ctx = getLineContext(editorView);
 
-    // Location: line starts with INT./EXT.
-    const locPrefixMatch = trimmed.match(/^(\.?(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s+)(.+)/i);
-    if (locPrefixMatch) {
-        const afterPrefix = locPrefixMatch[2];
-        if (!afterPrefix.includes(' - ') && afterPrefix.trim().length >= 1) {
-            console.log('[AC] → location trigger:', afterPrefix.trim());
-            triggerAutocomplete('location', afterPrefix.replace(/\s*-\s*$/, '').trim());
-            return;
+    // LOCATION autocomplete: only when the line IS a scene heading and has content after prefix
+    if (ctx.type === 'heading') {
+        const locPrefixMatch = trimmed.match(/^(\.?(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s+)(.+)/i);
+        if (locPrefixMatch) {
+            const afterPrefix = locPrefixMatch[2];
+            // Only suggest before " - " separator (location part, not time-of-day)
+            if (!afterPrefix.includes(' - ') && afterPrefix.trim().length >= 1) {
+                triggerAutocomplete('location', afterPrefix.replace(/\s*-\s*$/, '').trim());
+                return;
+            }
         }
+        hideAutocomplete(); return;
     }
 
-    // Character: previous line blank, current all-caps, ≥2 chars
-    if (line.number > 1) {
-        const prevLine = state.doc.line(line.number - 1);
-        const prevBlank = prevLine.text.trim() === '';
-        const allCaps = /^[A-Z][A-Z0-9 ._\-']*$/.test(trimmed);
-        console.log('[AC] char check — prevBlank:', prevBlank, 'allCaps:', allCaps, 'len≥2:', trimmed.length >= 2);
-        if (prevBlank && allCaps && trimmed.length >= 2) {
-            console.log('[AC] → character trigger:', trimmed);
-            triggerAutocomplete('character', trimmed);
+    // CHARACTER autocomplete: only when the line IS classified as a character cue
+    if (ctx.type === 'character' && trimmed.length >= 2) {
+        // Strip extensions for the query
+        const charQuery = trimmed.replace(/\s*\([^)]*\)\s*$/g, '').trim();
+        if (charQuery.length >= 2) {
+            triggerAutocomplete('character', charQuery);
             return;
         }
-    } else {
-        console.log('[AC] skipped char check — line.number is', line.number);
     }
 
     hideAutocomplete();
 }
 
 function triggerAutocomplete(type, query) {
-    if (query === acQuery && type === acType && isAutocompleteVisible()) {
-        console.log('[AC] same query, skip');
-        return;
-    }
+    if (query === acQuery && type === acType && isAutocompleteVisible()) return;
     acQuery = query;
     if (acDebounce) clearTimeout(acDebounce);
-    console.log('[AC] debounce set for', type, query);
     acDebounce = setTimeout(async () => {
         const endpoint = type === 'character'
             ? `/api/screenplay/autocomplete-characters?q=${encodeURIComponent(query)}`
             : `/api/screenplay/autocomplete-locations?q=${encodeURIComponent(query)}`;
-        console.log('[AC] fetching:', endpoint);
         try {
             const res = await fetch(endpoint);
-            if (!res.ok) { console.log('[AC] fetch failed:', res.status); return; }
+            if (!res.ok) return;
             const items = await res.json();
-            console.log('[AC] got', items.length, 'results');
             if (!editorView) return;
             if (!items.length) {
                 if (type === 'character' && query.length >= 2) showNewEntityIndicator(query);
@@ -331,13 +404,12 @@ function triggerAutocomplete(type, query) {
             }
             const coords = editorView.coordsAtPos(editorView.state.selection.main.head);
             if (coords) showAutocompleteDropdown(items, type, coords);
-        } catch (e) { console.error('[AC] fetch error:', e); }
+        } catch (e) { /* silently fail */ }
     }, 200);
 }
 
 function showNewEntityIndicator(name) {
-    const dd = getOrCreateDropdown();
-    acItems = []; acHighlight = -1;
+    const dd = getOrCreateDropdown(); acItems = []; acHighlight = -1;
     dd.innerHTML = `<div class="screenplay-ac-new">New character "${esc(name)}" \u2014 will be created on save</div>`;
     const coords = editorView.coordsAtPos(editorView.state.selection.main.head);
     if (coords) { dd.style.left = Math.max(0, coords.left) + 'px'; dd.style.top = (coords.bottom + 4) + 'px'; dd.classList.remove('hidden'); }
@@ -509,10 +581,7 @@ function updateCurrentScene() {
     for (let i = navScenes.length - 1; i >= 0; i--) { if (cur0 >= navScenes[i].line_number) { idx = i; break; } }
     const items = document.querySelectorAll('.nav-scene-item');
     items.forEach((el, i) => el.classList.toggle('active', i === idx));
-    if (idx >= 0 && items[idx]) {
-        const el = items[idx], ct = document.getElementById('nav-scenes-items');
-        if (ct) { const er = el.getBoundingClientRect(), cr = ct.getBoundingClientRect(); if (er.top < cr.top || er.bottom > cr.bottom) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
-    }
+    if (idx >= 0 && items[idx]) { const el = items[idx], ct = document.getElementById('nav-scenes-items'); if (ct) { const er = el.getBoundingClientRect(), cr = ct.getBoundingClientRect(); if (er.top < cr.top || er.bottom > cr.bottom) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } }
     const se = document.getElementById('status-scene');
     if (se) se.textContent = idx >= 0 ? `Sc ${navScenes[idx].scene_number}/${navScenes.length}` : `Sc \u2014/${navScenes.length}`;
     updateCharsStatus(idx);
@@ -567,10 +636,8 @@ function liveScanScenes() {
         prevBlank = (stripped === '');
     }
     if (navScenes.length) {
-        const old = {}, oc = {};
-        for (const s of navScenes) { const k = s.name.toUpperCase(), o = oc[k] || 0; oc[k] = o + 1; old[k + ':' + o] = s.scene_id; }
-        const nc = {};
-        for (const s of scanned) { const k = s.name.toUpperCase(), o = nc[k] || 0; nc[k] = o + 1; s.scene_id = old[k + ':' + o] || null; }
+        const old = {}, oc = {}; for (const s of navScenes) { const k = s.name.toUpperCase(), o = oc[k] || 0; oc[k] = o + 1; old[k + ':' + o] = s.scene_id; }
+        const nc = {}; for (const s of scanned) { const k = s.name.toUpperCase(), o = nc[k] || 0; nc[k] = o + 1; s.scene_id = old[k + ':' + o] || null; }
     }
     navScenes = scanned; renderScenes();
 }
@@ -626,7 +693,8 @@ function createEditor(container) {
         extensions: [
             fountainLanguage, history(), drawSelection(), EditorView.lineWrapping,
             placeholder('Loading screenplay\u2026'),
-            autocompleteKeymap,  // FIRST — priority over tab/enter when dropdown visible
+            lineDecorationPlugin,   // screenplay page layout
+            autocompleteKeymap,     // priority over tab/enter when dropdown visible
             tabCycleKeymap, enterKeymap, autoUppercaseHandler, anchorHidingPlugin,
             keymap.of([{ key: 'Mod-s', run() { saveScreenplay(); return true; } }, ...defaultKeymap, ...historyKeymap]),
             EditorView.updateListener.of((update) => {
@@ -637,24 +705,11 @@ function createEditor(container) {
             EditorView.domEventHandlers({ blur() { setTimeout(hideAutocomplete, 150); } }),
             EditorView.theme({
                 '&': { backgroundColor: 'var(--bg-base)', color: 'var(--text-primary)', fontFamily: "'Courier Prime', 'Courier New', Courier, monospace", fontSize: '15px', lineHeight: '1.5', flex: '1' },
-                '.cm-content': { caretColor: 'var(--accent)', padding: '24px 0' },
-                '.cm-scroller': { padding: '0 40px', overflow: 'auto' },
+                '.cm-content': { caretColor: 'var(--accent)' },
                 '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)', borderLeftWidth: '2px' },
                 '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': { backgroundColor: 'var(--accent-subtle) !important' },
                 '.cm-activeLine': { backgroundColor: 'rgba(42, 42, 56, 0.3)' },
                 '.cm-gutters': { display: 'none' },
-                '.cm-fountain-heading': { color: 'var(--text-primary)', fontWeight: 'bold', letterSpacing: '0.02em' },
-                '.cm-fountain-character': { color: '#8b8bff' },
-                '.cm-fountain-dialogue': { color: 'var(--text-primary)' },
-                '.cm-fountain-parenthetical': { color: 'var(--text-secondary)', fontStyle: 'italic' },
-                '.cm-fountain-transition': { color: 'var(--text-muted)' },
-                '.cm-fountain-note': { color: 'var(--text-muted)', opacity: '0.5' },
-                '.cm-fountain-boneyard': { color: 'var(--text-muted)', opacity: '0.4' },
-                '.cm-fountain-centered': { color: 'var(--text-primary)' },
-                '.cm-fountain-synopsis': { color: 'var(--text-muted)', fontStyle: 'italic' },
-                '.cm-fountain-section': { color: 'var(--text-secondary)', fontWeight: 'bold' },
-                '.cm-fountain-titleKey': { color: 'var(--text-muted)' },
-                '.cm-fountain-titleValue': { color: 'var(--text-secondary)' },
             }, { dark: true }),
         ],
     });
