@@ -1,17 +1,94 @@
 /**
- * Screenplay Editor — CodeMirror 6 Initialization
- * ==================================================
- * Mounts a CodeMirror 6 editor with Fountain syntax highlighting,
- * load/save via API, unsaved state tracking, export, and a live
- * scene navigator sidebar.
+ * Screenplay Editor — CodeMirror 6 + Fountain Language Mode
+ * ===========================================================
+ * Single-file module. The Fountain language mode is defined inline
+ * to avoid cross-module duplicate @codemirror/state instances.
+ *
+ * All CM6 imports use esm.sh with ?deps to pin @codemirror/state
+ * to a single version across all transitive dependencies.
  */
 
-import { EditorState } from 'https://esm.sh/@codemirror/state@6.5.2';
-import { EditorView, keymap, placeholder, drawSelection, Decoration, ViewPlugin, MatchDecorator } from 'https://esm.sh/@codemirror/view@6.36.5';
-import { defaultKeymap, history, historyKeymap } from 'https://esm.sh/@codemirror/commands@6.8.0';
-import { fountainLanguage } from './fountain-mode.js';
+const CM_STATE_DEP = '@codemirror/state@6.5.2';
 
-// ── Element type detection & Tab cycling ───────────────────────────────────
+const { EditorState } = await import(`https://esm.sh/@codemirror/state@6.5.2`);
+const { EditorView, keymap, placeholder, drawSelection, Decoration, ViewPlugin, MatchDecorator } =
+    await import(`https://esm.sh/@codemirror/view@6.36.5?deps=${CM_STATE_DEP}`);
+const { defaultKeymap, history, historyKeymap } =
+    await import(`https://esm.sh/@codemirror/commands@6.8.0?deps=${CM_STATE_DEP}`);
+const { StreamLanguage } =
+    await import(`https://esm.sh/@codemirror/language@6.10.8?deps=${CM_STATE_DEP}`);
+
+console.log('[SCF] All CodeMirror modules loaded');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Fountain Language Mode (inline — avoids cross-file import issues)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SCENE_HEADING_MODE_RE = /^(\.(?=[A-Z])|(?:INT|EXT|EST|I\/E|INT\.\/EXT\.)[\s./])(.*)$/i;
+const TRANSITION_MODE_RE = /^[A-Z\s]+(?:TO|IN|OUT|UP):?\s*$/;
+const FORCED_TRANSITION_RE = /^>\s*.+/;
+const CHAR_CUE_MODE_RE = /^[A-Z][A-Z0-9 ._\-']+(?:\s*\((?:V\.?O\.?|O\.?S\.?|CONT'?D?|O\.?C\.?)\))?$/;
+const PARENTHETICAL_MODE_RE = /^\s*\(.*\)\s*$/;
+const TITLE_KEY_RE = /^(Title|Credit|Author|Authors|Source|Notes|Draft date|Date|Contact|Copyright|Revision|Font)\s*:/i;
+const CENTERED_RE = /^>.*<$/;
+const SECTION_RE = /^#{1,6}\s/;
+const SYNOPSIS_RE = /^=\s/;
+
+const fountainStreamMode = {
+    name: 'fountain',
+    startState() {
+        return { inBoneyard: false, inTitlePage: true, prevLineBlank: true, inDialogue: false };
+    },
+    copyState(s) { return { ...s }; },
+    token(stream, state) {
+        if (state.inBoneyard) {
+            const ci = stream.string.indexOf('*/', stream.pos);
+            if (ci >= 0) { stream.pos = ci + 2; state.inBoneyard = false; }
+            else stream.skipToEnd();
+            return 'fountain-boneyard';
+        }
+        if (stream.match('/*')) {
+            state.inBoneyard = true;
+            const ci = stream.string.indexOf('*/', stream.pos);
+            if (ci >= 0) { stream.pos = ci + 2; state.inBoneyard = false; }
+            else stream.skipToEnd();
+            return 'fountain-boneyard';
+        }
+        if (stream.sol()) {
+            const line = stream.string, trimmed = line.trim();
+            if (trimmed === '') {
+                stream.skipToEnd(); state.prevLineBlank = true; state.inDialogue = false; return null;
+            }
+            if (state.inTitlePage) {
+                if (TITLE_KEY_RE.test(line)) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-titleKey'; }
+                if (!state.prevLineBlank && trimmed !== '') { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-titleValue'; }
+                if (state.prevLineBlank && trimmed !== '' && !TITLE_KEY_RE.test(line)) state.inTitlePage = false;
+            }
+            if (SCENE_HEADING_MODE_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-heading'; }
+            if (SECTION_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-section'; }
+            if (SYNOPSIS_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-synopsis'; }
+            if (CENTERED_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-centered'; }
+            if (FORCED_TRANSITION_RE.test(trimmed) && !CENTERED_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-transition'; }
+            if (state.inDialogue && PARENTHETICAL_MODE_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-parenthetical'; }
+            if (state.inDialogue) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-dialogue'; }
+            if (state.prevLineBlank && TRANSITION_MODE_RE.test(trimmed) && trimmed.length > 2) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-transition'; }
+            if (state.prevLineBlank && CHAR_CUE_MODE_RE.test(trimmed) && trimmed.length > 1 && !TRANSITION_MODE_RE.test(trimmed)) {
+                stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = true; return 'fountain-character';
+            }
+            if (trimmed.startsWith('@')) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = true; return 'fountain-character'; }
+            stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return null;
+        }
+        stream.skipToEnd(); return null;
+    },
+    blankLine(state) { state.prevLineBlank = true; state.inDialogue = false; },
+    languageData: { commentTokens: { block: { open: '/*', close: '*/' } } },
+};
+
+const fountainLanguage = StreamLanguage.define(fountainStreamMode);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Element type detection & Tab cycling
+// ═══════════════════════════════════════════════════════════════════════════
 
 const HEADING_RE = /^(\.(?=[A-Z])|(?:INT|EXT|EST|I\/E|INT\.\/EXT\.)[\s./])/i;
 const CHARACTER_CUE_RE = /^[A-Z][A-Z0-9 ._\-']+(?:\s*\((?:V\.?O\.?|O\.?S\.?|CONT'?D?|O\.?C\.?)\))?$/;
@@ -34,65 +111,33 @@ function cycleElementType(view, direction) {
     const fromLine = state.doc.lineAt(sel.from);
     const toLine = state.doc.lineAt(sel.to);
     if (fromLine.number !== toLine.number) return false;
-
     const line = fromLine;
-    const lineText = line.text;
-
     let prevLineBlank = true;
-    if (line.number > 1) {
-        const prev = state.doc.line(line.number - 1);
-        prevLineBlank = prev.text.trim() === '';
-    }
-
-    const currentType = detectElementType(lineText, prevLineBlank);
+    if (line.number > 1) prevLineBlank = state.doc.line(line.number - 1).text.trim() === '';
+    const currentType = detectElementType(line.text, prevLineBlank);
     const idx = CYCLE_ORDER.indexOf(currentType);
     const nextIdx = (idx + direction + CYCLE_ORDER.length) % CYCLE_ORDER.length;
     const nextType = CYCLE_ORDER[nextIdx];
-
-    let content = lineText;
+    let content = line.text;
     content = content.replace(/^\.(?=[A-Z])/i, '');
     content = content.replace(/^(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s*/i, '');
     content = content.replace(/:(\s*)$/, '$1');
     content = content.trim();
-
-    let newText = content;
-    let changes = [];
-    let needBlankAbove = false;
-
+    let newText = content, changes = [], needBlankAbove = false;
     switch (nextType) {
-        case 'action':
-            newText = content;
-            break;
-        case 'heading':
-            newText = 'INT. ' + content.toUpperCase();
-            needBlankAbove = true;
-            break;
-        case 'character':
-            newText = content.toUpperCase();
-            newText = newText.replace(/[.,;!?]+$/, '');
-            needBlankAbove = true;
-            break;
-        case 'transition':
-            newText = content.toUpperCase();
-            if (!newText.endsWith(':')) newText += ':';
-            needBlankAbove = true;
-            break;
+        case 'action': newText = content; break;
+        case 'heading': newText = 'INT. ' + content.toUpperCase(); needBlankAbove = true; break;
+        case 'character': newText = content.toUpperCase().replace(/[.,;!?]+$/, ''); needBlankAbove = true; break;
+        case 'transition': newText = content.toUpperCase(); if (!newText.endsWith(':')) newText += ':'; needBlankAbove = true; break;
     }
-
-    if (needBlankAbove && line.number > 1) {
-        const prev = state.doc.line(line.number - 1);
-        if (prev.text.trim() !== '') {
-            changes.push({ from: line.from, insert: '\n' });
-        }
+    if (needBlankAbove && line.number > 1 && state.doc.line(line.number - 1).text.trim() !== '') {
+        changes.push({ from: line.from, insert: '\n' });
     }
-
     changes.push({ from: line.from, to: line.to, insert: newText });
-
     view.dispatch({
         changes,
         selection: { anchor: line.from + newText.length + (needBlankAbove && line.number > 1 && state.doc.line(line.number - 1).text.trim() !== '' ? 1 : 0) },
     });
-
     return true;
 }
 
@@ -101,61 +146,44 @@ const tabCycleKeymap = keymap.of([
     { key: 'Shift-Tab', run(view) { return cycleElementType(view, -1); } },
 ]);
 
-// ── Auto-Uppercase ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Auto-Uppercase
+// ═══════════════════════════════════════════════════════════════════════════
 
 function isAllUpperContent(text) {
-    if (text.length === 0) return true;
-    return /^[A-Z0-9 ._\-'()]*$/.test(text);
+    return text.length === 0 || /^[A-Z0-9 ._\-'()]*$/.test(text);
 }
-
 function isSceneHeadingLine(text) {
     return /^(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s/i.test(text.trim());
 }
 
 const autoUppercaseHandler = EditorView.inputHandler.of((view, from, to, text) => {
     if (text.length !== 1 || !/[a-z]/.test(text)) return false;
-
     const state = view.state;
     const line = state.doc.lineAt(from);
     const textBefore = state.doc.sliceString(line.from, from);
     const textAfter = state.doc.sliceString(to, line.to);
-    const fullLine = textBefore + text + textAfter;
-
-    if (isSceneHeadingLine(fullLine)) {
-        view.dispatch({
-            changes: { from, to, insert: text.toUpperCase() },
-            selection: { anchor: from + 1 },
-        });
+    if (isSceneHeadingLine(textBefore + text + textAfter)) {
+        view.dispatch({ changes: { from, to, insert: text.toUpperCase() }, selection: { anchor: from + 1 } });
         return true;
     }
-
-    if (line.number > 1) {
-        const prevLine = state.doc.line(line.number - 1);
-        if (prevLine.text.trim() === '' && isAllUpperContent(textBefore) && isAllUpperContent(textAfter)) {
-            view.dispatch({
-                changes: { from, to, insert: text.toUpperCase() },
-                selection: { anchor: from + 1 },
-            });
-            return true;
-        }
+    if (line.number > 1 && state.doc.line(line.number - 1).text.trim() === '' && isAllUpperContent(textBefore) && isAllUpperContent(textAfter)) {
+        view.dispatch({ changes: { from, to, insert: text.toUpperCase() }, selection: { anchor: from + 1 } });
+        return true;
     }
-
     return false;
 });
 
-// ── Enter Key Behaviors ────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Enter Key Behaviors
+// ═══════════════════════════════════════════════════════════════════════════
 
 function isInDialogueContext(state, lineNumber) {
     for (let i = lineNumber - 1; i >= 1; i--) {
-        const l = state.doc.line(i);
-        const text = l.text.trim();
+        const text = state.doc.line(i).text.trim();
         if (text === '') return false;
-        if (i >= 2) {
-            const above = state.doc.line(i - 1);
-            if (above.text.trim() === '' && CHARACTER_CUE_RE.test(text)) return true;
-        } else if (i === 1) {
-            if (CHARACTER_CUE_RE.test(text)) return true;
-        }
+        if (i >= 2 && state.doc.line(i - 1).text.trim() === '' && CHARACTER_CUE_RE.test(text)) return true;
+        if (i === 1 && CHARACTER_CUE_RE.test(text)) return true;
     }
     return false;
 }
@@ -164,719 +192,324 @@ function handleEnter(view) {
     const state = view.state;
     const sel = state.selection.main;
     const line = state.doc.lineAt(sel.head);
-    const lineText = line.text;
-    const trimmed = lineText.trim();
-
-    let prevLineBlank = line.number <= 1 || state.doc.line(line.number - 1).text.trim() === '';
-
+    const trimmed = line.text.trim();
+    const prevLineBlank = line.number <= 1 || state.doc.line(line.number - 1).text.trim() === '';
     if (prevLineBlank && CHARACTER_CUE_RE.test(trimmed) && trimmed.length > 1 && sel.head === line.to) {
-        view.dispatch({
-            changes: { from: sel.head, insert: '\n' },
-            selection: { anchor: sel.head + 1 },
-        });
-        return true;
+        view.dispatch({ changes: { from: sel.head, insert: '\n' }, selection: { anchor: sel.head + 1 } }); return true;
     }
-
     if (trimmed === '' && line.number > 1 && isInDialogueContext(state, line.number)) {
-        view.dispatch({
-            changes: { from: sel.head, insert: '\n' },
-            selection: { anchor: sel.head + 1 },
-        });
-        return true;
+        view.dispatch({ changes: { from: sel.head, insert: '\n' }, selection: { anchor: sel.head + 1 } }); return true;
     }
-
-    if (/^\s*\(.*\)\s*$/.test(lineText) && isInDialogueContext(state, line.number)) {
-        view.dispatch({
-            changes: { from: sel.head, insert: '\n' },
-            selection: { anchor: sel.head + 1 },
-        });
-        return true;
+    if (/^\s*\(.*\)\s*$/.test(line.text) && isInDialogueContext(state, line.number)) {
+        view.dispatch({ changes: { from: sel.head, insert: '\n' }, selection: { anchor: sel.head + 1 } }); return true;
     }
-
     if (HEADING_RE.test(trimmed)) {
-        view.dispatch({
-            changes: { from: sel.head, insert: '\n\n' },
-            selection: { anchor: sel.head + 2 },
-        });
-        return true;
+        view.dispatch({ changes: { from: sel.head, insert: '\n\n' }, selection: { anchor: sel.head + 2 } }); return true;
     }
-
     return false;
 }
 
-const enterKeymap = keymap.of([
-    { key: 'Enter', run: handleEnter },
-]);
+const enterKeymap = keymap.of([{ key: 'Enter', run: handleEnter }]);
 
-// ── Anchor Tag Hiding ──────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Anchor Tag Hiding
+// ═══════════════════════════════════════════════════════════════════════════
 
 const anchorMatcher = new MatchDecorator({
     regexp: /\[\[scf:\w+:\d+\]\]/g,
     decoration: () => Decoration.replace({}),
 });
-
 const anchorHidingPlugin = ViewPlugin.fromClass(class {
-    constructor(view) {
-        this.decorations = anchorMatcher.createDeco(view);
-    }
-    update(update) {
-        this.decorations = anchorMatcher.updateDeco(update, this.decorations);
-    }
-}, {
-    decorations: v => v.decorations,
-});
+    constructor(view) { this.decorations = anchorMatcher.createDeco(view); }
+    update(update) { this.decorations = anchorMatcher.updateDeco(update, this.decorations); }
+}, { decorations: v => v.decorations });
 
-// ── State ───────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════════════════════════════
 
 let editorView = null;
-let unsaved = false;
-let saving = false;
-let savedTimeout = null;
+let unsaved = false, saving = false, savedTimeout = null;
+let navScenes = [], navCharacters = [], navLocations = [];
+let activeFilter = null, liveScanTimer = null;
 
-// Navigator state
-let navScenes = [];      // from API or live scan
-let navCharacters = [];  // from API only
-let navLocations = [];   // from API only
-let activeFilter = null; // { type: 'character'|'location', name: string }
-let liveScanTimer = null;
+// ═══════════════════════════════════════════════════════════════════════════
+// Toast
+// ═══════════════════════════════════════════════════════════════════════════
 
-// ── Toast helper (standalone — app.js not loaded on this page) ──────────────
-
-function showToast(message) {
-    const toast = document.createElement('div');
-    toast.className = 'toast';
-    toast.textContent = message;
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 2500);
+function showToast(msg) {
+    const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg;
+    document.body.appendChild(t); setTimeout(() => t.remove(), 2500);
 }
-
 function showSyncToast(sync) {
     const parts = [];
-    if (sync.scenes_created)     parts.push(`${sync.scenes_created} new scene${sync.scenes_created > 1 ? 's' : ''}`);
+    if (sync.scenes_created) parts.push(`${sync.scenes_created} new scene${sync.scenes_created > 1 ? 's' : ''}`);
     if (sync.characters_created) parts.push(`${sync.characters_created} new character${sync.characters_created > 1 ? 's' : ''}`);
-    if (sync.locations_created)  parts.push(`${sync.locations_created} new location${sync.locations_created > 1 ? 's' : ''}`);
-    if (sync.props_created)      parts.push(`${sync.props_created} new prop${sync.props_created > 1 ? 's' : ''}`);
+    if (sync.locations_created) parts.push(`${sync.locations_created} new location${sync.locations_created > 1 ? 's' : ''}`);
+    if (sync.props_created) parts.push(`${sync.props_created} new prop${sync.props_created > 1 ? 's' : ''}`);
     if (parts.length) showToast('Synced: ' + parts.join(', '));
-    if (sync.errors && sync.errors.length) {
-        for (const err of sync.errors) showToast('\u26a0 ' + err);
-    }
+    if (sync.errors?.length) sync.errors.forEach(e => showToast('\u26a0 ' + e));
 }
 
-// ── Navigator panel resize ──────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Navigator panel resize
+// ═══════════════════════════════════════════════════════════════════════════
 
 function initNavigatorResize() {
     const panel = document.getElementById('navigator-panel');
     if (!panel) return;
-
-    const STORAGE_KEY = 'scf-panel-navigator-width';
-    const MIN_W = 180;
-    const MAX_W = 500;
-
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-        const w = Math.max(MIN_W, Math.min(MAX_W, parseInt(saved, 10)));
-        panel.style.width = w + 'px';
-    }
-
-    const handle = document.createElement('div');
-    handle.className = 'panel-resize-handle';
-    panel.appendChild(handle);
-
+    const KEY = 'scf-panel-navigator-width', MIN = 180, MAX = 500;
+    const saved = localStorage.getItem(KEY);
+    if (saved) panel.style.width = Math.max(MIN, Math.min(MAX, parseInt(saved, 10))) + 'px';
+    const handle = document.createElement('div'); handle.className = 'panel-resize-handle'; panel.appendChild(handle);
     let startX, startW;
-
     handle.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        startX = e.clientX;
-        startW = panel.getBoundingClientRect().width;
-        handle.classList.add('dragging');
-
-        function onMouseMove(e) {
-            const dx = e.clientX - startX;
-            const newW = Math.max(MIN_W, Math.min(MAX_W, startW + dx));
-            panel.style.width = newW + 'px';
-        }
-
-        function onMouseUp() {
-            handle.classList.remove('dragging');
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
-            localStorage.setItem(STORAGE_KEY, Math.round(panel.getBoundingClientRect().width));
-        }
-
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
+        e.preventDefault(); startX = e.clientX; startW = panel.getBoundingClientRect().width; handle.classList.add('dragging');
+        const move = (e) => { panel.style.width = Math.max(MIN, Math.min(MAX, startW + (e.clientX - startX))) + 'px'; };
+        const up = () => { handle.classList.remove('dragging'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); localStorage.setItem(KEY, Math.round(panel.getBoundingClientRect().width)); };
+        document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
     });
 }
 
-// ── Navigator collapse persistence ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Navigator collapse
+// ═══════════════════════════════════════════════════════════════════════════
 
 const COLLAPSE_KEY = 'scf-navigator-collapse-state';
-
-function loadCollapseState() {
-    try {
-        return JSON.parse(localStorage.getItem(COLLAPSE_KEY)) || {};
-    } catch { return {}; }
-}
-
-function saveCollapseState(state) {
-    localStorage.setItem(COLLAPSE_KEY, JSON.stringify(state));
-}
-
+function loadCollapseState() { try { return JSON.parse(localStorage.getItem(COLLAPSE_KEY)) || {}; } catch { return {}; } }
+function saveCollapseState(s) { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(s)); }
 function initCollapseHandlers() {
-    const state = loadCollapseState();
-    document.querySelectorAll('#navigator-panel .nav-section').forEach(section => {
-        const id = section.id;
-        if (state[id]) section.classList.add('collapsed');
-        const header = section.querySelector('.nav-section-header');
-        if (header) {
-            header.addEventListener('click', () => {
-                section.classList.toggle('collapsed');
-                const s = loadCollapseState();
-                s[id] = section.classList.contains('collapsed');
-                saveCollapseState(s);
-            });
-        }
+    const st = loadCollapseState();
+    document.querySelectorAll('#navigator-panel .nav-section').forEach(sec => {
+        if (st[sec.id]) sec.classList.add('collapsed');
+        const hdr = sec.querySelector('.nav-section-header');
+        if (hdr) hdr.addEventListener('click', () => { sec.classList.toggle('collapsed'); const s = loadCollapseState(); s[sec.id] = sec.classList.contains('collapsed'); saveCollapseState(s); });
     });
 }
 
-// ── Navigator rendering ────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Navigator rendering
+// ═══════════════════════════════════════════════════════════════════════════
 
 function renderScenes() {
-    const container = document.getElementById('nav-scenes-items');
-    const countBadge = document.getElementById('nav-scenes-count');
-    if (!container) return;
-
-    if (!navScenes.length) {
-        container.innerHTML = '<span class="nav-empty-msg">No scenes found</span>';
-        if (countBadge) countBadge.textContent = '';
-        return;
+    const c = document.getElementById('nav-scenes-items'), b = document.getElementById('nav-scenes-count');
+    if (!c) return;
+    if (!navScenes.length) { c.innerHTML = '<span class="nav-empty-msg">No scenes found</span>'; if (b) b.textContent = ''; return; }
+    if (b) b.textContent = navScenes.length;
+    const f = document.createDocumentFragment();
+    for (const sc of navScenes) {
+        const item = document.createElement('div'); item.className = 'nav-item nav-scene-item';
+        item.dataset.lineNumber = sc.line_number; item.dataset.sceneNumber = sc.scene_number;
+        if (sc.characters) item.dataset.characters = sc.characters.join(',');
+        const num = document.createElement('span'); num.className = 'nav-scene-num'; num.textContent = `#${sc.scene_number}`;
+        const name = document.createElement('span'); name.className = 'nav-item-name';
+        let dn = sc.name.replace(/^(\.?(?:INT|EXT|EST|I\/E|INT\.\/EXT\.)[\s.]+)/i, '').trim();
+        dn = dn.replace(/\s*[-\.]\s*(DAY|NIGHT|MORNING|EVENING|DAWN|DUSK|AFTERNOON|MIDDAY|TWILIGHT|SUNSET|SUNRISE|CONTINUOUS|LATER|MOMENTS?\s+LATER|SAME\s+TIME)\s*$/i, '');
+        name.textContent = dn || sc.name; name.title = sc.name;
+        item.appendChild(num); item.appendChild(name);
+        if (sc.character_count > 0) { const bg = document.createElement('span'); bg.className = 'nav-item-badge'; bg.textContent = sc.character_count; item.appendChild(bg); }
+        item.addEventListener('click', () => scrollToLine(sc.line_number));
+        f.appendChild(item);
     }
-
-    if (countBadge) countBadge.textContent = navScenes.length;
-
-    const frag = document.createDocumentFragment();
-    for (const scene of navScenes) {
-        const item = document.createElement('div');
-        item.className = 'nav-item nav-scene-item';
-        item.dataset.lineNumber = scene.line_number;
-        item.dataset.sceneNumber = scene.scene_number;
-        if (scene.characters) item.dataset.characters = scene.characters.join(',');
-
-        const num = document.createElement('span');
-        num.className = 'nav-scene-num';
-        num.textContent = `#${scene.scene_number}`;
-
-        const name = document.createElement('span');
-        name.className = 'nav-item-name';
-        // Strip INT./EXT. prefix for compact display
-        let displayName = scene.name.replace(/^(\.?(?:INT|EXT|EST|I\/E|INT\.\/EXT\.)[\s.]+)/i, '').trim();
-        // Also strip trailing time of day
-        displayName = displayName.replace(/\s*[-\.]\s*(DAY|NIGHT|MORNING|EVENING|DAWN|DUSK|AFTERNOON|MIDDAY|TWILIGHT|SUNSET|SUNRISE|CONTINUOUS|LATER|MOMENTS?\s+LATER|SAME\s+TIME)\s*$/i, '');
-        name.textContent = displayName || scene.name;
-        name.title = scene.name;
-
-        const badge = document.createElement('span');
-        badge.className = 'nav-item-badge';
-        badge.textContent = scene.character_count;
-        badge.title = `${scene.character_count} character${scene.character_count !== 1 ? 's' : ''}`;
-
-        item.appendChild(num);
-        item.appendChild(name);
-        if (scene.character_count > 0) item.appendChild(badge);
-
-        item.addEventListener('click', () => scrollToLine(scene.line_number));
-        frag.appendChild(item);
-    }
-
-    container.innerHTML = '';
-    container.appendChild(frag);
-
-    applyFilter();
-    updateCurrentScene();
+    c.innerHTML = ''; c.appendChild(f); applyFilter(); updateCurrentScene();
 }
 
 function renderCharacters() {
-    const container = document.getElementById('nav-characters-items');
-    const countBadge = document.getElementById('nav-characters-count');
-    if (!container) return;
-
-    if (!navCharacters.length) {
-        container.innerHTML = '<span class="nav-empty-msg">No characters found</span>';
-        if (countBadge) countBadge.textContent = '';
-        return;
-    }
-
-    if (countBadge) countBadge.textContent = navCharacters.length;
-
-    const frag = document.createDocumentFragment();
-    for (const char of navCharacters) {
-        const item = document.createElement('div');
-        item.className = 'nav-item nav-char-item';
-        if (!char.is_mapped) item.classList.add('unmapped');
-        item.dataset.charName = char.name;
-
-        const icon = document.createElement('span');
-        icon.className = 'nav-item-icon';
-        icon.textContent = '\ud83d\udc64';
-
-        const name = document.createElement('span');
-        name.className = 'nav-item-name';
-        name.textContent = char.display_name;
-
-        const badge = document.createElement('span');
-        badge.className = 'nav-item-badge';
-        badge.textContent = char.scene_count;
-        badge.title = `${char.scene_count} scene${char.scene_count !== 1 ? 's' : ''}`;
-
-        item.appendChild(icon);
-        item.appendChild(name);
-        item.appendChild(badge);
-
-        if (char.is_mapped && char.character_id) {
-            const link = document.createElement('a');
-            link.className = 'nav-item-link';
-            link.href = `/browse?entity_type=character&entity_id=${char.character_id}`;
-            link.textContent = '\u2192';
-            link.title = 'Open in Entity Browser';
-            link.addEventListener('click', (e) => e.stopPropagation());
-            item.appendChild(link);
+    const c = document.getElementById('nav-characters-items'), b = document.getElementById('nav-characters-count');
+    if (!c) return;
+    if (!navCharacters.length) { c.innerHTML = '<span class="nav-empty-msg">No characters found</span>'; if (b) b.textContent = ''; return; }
+    if (b) b.textContent = navCharacters.length;
+    const f = document.createDocumentFragment();
+    for (const ch of navCharacters) {
+        const item = document.createElement('div'); item.className = 'nav-item nav-char-item';
+        if (!ch.is_mapped) item.classList.add('unmapped'); item.dataset.charName = ch.name;
+        item.innerHTML = `<span class="nav-item-icon">\ud83d\udc64</span><span class="nav-item-name">${esc(ch.display_name)}</span><span class="nav-item-badge">${ch.scene_count}</span>`;
+        if (ch.is_mapped && ch.character_id) {
+            const lk = document.createElement('a'); lk.className = 'nav-item-link'; lk.href = `/browse?entity_type=character&entity_id=${ch.character_id}`; lk.textContent = '\u2192'; lk.title = 'Open in Entity Browser'; lk.addEventListener('click', e => e.stopPropagation()); item.appendChild(lk);
         }
-
-        item.addEventListener('click', () => toggleFilter('character', char.name));
-        frag.appendChild(item);
+        item.addEventListener('click', () => toggleFilter('character', ch.name)); f.appendChild(item);
     }
-
-    container.innerHTML = '';
-    container.appendChild(frag);
-    applyFilterHighlight();
+    c.innerHTML = ''; c.appendChild(f); applyFilterHighlight();
 }
 
 function renderLocations() {
-    const container = document.getElementById('nav-locations-items');
-    const countBadge = document.getElementById('nav-locations-count');
-    if (!container) return;
-
-    if (!navLocations.length) {
-        container.innerHTML = '<span class="nav-empty-msg">No locations found</span>';
-        if (countBadge) countBadge.textContent = '';
-        return;
-    }
-
-    if (countBadge) countBadge.textContent = navLocations.length;
-
-    const frag = document.createDocumentFragment();
+    const c = document.getElementById('nav-locations-items'), b = document.getElementById('nav-locations-count');
+    if (!c) return;
+    if (!navLocations.length) { c.innerHTML = '<span class="nav-empty-msg">No locations found</span>'; if (b) b.textContent = ''; return; }
+    if (b) b.textContent = navLocations.length;
+    const f = document.createDocumentFragment();
     for (const loc of navLocations) {
-        const item = document.createElement('div');
-        item.className = 'nav-item nav-loc-item';
-        if (!loc.is_mapped) item.classList.add('unmapped');
-        item.dataset.locName = loc.name.toUpperCase();
-
-        const icon = document.createElement('span');
-        icon.className = 'nav-item-icon';
-        icon.textContent = '\ud83d\udccd';
-
-        const name = document.createElement('span');
-        name.className = 'nav-item-name';
-        name.textContent = loc.name;
-
-        const badge = document.createElement('span');
-        badge.className = 'nav-item-badge';
-        badge.textContent = loc.scene_count;
-
-        item.appendChild(icon);
-        item.appendChild(name);
-        item.appendChild(badge);
-
+        const item = document.createElement('div'); item.className = 'nav-item nav-loc-item';
+        if (!loc.is_mapped) item.classList.add('unmapped'); item.dataset.locName = loc.name.toUpperCase();
+        item.innerHTML = `<span class="nav-item-icon">\ud83d\udccd</span><span class="nav-item-name">${esc(loc.name)}</span><span class="nav-item-badge">${loc.scene_count}</span>`;
         if (loc.is_mapped && loc.location_id) {
-            const link = document.createElement('a');
-            link.className = 'nav-item-link';
-            link.href = `/browse?entity_type=location&entity_id=${loc.location_id}`;
-            link.textContent = '\u2192';
-            link.title = 'Open in Entity Browser';
-            link.addEventListener('click', (e) => e.stopPropagation());
-            item.appendChild(link);
+            const lk = document.createElement('a'); lk.className = 'nav-item-link'; lk.href = `/browse?entity_type=location&entity_id=${loc.location_id}`; lk.textContent = '\u2192'; lk.title = 'Open in Entity Browser'; lk.addEventListener('click', e => e.stopPropagation()); item.appendChild(lk);
         }
-
-        item.addEventListener('click', () => toggleFilter('location', loc.name.toUpperCase()));
-        frag.appendChild(item);
+        item.addEventListener('click', () => toggleFilter('location', loc.name.toUpperCase())); f.appendChild(item);
     }
-
-    container.innerHTML = '';
-    container.appendChild(frag);
-    applyFilterHighlight();
+    c.innerHTML = ''; c.appendChild(f); applyFilterHighlight();
 }
 
-// ── Filtering ───────────────────────────────────────────────────────────────
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Filtering
+// ═══════════════════════════════════════════════════════════════════════════
 
 function toggleFilter(type, name) {
-    if (activeFilter && activeFilter.type === type && activeFilter.name === name) {
-        activeFilter = null;
-    } else {
-        activeFilter = { type, name };
-    }
-    applyFilter();
-    applyFilterHighlight();
+    activeFilter = (activeFilter && activeFilter.type === type && activeFilter.name === name) ? null : { type, name };
+    applyFilter(); applyFilterHighlight();
 }
-
 function applyFilter() {
-    const items = document.querySelectorAll('.nav-scene-item');
-    const filterIndicator = document.getElementById('nav-scenes-filter');
-
-    if (!activeFilter) {
-        items.forEach(item => item.classList.remove('filtered-out'));
-        if (filterIndicator) filterIndicator.classList.remove('active');
-        return;
-    }
-
-    if (filterIndicator) filterIndicator.classList.add('active');
-
+    const items = document.querySelectorAll('.nav-scene-item'), ind = document.getElementById('nav-scenes-filter');
+    if (!activeFilter) { items.forEach(i => i.classList.remove('filtered-out')); if (ind) ind.classList.remove('active'); return; }
+    if (ind) ind.classList.add('active');
     items.forEach(item => {
-        let visible = false;
-        if (activeFilter.type === 'character') {
-            const chars = (item.dataset.characters || '').split(',');
-            visible = chars.includes(activeFilter.name);
-        } else if (activeFilter.type === 'location') {
-            // Match location by checking if the scene heading contains the location name
-            const sceneNum = parseInt(item.dataset.sceneNumber);
-            const scene = navScenes.find(s => s.scene_number === sceneNum);
-            if (scene) {
-                visible = scene.name.toUpperCase().includes(activeFilter.name);
-            }
-        }
-        item.classList.toggle('filtered-out', !visible);
+        let vis = false;
+        if (activeFilter.type === 'character') vis = (item.dataset.characters || '').split(',').includes(activeFilter.name);
+        else if (activeFilter.type === 'location') { const sc = navScenes.find(s => s.scene_number === parseInt(item.dataset.sceneNumber)); if (sc) vis = sc.name.toUpperCase().includes(activeFilter.name); }
+        item.classList.toggle('filtered-out', !vis);
     });
 }
-
 function applyFilterHighlight() {
-    document.querySelectorAll('.nav-char-item').forEach(item => {
-        item.classList.toggle('active',
-            activeFilter && activeFilter.type === 'character' && item.dataset.charName === activeFilter.name);
-    });
-    document.querySelectorAll('.nav-loc-item').forEach(item => {
-        item.classList.toggle('active',
-            activeFilter && activeFilter.type === 'location' && item.dataset.locName === activeFilter.name);
-    });
+    document.querySelectorAll('.nav-char-item').forEach(i => i.classList.toggle('active', !!(activeFilter && activeFilter.type === 'character' && i.dataset.charName === activeFilter.name)));
+    document.querySelectorAll('.nav-loc-item').forEach(i => i.classList.toggle('active', !!(activeFilter && activeFilter.type === 'location' && i.dataset.locName === activeFilter.name)));
 }
 
-// ── Click-to-scroll ────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Click-to-scroll & scene tracking
+// ═══════════════════════════════════════════════════════════════════════════
 
-function scrollToLine(lineNumber) {
+function scrollToLine(ln) {
     if (!editorView) return;
-    // lineNumber is 0-based in the stripped text; CodeMirror lines are 1-based
-    const cmLineNum = lineNumber + 1;
-    const totalLines = editorView.state.doc.lines;
-    if (cmLineNum < 1 || cmLineNum > totalLines) return;
-
-    const line = editorView.state.doc.line(cmLineNum);
-    editorView.dispatch({
-        selection: { anchor: line.from },
-        scrollIntoView: true,
-    });
-    editorView.focus();
+    const n = ln + 1; if (n < 1 || n > editorView.state.doc.lines) return;
+    const line = editorView.state.doc.line(n);
+    editorView.dispatch({ selection: { anchor: line.from }, scrollIntoView: true }); editorView.focus();
 }
-
-// ── Current scene tracking ─────────────────────────────────────────────────
 
 function updateCurrentScene() {
     if (!editorView || !navScenes.length) return;
-
-    const cursor = editorView.state.selection.main.head;
-    const cursorLine = editorView.state.doc.lineAt(cursor);
-    // CodeMirror is 1-based, navScenes line_number is 0-based
-    const cursorLine0 = cursorLine.number - 1;
-
-    // Find which scene contains the cursor
-    let currentIdx = -1;
-    for (let i = navScenes.length - 1; i >= 0; i--) {
-        if (cursorLine0 >= navScenes[i].line_number) {
-            currentIdx = i;
-            break;
-        }
-    }
-
-    // Update active highlighting
+    const cur0 = editorView.state.doc.lineAt(editorView.state.selection.main.head).number - 1;
+    let idx = -1;
+    for (let i = navScenes.length - 1; i >= 0; i--) { if (cur0 >= navScenes[i].line_number) { idx = i; break; } }
     const items = document.querySelectorAll('.nav-scene-item');
-    items.forEach((item, idx) => {
-        item.classList.toggle('active', idx === currentIdx);
-    });
-
-    // Scroll active scene into view in navigator
-    if (currentIdx >= 0 && items[currentIdx]) {
-        const el = items[currentIdx];
-        const container = document.getElementById('nav-scenes-items');
-        if (container) {
-            const elRect = el.getBoundingClientRect();
-            const containerRect = container.getBoundingClientRect();
-            if (elRect.top < containerRect.top || elRect.bottom > containerRect.bottom) {
-                el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-            }
-        }
+    items.forEach((el, i) => el.classList.toggle('active', i === idx));
+    if (idx >= 0 && items[idx]) {
+        const el = items[idx], ct = document.getElementById('nav-scenes-items');
+        if (ct) { const er = el.getBoundingClientRect(), cr = ct.getBoundingClientRect(); if (er.top < cr.top || er.bottom > cr.bottom) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
     }
-
-    // Update status bar — Sc N/Total
-    const sceneEl = document.getElementById('status-scene');
-    if (sceneEl) {
-        if (currentIdx >= 0) {
-            sceneEl.textContent = `Sc ${navScenes[currentIdx].scene_number}/${navScenes.length}`;
-        } else {
-            sceneEl.textContent = `Sc \u2014/${navScenes.length}`;
-        }
-    }
-
-    // Update status bar — Chars in current scene
-    updateCharsStatus(currentIdx);
+    const se = document.getElementById('status-scene');
+    if (se) se.textContent = idx >= 0 ? `Sc ${navScenes[idx].scene_number}/${navScenes.length}` : `Sc \u2014/${navScenes.length}`;
+    updateCharsStatus(idx);
 }
 
-function updateCharsStatus(currentIdx) {
-    const charsEl = document.getElementById('status-chars');
-    if (!charsEl) return;
-
-    if (currentIdx < 0 || !navScenes[currentIdx]) {
-        charsEl.textContent = '';
-        return;
-    }
-
-    const scene = navScenes[currentIdx];
-    const chars = scene.characters || [];
-    if (!chars.length) {
-        charsEl.textContent = '';
-        return;
-    }
-
-    // Title-case the names for display
-    const titleCase = (s) => s.split(' ').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
-
-    if (chars.length <= 3) {
-        charsEl.textContent = 'Chars: ' + chars.map(titleCase).join(', ');
-    } else {
-        charsEl.textContent = 'Chars: ' + chars.slice(0, 3).map(titleCase).join(', ') + `, +${chars.length - 3}`;
-    }
+function updateCharsStatus(idx) {
+    const el = document.getElementById('status-chars');
+    if (!el) return;
+    if (idx < 0 || !navScenes[idx]) { el.textContent = ''; return; }
+    const chars = navScenes[idx].characters || [];
+    if (!chars.length) { el.textContent = ''; return; }
+    const tc = s => s.split(' ').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+    el.textContent = chars.length <= 3 ? 'Chars: ' + chars.map(tc).join(', ') : 'Chars: ' + chars.slice(0, 3).map(tc).join(', ') + `, +${chars.length - 3}`;
 }
 
-// ── Status bar ──────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Status bar
+// ═══════════════════════════════════════════════════════════════════════════
 
 function updateCursorStatus(state) {
-    const cursor = state.selection.main.head;
-    const line = state.doc.lineAt(cursor);
-
-    const lineEl = document.getElementById('status-line');
-    const pageEl = document.getElementById('status-page');
-
-    if (lineEl) lineEl.textContent = `Ln ${line.number}`;
-    if (pageEl) pageEl.textContent = `Pg ~${Math.max(1, Math.ceil(line.number / 55))}`;
-
+    const line = state.doc.lineAt(state.selection.main.head);
+    const le = document.getElementById('status-line'), pe = document.getElementById('status-page');
+    if (le) le.textContent = `Ln ${line.number}`;
+    if (pe) pe.textContent = `Pg ~${Math.max(1, Math.ceil(line.number / 55))}`;
     updateCurrentScene();
 }
+function setSaveStatus(text, color) { const el = document.getElementById('status-save'); if (el) { el.textContent = text; el.style.color = color || ''; } }
+function markUnsaved() { if (saving) return; unsaved = true; if (savedTimeout) { clearTimeout(savedTimeout); savedTimeout = null; } setSaveStatus('Unsaved \u2022', 'var(--warning)'); }
+function markSaved() { unsaved = false; saving = false; setSaveStatus('Saved \u2713', 'var(--success)'); if (savedTimeout) clearTimeout(savedTimeout); savedTimeout = setTimeout(() => setSaveStatus('Ready', ''), 3000); }
+function markSaving() { saving = true; setSaveStatus('Saving\u2026', ''); }
+function markSaveFailed() { saving = false; setSaveStatus('Save failed', 'var(--warning)'); }
 
-function setSaveStatus(text, color) {
-    const el = document.getElementById('status-save');
-    if (!el) return;
-    el.textContent = text;
-    el.style.color = color || '';
-}
-
-function markUnsaved() {
-    if (saving) return;
-    unsaved = true;
-    if (savedTimeout) { clearTimeout(savedTimeout); savedTimeout = null; }
-    setSaveStatus('Unsaved \u2022', 'var(--warning)');
-}
-
-function markSaved() {
-    unsaved = false;
-    saving = false;
-    setSaveStatus('Saved \u2713', 'var(--success)');
-    if (savedTimeout) clearTimeout(savedTimeout);
-    savedTimeout = setTimeout(() => {
-        setSaveStatus('Ready', '');
-    }, 3000);
-}
-
-function markSaving() {
-    saving = true;
-    setSaveStatus('Saving\u2026', '');
-}
-
-function markSaveFailed() {
-    saving = false;
-    setSaveStatus('Save failed', 'var(--warning)');
-}
-
-// ── Live client-side scene scan (debounced) ─────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Live scene scan
+// ═══════════════════════════════════════════════════════════════════════════
 
 function liveScanScenes() {
     if (!editorView) return;
-
-    const text = editorView.state.doc.toString();
-    const lines = text.split('\n');
-    const scanned = [];
+    const lines = editorView.state.doc.toString().split('\n'), scanned = [];
     let prevBlank = true;
-
     for (let i = 0; i < lines.length; i++) {
-        const stripped = lines[i].trim();
-        // Remove anchor tags for matching
-        const clean = stripped.replace(/\[\[scf:\w+:\d+\]\]/g, '').trim();
-
-        if (clean === '') {
-            prevBlank = true;
-            continue;
-        }
-
+        const stripped = lines[i].trim(), clean = stripped.replace(/\[\[scf:\w+:\d+\]\]/g, '').trim();
+        if (clean === '') { prevBlank = true; continue; }
         if (HEADING_RE.test(clean)) {
-            // Count characters until next heading
-            const charSet = new Set();
+            const cs = new Set(); let pb = true;
             for (let j = i + 1; j < lines.length; j++) {
                 const cl = lines[j].trim().replace(/\[\[scf:\w+:\d+\]\]/g, '').trim();
-                if (cl === '') { prevBlank = true; continue; }
-                if (HEADING_RE.test(cl)) break;
-                if (prevBlank && CHARACTER_CUE_RE.test(cl) && !/[.,;!?]$/.test(cl)) {
-                    // Extract name — strip extensions
-                    let cName = cl.replace(/\s*\([^)]*\)\s*$/g, '').trim();
-                    if (cName) charSet.add(cName.toUpperCase());
-                }
-                prevBlank = (cl === '');
+                if (cl === '') { pb = true; continue; } if (HEADING_RE.test(cl)) break;
+                if (pb && CHARACTER_CUE_RE.test(cl) && !/[.,;!?]$/.test(cl)) { let cn = cl.replace(/\s*\([^)]*\)\s*$/g, '').trim(); if (cn) cs.add(cn.toUpperCase()); }
+                pb = (cl === '');
             }
-
-            scanned.push({
-                scene_number: scanned.length + 1,
-                name: clean,
-                line_number: i,
-                character_count: charSet.size,
-                characters: Array.from(charSet).sort(),
-                scene_id: null,
-            });
+            scanned.push({ scene_number: scanned.length + 1, name: clean, line_number: i, character_count: cs.size, characters: Array.from(cs).sort(), scene_id: null });
         }
-
         prevBlank = (stripped === '');
     }
-
-    // Preserve scene_ids from the API data if headings match
     if (navScenes.length) {
-        const oldByKey = {};
-        const oldCounters = {};
-        for (const s of navScenes) {
-            const key = s.name.toUpperCase();
-            const occ = oldCounters[key] || 0;
-            oldCounters[key] = occ + 1;
-            oldByKey[key + ':' + occ] = s.scene_id;
-        }
-        const newCounters = {};
-        for (const s of scanned) {
-            const key = s.name.toUpperCase();
-            const occ = newCounters[key] || 0;
-            newCounters[key] = occ + 1;
-            s.scene_id = oldByKey[key + ':' + occ] || null;
-        }
+        const old = {}, oc = {};
+        for (const s of navScenes) { const k = s.name.toUpperCase(), o = oc[k] || 0; oc[k] = o + 1; old[k + ':' + o] = s.scene_id; }
+        const nc = {};
+        for (const s of scanned) { const k = s.name.toUpperCase(), o = nc[k] || 0; nc[k] = o + 1; s.scene_id = old[k + ':' + o] || null; }
     }
-
-    navScenes = scanned;
-    renderScenes();
+    navScenes = scanned; renderScenes();
 }
+function scheduleLiveScan() { if (liveScanTimer) clearTimeout(liveScanTimer); liveScanTimer = setTimeout(liveScanScenes, 500); }
 
-function scheduleLiveScan() {
-    if (liveScanTimer) clearTimeout(liveScanTimer);
-    liveScanTimer = setTimeout(liveScanScenes, 500);
-}
-
-// ── Navigator data fetching ─────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Navigator data fetching
+// ═══════════════════════════════════════════════════════════════════════════
 
 async function fetchNavigatorData() {
     try {
-        const [scenesRes, charsRes, locsRes] = await Promise.all([
-            fetch('/api/screenplay/scenes'),
-            fetch('/api/screenplay/characters'),
-            fetch('/api/screenplay/locations'),
-        ]);
-        if (scenesRes.ok) navScenes = await scenesRes.json();
-        if (charsRes.ok) navCharacters = await charsRes.json();
-        if (locsRes.ok) navLocations = await locsRes.json();
-    } catch (e) {
-        // Silently fail — navigator just stays empty
-    }
-
-    renderScenes();
-    renderCharacters();
-    renderLocations();
+        const [sr, cr, lr] = await Promise.all([fetch('/api/screenplay/scenes'), fetch('/api/screenplay/characters'), fetch('/api/screenplay/locations')]);
+        if (sr.ok) navScenes = await sr.json(); if (cr.ok) navCharacters = await cr.json(); if (lr.ok) navLocations = await lr.json();
+    } catch (e) { console.error('Navigator fetch failed:', e); }
+    renderScenes(); renderCharacters(); renderLocations();
 }
 
-// ── Save ────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Save / Export / Load
+// ═══════════════════════════════════════════════════════════════════════════
 
 async function saveScreenplay() {
-    if (!editorView || saving) return;
-    markSaving();
-
-    const text = editorView.state.doc.toString();
-
+    if (!editorView || saving) return; markSaving();
     try {
-        const res = await fetch('/api/screenplay/save', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
-        });
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
-            throw new Error(err.detail || 'Save failed');
-        }
-        const data = await res.json();
-        markSaved();
-        if (data.sync) showSyncToast(data.sync);
-
-        // Refresh navigator after save (sync may have created new entities)
-        fetchNavigatorData();
-    } catch (e) {
-        markSaveFailed();
-        showToast(`Save error: ${e.message}`);
-    }
+        const res = await fetch('/api/screenplay/save', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: editorView.state.doc.toString() }) });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Save failed');
+        const data = await res.json(); markSaved(); if (data.sync) showSyncToast(data.sync); fetchNavigatorData();
+    } catch (e) { markSaveFailed(); showToast(`Save error: ${e.message}`); }
 }
 
-// ── Export ───────────────────────────────────────────────────────────────────
-
-function exportScreenplay() {
-    const link = document.createElement('a');
-    link.href = '/api/screenplay/export';
-    link.click();
-}
-
-// ── Load ────────────────────────────────────────────────────────────────────
+function exportScreenplay() { const a = document.createElement('a'); a.href = '/api/screenplay/export'; a.click(); }
 
 async function loadScreenplay() {
     if (!editorView) return;
     try {
-        const res = await fetch('/api/screenplay/load');
-        if (!res.ok) throw new Error('Failed to load');
-        const data = await res.json();
-        if (!data.has_fountain) return;
-
-        editorView.dispatch({
-            changes: { from: 0, to: editorView.state.doc.length, insert: data.text || '' },
-        });
-
-        // Reset unsaved state after loading
-        unsaved = false;
-        setSaveStatus('Loaded \u2713', 'var(--success)');
-        savedTimeout = setTimeout(() => setSaveStatus('Ready', ''), 2000);
-
-        // Populate navigator after text is loaded
+        const res = await fetch('/api/screenplay/load'); if (!res.ok) throw new Error('Failed to load');
+        const data = await res.json(); if (!data.has_fountain) return;
+        editorView.dispatch({ changes: { from: 0, to: editorView.state.doc.length, insert: data.text || '' } });
+        unsaved = false; setSaveStatus('Loaded \u2713', 'var(--success)'); savedTimeout = setTimeout(() => setSaveStatus('Ready', ''), 2000);
         fetchNavigatorData();
     } catch (e) {
-        const panel = document.getElementById('screenplay-panel');
-        if (panel) {
-            const msg = document.createElement('div');
-            msg.className = 'screenplay-load-error';
-            msg.textContent = 'Failed to load screenplay. Please try refreshing.';
-            panel.appendChild(msg);
-        }
+        console.error('Load failed:', e);
+        const p = document.getElementById('screenplay-panel');
+        if (p) { const m = document.createElement('div'); m.className = 'screenplay-load-error'; m.textContent = 'Failed to load screenplay. Please try refreshing.'; p.appendChild(m); }
     }
 }
 
-// ── CodeMirror setup ────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// CodeMirror setup
+// ═══════════════════════════════════════════════════════════════════════════
 
 function createEditor(container) {
-    const saveKeymap = [{
-        key: 'Mod-s',
-        run() { saveScreenplay(); return true; },
-    }];
-
     const state = EditorState.create({
         doc: '',
         extensions: [
@@ -889,120 +522,52 @@ function createEditor(container) {
             enterKeymap,
             autoUppercaseHandler,
             anchorHidingPlugin,
-            keymap.of([...saveKeymap, ...defaultKeymap, ...historyKeymap]),
+            keymap.of([{ key: 'Mod-s', run() { saveScreenplay(); return true; } }, ...defaultKeymap, ...historyKeymap]),
             EditorView.updateListener.of((update) => {
-                if (update.selectionSet || update.docChanged) {
-                    updateCursorStatus(update.state);
-                }
-                if (update.docChanged) {
-                    markUnsaved();
-                    scheduleLiveScan();
-                }
+                if (update.selectionSet || update.docChanged) updateCursorStatus(update.state);
+                if (update.docChanged) { markUnsaved(); scheduleLiveScan(); }
             }),
             EditorView.theme({
-                '&': {
-                    backgroundColor: 'var(--bg-base)',
-                    color: 'var(--text-primary)',
-                    fontFamily: "'Courier Prime', 'Courier New', Courier, monospace",
-                    fontSize: '15px',
-                    lineHeight: '1.5',
-                    flex: '1',
-                },
-                '.cm-content': {
-                    caretColor: 'var(--accent)',
-                    padding: '24px 0',
-                },
-                '.cm-scroller': {
-                    padding: '0 40px',
-                    overflow: 'auto',
-                },
-                '.cm-cursor, .cm-dropCursor': {
-                    borderLeftColor: 'var(--accent)',
-                    borderLeftWidth: '2px',
-                },
-                '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
-                    backgroundColor: 'var(--accent-subtle) !important',
-                },
-                '.cm-activeLine': {
-                    backgroundColor: 'rgba(42, 42, 56, 0.3)',
-                },
-                '.cm-gutters': {
-                    display: 'none',
-                },
-                '.cm-fountain-heading': {
-                    color: 'var(--text-primary)',
-                    fontWeight: 'bold',
-                    letterSpacing: '0.02em',
-                },
-                '.cm-fountain-character': {
-                    color: '#8b8bff',
-                },
-                '.cm-fountain-dialogue': {
-                    color: 'var(--text-primary)',
-                },
-                '.cm-fountain-parenthetical': {
-                    color: 'var(--text-secondary)',
-                    fontStyle: 'italic',
-                },
-                '.cm-fountain-transition': {
-                    color: 'var(--text-muted)',
-                },
-                '.cm-fountain-note': {
-                    color: 'var(--text-muted)',
-                    opacity: '0.5',
-                },
-                '.cm-fountain-boneyard': {
-                    color: 'var(--text-muted)',
-                    opacity: '0.4',
-                },
-                '.cm-fountain-centered': {
-                    color: 'var(--text-primary)',
-                },
-                '.cm-fountain-synopsis': {
-                    color: 'var(--text-muted)',
-                    fontStyle: 'italic',
-                },
-                '.cm-fountain-section': {
-                    color: 'var(--text-secondary)',
-                    fontWeight: 'bold',
-                },
-                '.cm-fountain-titleKey': {
-                    color: 'var(--text-muted)',
-                },
-                '.cm-fountain-titleValue': {
-                    color: 'var(--text-secondary)',
-                },
+                '&': { backgroundColor: 'var(--bg-base)', color: 'var(--text-primary)', fontFamily: "'Courier Prime', 'Courier New', Courier, monospace", fontSize: '15px', lineHeight: '1.5', flex: '1' },
+                '.cm-content': { caretColor: 'var(--accent)', padding: '24px 0' },
+                '.cm-scroller': { padding: '0 40px', overflow: 'auto' },
+                '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)', borderLeftWidth: '2px' },
+                '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': { backgroundColor: 'var(--accent-subtle) !important' },
+                '.cm-activeLine': { backgroundColor: 'rgba(42, 42, 56, 0.3)' },
+                '.cm-gutters': { display: 'none' },
+                '.cm-fountain-heading': { color: 'var(--text-primary)', fontWeight: 'bold', letterSpacing: '0.02em' },
+                '.cm-fountain-character': { color: '#8b8bff' },
+                '.cm-fountain-dialogue': { color: 'var(--text-primary)' },
+                '.cm-fountain-parenthetical': { color: 'var(--text-secondary)', fontStyle: 'italic' },
+                '.cm-fountain-transition': { color: 'var(--text-muted)' },
+                '.cm-fountain-note': { color: 'var(--text-muted)', opacity: '0.5' },
+                '.cm-fountain-boneyard': { color: 'var(--text-muted)', opacity: '0.4' },
+                '.cm-fountain-centered': { color: 'var(--text-primary)' },
+                '.cm-fountain-synopsis': { color: 'var(--text-muted)', fontStyle: 'italic' },
+                '.cm-fountain-section': { color: 'var(--text-secondary)', fontWeight: 'bold' },
+                '.cm-fountain-titleKey': { color: 'var(--text-muted)' },
+                '.cm-fountain-titleValue': { color: 'var(--text-secondary)' },
             }, { dark: true }),
         ],
     });
-
     return new EditorView({ state, parent: container });
 }
 
-// ── Initialize ──────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Initialize
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('[SCF] Screenplay editor module loaded');
 
 const container = document.getElementById('screenplay-panel');
-
 if (container) {
+    console.log('[SCF] Initializing CodeMirror...');
     editorView = createEditor(container);
-    initNavigatorResize();
-    initCollapseHandlers();
-    loadScreenplay();
-
-    // Wire up header buttons
-    const saveBtn = document.getElementById('btn-save-screenplay');
-    if (saveBtn) saveBtn.addEventListener('click', saveScreenplay);
-
-    const exportBtn = document.getElementById('btn-export-screenplay');
-    if (exportBtn) exportBtn.addEventListener('click', exportScreenplay);
-
-    // Warn before navigating away with unsaved changes
-    window.addEventListener('beforeunload', (e) => {
-        if (unsaved) {
-            e.preventDefault();
-            e.returnValue = '';
-        }
-    });
+    console.log('[SCF] CodeMirror initialized successfully');
+    initNavigatorResize(); initCollapseHandlers(); loadScreenplay();
+    document.getElementById('btn-save-screenplay')?.addEventListener('click', saveScreenplay);
+    document.getElementById('btn-export-screenplay')?.addEventListener('click', exportScreenplay);
+    window.addEventListener('beforeunload', (e) => { if (unsaved) { e.preventDefault(); e.returnValue = ''; } });
 }
 
 export { editorView, saveScreenplay, exportScreenplay };

@@ -27,15 +27,9 @@
         </header>
 
         {% if has_fountain %}
-        <!-- ============================================================== -->
-        <!-- Editor State: three-panel layout                               -->
-        <!-- ============================================================== -->
         <div class="screenplay-layout">
-
-            <!-- Left Panel: Scene Navigator -->
             <nav class="panel-navigator" id="navigator-panel">
                 <div class="navigator-scroll">
-
                     <div class="nav-section" id="nav-scenes-section">
                         <div class="nav-section-header">
                             <span class="chevron">&#9656;</span>
@@ -47,7 +41,6 @@
                             <span class="nav-empty-msg">Loading&hellip;</span>
                         </div>
                     </div>
-
                     <div class="nav-section" id="nav-characters-section">
                         <div class="nav-section-header">
                             <span class="chevron">&#9656;</span>
@@ -58,7 +51,6 @@
                             <span class="nav-empty-msg">Loading&hellip;</span>
                         </div>
                     </div>
-
                     <div class="nav-section" id="nav-locations-section">
                         <div class="nav-section-header">
                             <span class="chevron">&#9656;</span>
@@ -69,16 +61,11 @@
                             <span class="nav-empty-msg">Loading&hellip;</span>
                         </div>
                     </div>
-
                 </div>
             </nav>
-
-            <!-- Center Panel: CodeMirror Editor -->
             <main class="panel-screenplay" id="screenplay-panel"></main>
-
         </div>
 
-        <!-- Status Bar -->
         <div class="screenplay-status-bar">
             <span class="status-item" id="status-scene">Sc &mdash;</span>
             <span class="status-divider"></span>
@@ -92,9 +79,6 @@
         </div>
 
         {% else %}
-        <!-- ============================================================== -->
-        <!-- Empty State: onboarding card                                   -->
-        <!-- ============================================================== -->
         <div class="screenplay-empty">
             <div class="screenplay-empty-card">
                 <h2>Screenplay Editor</h2>
@@ -102,9 +86,7 @@
                     No screenplay file found for this project. Import an existing
                     Fountain file or start fresh.
                 </p>
-
                 <div class="screenplay-empty-options">
-                    <!-- Import Fountain -->
                     <form class="screenplay-option" action="/project/import-fountain-into-current" method="post" enctype="multipart/form-data">
                         <div class="screenplay-option-icon">📄</div>
                         <h3>Import Screenplay</h3>
@@ -115,8 +97,6 @@
                                    onchange="this.closest('form').submit()">
                         </label>
                     </form>
-
-                    <!-- Start New -->
                     <form class="screenplay-option" action="/project/create-fountain" method="post">
                         <div class="screenplay-option-icon">✏️</div>
                         <h3>Start New Screenplay</h3>
