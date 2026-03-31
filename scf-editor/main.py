@@ -62,14 +62,15 @@ def _get_current_project(request: Request) -> str | None:
 
 
 def _require_project(request: Request) -> Path:
-    """Get current project path or raise."""
+    """Get current project .scf path or raise. Cookie stores the directory name."""
     proj = _get_current_project(request)
     if not proj:
         raise HTTPException(status_code=400, detail="No project selected")
-    path = Path("projects") / proj
-    if not path.exists():
-        raise HTTPException(status_code=404, detail=f"Project file not found: {proj}")
-    return path
+    project_dir = Path("projects") / proj
+    scf_path = project_dir / f"{proj}.scf"
+    if not project_dir.exists() or not scf_path.exists():
+        raise HTTPException(status_code=404, detail=f"Project not found: {proj}")
+    return scf_path
 
 
 # -- Junction entity auto-naming --
@@ -137,11 +138,14 @@ def _auto_name_junction(db_path: Path, entity_type: str, entity_id: int):
 async def index(request: Request):
     """Landing / project selector."""
     proj = _get_current_project(request)
-    if proj and (Path("projects") / proj).exists():
-        return RedirectResponse("/browse", status_code=302)
+    if proj:
+        project_dir = Path("projects") / proj
+        scf_path = project_dir / f"{proj}.scf"
+        if project_dir.exists() and scf_path.exists():
+            return RedirectResponse("/browse", status_code=302)
     projects = db.list_projects()
     for p in projects:
-        p["abs_path"] = str(Path(p["path"]).resolve())
+        p["abs_path"] = str(Path(p["dir_path"]).resolve())
     return templates.TemplateResponse("index.html", {
         "request": request,
         "projects": projects,
@@ -153,11 +157,15 @@ async def project_create(request: Request, project_name: str = Form(...)):
     """Create a new project."""
     try:
         db_path = db.create_project(project_name)
+        # Cookie stores the directory name (parent of the .scf file)
+        dir_name = db_path.parent.name
         response = RedirectResponse("/browse", status_code=302)
-        response.set_cookie("scf_project", db_path.name, max_age=86400 * 365)
+        response.set_cookie("scf_project", dir_name, max_age=86400 * 365)
         return response
     except FileExistsError:
         projects = db.list_projects()
+        for p in projects:
+            p["abs_path"] = str(Path(p["dir_path"]).resolve())
         return templates.TemplateResponse("index.html", {
             "request": request,
             "projects": projects,
@@ -167,12 +175,14 @@ async def project_create(request: Request, project_name: str = Form(...)):
 
 @app.get("/project/open/{filename}")
 async def project_open(filename: str):
-    """Open an existing project (auto-migrates tables for new entity types)."""
-    path = Path("projects") / filename
-    if not path.exists():
+    """Open an existing project (auto-migrates tables for new entity types).
+    filename is the project directory name."""
+    project_dir = Path("projects") / filename
+    scf_path = project_dir / f"{filename}.scf"
+    if not project_dir.exists() or not scf_path.exists():
         raise HTTPException(status_code=404, detail="Project not found")
     # Auto-migrate: ensures new entity tables (e.g. junction tables) exist
-    db.init_database(path)
+    db.init_database(scf_path)
     response = RedirectResponse("/browse", status_code=302)
     response.set_cookie("scf_project", filename, max_age=86400 * 365)
     return response
@@ -188,40 +198,47 @@ async def project_close():
 
 @app.post("/project/import")
 async def project_import(request: Request, file: UploadFile = File(...)):
-    """Import an existing .scf file into the projects folder."""
+    """Import an existing .scf file into a project directory."""
     if not file.filename or not file.filename.endswith(".scf"):
         projects = db.list_projects()
         for p in projects:
-            p["abs_path"] = str(Path(p["path"]).resolve())
+            p["abs_path"] = str(Path(p["dir_path"]).resolve())
         return templates.TemplateResponse("index.html", {
             "request": request,
             "projects": projects,
             "error": "Please select a valid .scf file.",
         })
-    dest = Path("projects") / file.filename
-    if dest.exists():
+    dir_name = file.filename.rsplit(".", 1)[0]
+    # Sanitize same as get_db_path
+    dir_name = "".join(c for c in dir_name if c.isalnum() or c in " -_").strip()
+    dir_name = dir_name.replace(" ", "_").lower()
+    project_dir = Path("projects") / dir_name
+    if project_dir.exists():
         projects = db.list_projects()
         for p in projects:
-            p["abs_path"] = str(Path(p["path"]).resolve())
+            p["abs_path"] = str(Path(p["dir_path"]).resolve())
         return templates.TemplateResponse("index.html", {
             "request": request,
             "projects": projects,
-            "error": f"A project named '{file.filename}' already exists.",
+            "error": f"A project named '{dir_name}' already exists.",
         })
+    project_dir.mkdir(parents=True)
+    dest = project_dir / f"{dir_name}.scf"
     with dest.open("wb") as f:
         shutil.copyfileobj(file.file, f)
     response = RedirectResponse("/browse", status_code=302)
-    response.set_cookie("scf_project", file.filename, max_age=86400 * 365)
+    response.set_cookie("scf_project", dir_name, max_age=86400 * 365)
     return response
 
 
 @app.get("/project/download/{filename}")
 async def project_download(filename: str):
-    """Download a project .scf file."""
-    path = Path("projects") / filename
-    if not path.exists() or path.suffix != ".scf":
+    """Download a project .scf file. filename is the project directory name."""
+    project_dir = Path("projects") / filename
+    scf_path = project_dir / f"{filename}.scf"
+    if not scf_path.exists():
         raise HTTPException(status_code=404, detail="Project file not found")
-    return FileResponse(path, filename=filename, media_type="application/octet-stream")
+    return FileResponse(scf_path, filename=f"{filename}.scf", media_type="application/octet-stream")
 
 
 @app.get("/browse", response_class=HTMLResponse)
@@ -761,7 +778,7 @@ async def project_import_fountain(
     if not file.filename or not file.filename.endswith(".fountain"):
         projects = db.list_projects()
         for p in projects:
-            p["abs_path"] = str(Path(p["path"]).resolve())
+            p["abs_path"] = str(Path(p["dir_path"]).resolve())
         return templates.TemplateResponse("index.html", {
             "request": request,
             "projects": projects,
@@ -780,15 +797,21 @@ async def project_import_fountain(
     except FileExistsError:
         projects = db.list_projects()
         for p in projects:
-            p["abs_path"] = str(Path(p["path"]).resolve())
+            p["abs_path"] = str(Path(p["dir_path"]).resolve())
         return templates.TemplateResponse("index.html", {
             "request": request,
             "projects": projects,
             "error": f"Project '{project_name}' already exists.",
         })
 
+    # Save the .fountain file into the project directory
+    project_dir = db_path.parent
+    fountain_dest = project_dir / f"{project_dir.name}.fountain"
+    fountain_dest.write_text(text, encoding="utf-8")
+
+    dir_name = project_dir.name
     response = RedirectResponse("/browse", status_code=302)
-    response.set_cookie("scf_project", db_path.name, max_age=86400 * 365)
+    response.set_cookie("scf_project", dir_name, max_age=86400 * 365)
     msg = fountain_import.format_summary(summary)
     response.set_cookie("import_summary", msg, max_age=30)
     return response
@@ -804,15 +827,16 @@ async def project_merge_fountain(
     if not file.filename or not file.filename.endswith(".fountain"):
         projects = db.list_projects()
         for p in projects:
-            p["abs_path"] = str(Path(p["path"]).resolve())
+            p["abs_path"] = str(Path(p["dir_path"]).resolve())
         return templates.TemplateResponse("index.html", {
             "request": request,
             "projects": projects,
             "error": "Please select a valid .fountain file.",
         })
 
-    target_path = Path("projects") / target_project
-    if not target_path.exists():
+    project_dir = Path("projects") / target_project
+    target_path = project_dir / f"{target_project}.scf"
+    if not project_dir.exists() or not target_path.exists():
         raise HTTPException(status_code=404, detail="Target project not found")
 
     content = await file.read()

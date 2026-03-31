@@ -44,7 +44,7 @@ def import_as_new_project(fountain_text: str, project_name: str) -> tuple[Path, 
         if update:
             db.update_entity(db_path, "project", projects[0]["id"], update)
 
-    summary = _write_to_project(data, db_path)
+    summary = _write_to_project(data, db_path, fountain_text=fountain_text)
     return db_path, summary
 
 
@@ -76,7 +76,8 @@ def _insert(conn, table: str, data: dict, entity_type: str) -> int:
     return cursor.lastrowid
 
 
-def _write_to_project(data: FountainData, db_path: Path, merge: bool = False) -> dict:
+def _write_to_project(data: FountainData, db_path: Path, merge: bool = False,
+                      fountain_text: str = "") -> dict:
     """
     Core write logic. Uses a SINGLE connection and transaction for all writes.
     """
@@ -284,6 +285,56 @@ def _write_to_project(data: FountainData, db_path: Path, merge: bool = False) ->
             _insert(conn, "scene_prop", junction_data, "scene_prop")
             existing_sp_junctions.add((scene_id, prop_id))
             summary["scene_props"]["created"] += 1
+
+        # ═════════════════════════════════════════════════════════════
+        # 7. Screenplay mapping tables (new project imports only)
+        # ═════════════════════════════════════════════════════════════
+        if not merge:
+            # screenplay_meta
+            fountain_filename = f"{db_path.parent.name}.fountain"
+            total_pages = max(1, len(fountain_text.splitlines()) // 55) if fountain_text else 0
+            conn.execute(
+                """INSERT INTO screenplay_meta
+                   (fountain_path, title, author, total_scenes, total_pages)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (fountain_filename, data.title, data.author,
+                 len(data.scenes), total_pages)
+            )
+
+            # screenplay_character_map
+            for char in data.characters:
+                char_id = character_id_map.get(char.name.lower())
+                if char_id:
+                    conn.execute(
+                        """INSERT OR IGNORE INTO screenplay_character_map
+                           (text_name, character_id, is_primary_name)
+                           VALUES (?, ?, 1)""",
+                        (char.name, char_id)
+                    )
+
+            # screenplay_scene_map
+            for scene in data.scenes:
+                scene_idx = scene.scene_number - 1
+                scene_id = scene_id_map.get(scene_idx)
+                if scene_id:
+                    heading = scene.name
+                    conn.execute(
+                        """INSERT INTO screenplay_scene_map
+                           (scene_id, heading_text, scene_order, in_screenplay)
+                           VALUES (?, ?, ?, 1)""",
+                        (scene_id, heading, scene.scene_number)
+                    )
+
+            # screenplay_location_map
+            for loc in data.locations:
+                loc_id = location_id_map.get(loc.name.lower())
+                if loc_id:
+                    conn.execute(
+                        """INSERT INTO screenplay_location_map
+                           (text_name, location_id)
+                           VALUES (?, ?)""",
+                        (loc.name, loc_id)
+                    )
 
         # ── Commit everything in one transaction ──
         conn.commit()

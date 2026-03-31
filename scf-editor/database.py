@@ -18,11 +18,13 @@ PROJECTS_DIR = Path("projects")
 
 
 def get_db_path(project_name: str) -> Path:
-    """Get the .scf file path for a project."""
+    """Get the .scf file path for a project (inside project directory)."""
     PROJECTS_DIR.mkdir(exist_ok=True)
     safe_name = "".join(c for c in project_name if c.isalnum() or c in " -_").strip()
     safe_name = safe_name.replace(" ", "_").lower()
-    return PROJECTS_DIR / f"{safe_name}.scf"
+    project_dir = PROJECTS_DIR / safe_name
+    project_dir.mkdir(exist_ok=True)
+    return project_dir / f"{safe_name}.scf"
 
 
 def get_connection(db_path: str | Path) -> sqlite3.Connection:
@@ -55,6 +57,56 @@ def init_database(db_path: str | Path) -> None:
             "INSERT OR REPLACE INTO _scf_meta (key, value) VALUES (?, ?)",
             ("updated_at", datetime.utcnow().isoformat())
         )
+
+        # Screenplay mapping tables (infrastructure, not entity registry)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS screenplay_meta (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fountain_path TEXT,
+                title TEXT,
+                author TEXT,
+                draft TEXT,
+                last_synced TEXT,
+                total_scenes INTEGER DEFAULT 0,
+                total_pages INTEGER DEFAULT 0
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS screenplay_character_map (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text_name TEXT NOT NULL UNIQUE,
+                character_id INTEGER REFERENCES character(id),
+                is_primary_name INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS screenplay_scene_map (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scene_id INTEGER REFERENCES scene(id),
+                heading_text TEXT,
+                scene_order INTEGER,
+                in_screenplay INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS screenplay_location_map (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text_name TEXT NOT NULL,
+                location_id INTEGER REFERENCES location(id),
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS screenplay_prop_map (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prop_id INTEGER REFERENCES prop(id),
+                text_fragment TEXT,
+                scene_id INTEGER REFERENCES scene(id),
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
 
         # Create tables for each registered entity type
         for name, entity_def in get_all_entities().items():
@@ -255,35 +307,39 @@ def search_all(db_path: str | Path, query: str) -> list[dict]:
 # =============================================================================
 
 def list_projects() -> list[dict]:
-    """List all .scf files in the projects directory."""
+    """List all project directories containing .scf files."""
     PROJECTS_DIR.mkdir(exist_ok=True)
     projects = []
-    for f in sorted(PROJECTS_DIR.glob("*.scf")):
+    for d in sorted(PROJECTS_DIR.iterdir()):
+        if not d.is_dir():
+            continue
+        scf_file = d / f"{d.name}.scf"
+        if not scf_file.exists():
+            continue
         try:
-            conn = get_connection(f)
+            conn = get_connection(scf_file)
             meta = {}
             for row in conn.execute("SELECT key, value FROM _scf_meta"):
                 meta[row["key"]] = row["value"]
+
+            proj_row = conn.execute("SELECT name FROM project LIMIT 1").fetchone()
+            display_name = proj_row["name"] if proj_row else d.name
             conn.close()
 
-            # Get project name from project table if it exists
-            conn2 = get_connection(f)
-            proj_row = conn2.execute("SELECT name FROM project LIMIT 1").fetchone()
-            display_name = proj_row["name"] if proj_row else f.stem
-            conn2.close()
-
             projects.append({
-                "filename": f.name,
-                "path": str(f),
+                "filename": d.name,
+                "path": str(scf_file),
+                "dir_path": str(d),
                 "display_name": display_name,
                 "scf_version": meta.get("scf_version", "unknown"),
                 "updated_at": meta.get("updated_at", ""),
             })
         except Exception:
             projects.append({
-                "filename": f.name,
-                "path": str(f),
-                "display_name": f.stem,
+                "filename": d.name,
+                "path": str(scf_file),
+                "dir_path": str(d),
+                "display_name": d.name,
                 "scf_version": "unknown",
                 "updated_at": "",
             })
@@ -291,11 +347,14 @@ def list_projects() -> list[dict]:
 
 
 def create_project(name: str) -> Path:
-    """Create a new .scf project file and return its path."""
-    db_path = get_db_path(name)
-    if db_path.exists():
-        raise FileExistsError(f"Project already exists: {db_path}")
+    """Create a new project directory with .scf file and return the .scf path."""
+    safe_name = "".join(c for c in name if c.isalnum() or c in " -_").strip()
+    safe_name = safe_name.replace(" ", "_").lower()
+    project_dir = PROJECTS_DIR / safe_name
+    if project_dir.exists():
+        raise FileExistsError(f"Project already exists: {project_dir}")
 
+    db_path = get_db_path(name)
     init_database(db_path)
 
     # Create the root project entity
