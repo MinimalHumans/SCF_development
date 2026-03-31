@@ -2,7 +2,8 @@
  * Screenplay Editor — CodeMirror 6 Initialization
  * ==================================================
  * Mounts a CodeMirror 6 editor with Fountain syntax highlighting,
- * load/save via API, unsaved state tracking, and export.
+ * load/save via API, unsaved state tracking, export, and a live
+ * scene navigator sidebar.
  */
 
 import { EditorState } from 'https://esm.sh/@codemirror/state@6.5.2';
@@ -15,19 +16,12 @@ import { fountainLanguage } from './fountain-mode.js';
 const HEADING_RE = /^(\.(?=[A-Z])|(?:INT|EXT|EST|I\/E|INT\.\/EXT\.)[\s./])/i;
 const CHARACTER_CUE_RE = /^[A-Z][A-Z0-9 ._\-']+(?:\s*\((?:V\.?O\.?|O\.?S\.?|CONT'?D?|O\.?C\.?)\))?$/;
 
-/**
- * Detect the Fountain element type of a line, given context.
- * Returns: 'heading' | 'character' | 'transition' | 'action'
- */
 function detectElementType(lineText, prevLineBlank) {
     const trimmed = lineText.trim();
     if (trimmed === '') return 'action';
     if (HEADING_RE.test(trimmed)) return 'heading';
-    // Transition: all-caps ending with ':'
     if (/^[A-Z][A-Z\s]+:$/.test(trimmed)) return 'transition';
-    // Character: all-caps, blank line above, no trailing sentence punctuation
     if (prevLineBlank && CHARACTER_CUE_RE.test(trimmed) && !/[.,;!?]$/.test(trimmed)) return 'character';
-    // All-caps line without colon but blank above — still could be character
     if (prevLineBlank && /^[A-Z][A-Z0-9 ._\-']{1,}$/.test(trimmed)) return 'character';
     return 'action';
 }
@@ -37,7 +31,6 @@ const CYCLE_ORDER = ['action', 'heading', 'character', 'transition'];
 function cycleElementType(view, direction) {
     const state = view.state;
     const sel = state.selection.main;
-    // Only act on single-line cursors / selections
     const fromLine = state.doc.lineAt(sel.from);
     const toLine = state.doc.lineAt(sel.to);
     if (fromLine.number !== toLine.number) return false;
@@ -45,7 +38,6 @@ function cycleElementType(view, direction) {
     const line = fromLine;
     const lineText = line.text;
 
-    // Determine previous line blank
     let prevLineBlank = true;
     if (line.number > 1) {
         const prev = state.doc.line(line.number - 1);
@@ -57,12 +49,10 @@ function cycleElementType(view, direction) {
     const nextIdx = (idx + direction + CYCLE_ORDER.length) % CYCLE_ORDER.length;
     const nextType = CYCLE_ORDER[nextIdx];
 
-    // Build the new line content
     let content = lineText;
-    // Strip existing markers first
-    content = content.replace(/^\.(?=[A-Z])/i, ''); // forced heading dot
-    content = content.replace(/^(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s*/i, ''); // heading prefixes
-    content = content.replace(/:(\s*)$/, '$1'); // trailing colon
+    content = content.replace(/^\.(?=[A-Z])/i, '');
+    content = content.replace(/^(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s*/i, '');
+    content = content.replace(/:(\s*)$/, '$1');
     content = content.trim();
 
     let newText = content;
@@ -71,7 +61,6 @@ function cycleElementType(view, direction) {
 
     switch (nextType) {
         case 'action':
-            // Just the plain content, restore to mixed case isn't feasible so leave as-is
             newText = content;
             break;
         case 'heading':
@@ -80,7 +69,6 @@ function cycleElementType(view, direction) {
             break;
         case 'character':
             newText = content.toUpperCase();
-            // Remove trailing sentence punctuation
             newText = newText.replace(/[.,;!?]+$/, '');
             needBlankAbove = true;
             break;
@@ -91,11 +79,9 @@ function cycleElementType(view, direction) {
             break;
     }
 
-    // Build transaction changes
     if (needBlankAbove && line.number > 1) {
         const prev = state.doc.line(line.number - 1);
         if (prev.text.trim() !== '') {
-            // Insert blank line before current line
             changes.push({ from: line.from, insert: '\n' });
         }
     }
@@ -111,14 +97,8 @@ function cycleElementType(view, direction) {
 }
 
 const tabCycleKeymap = keymap.of([
-    {
-        key: 'Tab',
-        run(view) { return cycleElementType(view, 1); },
-    },
-    {
-        key: 'Shift-Tab',
-        run(view) { return cycleElementType(view, -1); },
-    },
+    { key: 'Tab', run(view) { return cycleElementType(view, 1); } },
+    { key: 'Shift-Tab', run(view) { return cycleElementType(view, -1); } },
 ]);
 
 // ── Auto-Uppercase ─────────────────────────────────────────────────────────
@@ -132,12 +112,7 @@ function isSceneHeadingLine(text) {
     return /^(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s/i.test(text.trim());
 }
 
-/**
- * Intercepts typed characters and uppercases them when on a character cue
- * line (blank line above, all-caps so far) or a scene heading line.
- */
 const autoUppercaseHandler = EditorView.inputHandler.of((view, from, to, text) => {
-    // Only act on single lowercase letter input
     if (text.length !== 1 || !/[a-z]/.test(text)) return false;
 
     const state = view.state;
@@ -146,7 +121,6 @@ const autoUppercaseHandler = EditorView.inputHandler.of((view, from, to, text) =
     const textAfter = state.doc.sliceString(to, line.to);
     const fullLine = textBefore + text + textAfter;
 
-    // Scene heading: line starts with INT./EXT./etc.
     if (isSceneHeadingLine(fullLine)) {
         view.dispatch({
             changes: { from, to, insert: text.toUpperCase() },
@@ -155,7 +129,6 @@ const autoUppercaseHandler = EditorView.inputHandler.of((view, from, to, text) =
         return true;
     }
 
-    // Character cue position: previous line is blank and existing text is all uppercase
     if (line.number > 1) {
         const prevLine = state.doc.line(line.number - 1);
         if (prevLine.text.trim() === '' && isAllUpperContent(textBefore) && isAllUpperContent(textAfter)) {
@@ -173,12 +146,10 @@ const autoUppercaseHandler = EditorView.inputHandler.of((view, from, to, text) =
 // ── Enter Key Behaviors ────────────────────────────────────────────────────
 
 function isInDialogueContext(state, lineNumber) {
-    // Walk backward to find if we're in dialogue (character cue above with no blank line break)
     for (let i = lineNumber - 1; i >= 1; i--) {
         const l = state.doc.line(i);
         const text = l.text.trim();
-        if (text === '') return false; // blank line = exited dialogue
-        // Check if this line is a character cue
+        if (text === '') return false;
         if (i >= 2) {
             const above = state.doc.line(i - 1);
             if (above.text.trim() === '' && CHARACTER_CUE_RE.test(text)) return true;
@@ -196,10 +167,8 @@ function handleEnter(view) {
     const lineText = line.text;
     const trimmed = lineText.trim();
 
-    // Determine previous line blank
     let prevLineBlank = line.number <= 1 || state.doc.line(line.number - 1).text.trim() === '';
 
-    // Case 1: Enter on a character cue line → single newline (enter dialogue)
     if (prevLineBlank && CHARACTER_CUE_RE.test(trimmed) && trimmed.length > 1 && sel.head === line.to) {
         view.dispatch({
             changes: { from: sel.head, insert: '\n' },
@@ -208,7 +177,6 @@ function handleEnter(view) {
         return true;
     }
 
-    // Case 2: Enter on an empty line in dialogue context → insert blank line to exit
     if (trimmed === '' && line.number > 1 && isInDialogueContext(state, line.number)) {
         view.dispatch({
             changes: { from: sel.head, insert: '\n' },
@@ -217,7 +185,6 @@ function handleEnter(view) {
         return true;
     }
 
-    // Case 3: Enter on a parenthetical in dialogue → single newline
     if (/^\s*\(.*\)\s*$/.test(lineText) && isInDialogueContext(state, line.number)) {
         view.dispatch({
             changes: { from: sel.head, insert: '\n' },
@@ -226,7 +193,6 @@ function handleEnter(view) {
         return true;
     }
 
-    // Case 4: Enter on a scene heading → insert blank line after
     if (HEADING_RE.test(trimmed)) {
         view.dispatch({
             changes: { from: sel.head, insert: '\n\n' },
@@ -235,15 +201,11 @@ function handleEnter(view) {
         return true;
     }
 
-    // Default: normal newline
     return false;
 }
 
 const enterKeymap = keymap.of([
-    {
-        key: 'Enter',
-        run: handleEnter,
-    },
+    { key: 'Enter', run: handleEnter },
 ]);
 
 // ── Anchor Tag Hiding ──────────────────────────────────────────────────────
@@ -270,6 +232,13 @@ let editorView = null;
 let unsaved = false;
 let saving = false;
 let savedTimeout = null;
+
+// Navigator state
+let navScenes = [];      // from API or live scan
+let navCharacters = [];  // from API only
+let navLocations = [];   // from API only
+let activeFilter = null; // { type: 'character'|'location', name: string }
+let liveScanTimer = null;
 
 // ── Toast helper (standalone — app.js not loaded on this page) ──────────────
 
@@ -337,12 +306,351 @@ function initNavigatorResize() {
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup', onMouseUp);
     });
+}
 
-    panel.querySelectorAll('.nav-section-header').forEach((header) => {
-        header.addEventListener('click', () => {
-            header.parentElement.classList.toggle('collapsed');
-        });
+// ── Navigator collapse persistence ─────────────────────────────────────────
+
+const COLLAPSE_KEY = 'scf-navigator-collapse-state';
+
+function loadCollapseState() {
+    try {
+        return JSON.parse(localStorage.getItem(COLLAPSE_KEY)) || {};
+    } catch { return {}; }
+}
+
+function saveCollapseState(state) {
+    localStorage.setItem(COLLAPSE_KEY, JSON.stringify(state));
+}
+
+function initCollapseHandlers() {
+    const state = loadCollapseState();
+    document.querySelectorAll('#navigator-panel .nav-section').forEach(section => {
+        const id = section.id;
+        if (state[id]) section.classList.add('collapsed');
+        const header = section.querySelector('.nav-section-header');
+        if (header) {
+            header.addEventListener('click', () => {
+                section.classList.toggle('collapsed');
+                const s = loadCollapseState();
+                s[id] = section.classList.contains('collapsed');
+                saveCollapseState(s);
+            });
+        }
     });
+}
+
+// ── Navigator rendering ────────────────────────────────────────────────────
+
+function renderScenes() {
+    const container = document.getElementById('nav-scenes-items');
+    const countBadge = document.getElementById('nav-scenes-count');
+    if (!container) return;
+
+    if (!navScenes.length) {
+        container.innerHTML = '<span class="nav-empty-msg">No scenes found</span>';
+        if (countBadge) countBadge.textContent = '';
+        return;
+    }
+
+    if (countBadge) countBadge.textContent = navScenes.length;
+
+    const frag = document.createDocumentFragment();
+    for (const scene of navScenes) {
+        const item = document.createElement('div');
+        item.className = 'nav-item nav-scene-item';
+        item.dataset.lineNumber = scene.line_number;
+        item.dataset.sceneNumber = scene.scene_number;
+        if (scene.characters) item.dataset.characters = scene.characters.join(',');
+
+        const num = document.createElement('span');
+        num.className = 'nav-scene-num';
+        num.textContent = `#${scene.scene_number}`;
+
+        const name = document.createElement('span');
+        name.className = 'nav-item-name';
+        // Strip INT./EXT. prefix for compact display
+        let displayName = scene.name.replace(/^(\.?(?:INT|EXT|EST|I\/E|INT\.\/EXT\.)[\s.]+)/i, '').trim();
+        // Also strip trailing time of day
+        displayName = displayName.replace(/\s*[-\.]\s*(DAY|NIGHT|MORNING|EVENING|DAWN|DUSK|AFTERNOON|MIDDAY|TWILIGHT|SUNSET|SUNRISE|CONTINUOUS|LATER|MOMENTS?\s+LATER|SAME\s+TIME)\s*$/i, '');
+        name.textContent = displayName || scene.name;
+        name.title = scene.name;
+
+        const badge = document.createElement('span');
+        badge.className = 'nav-item-badge';
+        badge.textContent = scene.character_count;
+        badge.title = `${scene.character_count} character${scene.character_count !== 1 ? 's' : ''}`;
+
+        item.appendChild(num);
+        item.appendChild(name);
+        if (scene.character_count > 0) item.appendChild(badge);
+
+        item.addEventListener('click', () => scrollToLine(scene.line_number));
+        frag.appendChild(item);
+    }
+
+    container.innerHTML = '';
+    container.appendChild(frag);
+
+    applyFilter();
+    updateCurrentScene();
+}
+
+function renderCharacters() {
+    const container = document.getElementById('nav-characters-items');
+    const countBadge = document.getElementById('nav-characters-count');
+    if (!container) return;
+
+    if (!navCharacters.length) {
+        container.innerHTML = '<span class="nav-empty-msg">No characters found</span>';
+        if (countBadge) countBadge.textContent = '';
+        return;
+    }
+
+    if (countBadge) countBadge.textContent = navCharacters.length;
+
+    const frag = document.createDocumentFragment();
+    for (const char of navCharacters) {
+        const item = document.createElement('div');
+        item.className = 'nav-item nav-char-item';
+        if (!char.is_mapped) item.classList.add('unmapped');
+        item.dataset.charName = char.name;
+
+        const icon = document.createElement('span');
+        icon.className = 'nav-item-icon';
+        icon.textContent = '\ud83d\udc64';
+
+        const name = document.createElement('span');
+        name.className = 'nav-item-name';
+        name.textContent = char.display_name;
+
+        const badge = document.createElement('span');
+        badge.className = 'nav-item-badge';
+        badge.textContent = char.scene_count;
+        badge.title = `${char.scene_count} scene${char.scene_count !== 1 ? 's' : ''}`;
+
+        item.appendChild(icon);
+        item.appendChild(name);
+        item.appendChild(badge);
+
+        if (char.is_mapped && char.character_id) {
+            const link = document.createElement('a');
+            link.className = 'nav-item-link';
+            link.href = `/browse?entity_type=character&entity_id=${char.character_id}`;
+            link.textContent = '\u2192';
+            link.title = 'Open in Entity Browser';
+            link.addEventListener('click', (e) => e.stopPropagation());
+            item.appendChild(link);
+        }
+
+        item.addEventListener('click', () => toggleFilter('character', char.name));
+        frag.appendChild(item);
+    }
+
+    container.innerHTML = '';
+    container.appendChild(frag);
+    applyFilterHighlight();
+}
+
+function renderLocations() {
+    const container = document.getElementById('nav-locations-items');
+    const countBadge = document.getElementById('nav-locations-count');
+    if (!container) return;
+
+    if (!navLocations.length) {
+        container.innerHTML = '<span class="nav-empty-msg">No locations found</span>';
+        if (countBadge) countBadge.textContent = '';
+        return;
+    }
+
+    if (countBadge) countBadge.textContent = navLocations.length;
+
+    const frag = document.createDocumentFragment();
+    for (const loc of navLocations) {
+        const item = document.createElement('div');
+        item.className = 'nav-item nav-loc-item';
+        if (!loc.is_mapped) item.classList.add('unmapped');
+        item.dataset.locName = loc.name.toUpperCase();
+
+        const icon = document.createElement('span');
+        icon.className = 'nav-item-icon';
+        icon.textContent = '\ud83d\udccd';
+
+        const name = document.createElement('span');
+        name.className = 'nav-item-name';
+        name.textContent = loc.name;
+
+        const badge = document.createElement('span');
+        badge.className = 'nav-item-badge';
+        badge.textContent = loc.scene_count;
+
+        item.appendChild(icon);
+        item.appendChild(name);
+        item.appendChild(badge);
+
+        if (loc.is_mapped && loc.location_id) {
+            const link = document.createElement('a');
+            link.className = 'nav-item-link';
+            link.href = `/browse?entity_type=location&entity_id=${loc.location_id}`;
+            link.textContent = '\u2192';
+            link.title = 'Open in Entity Browser';
+            link.addEventListener('click', (e) => e.stopPropagation());
+            item.appendChild(link);
+        }
+
+        item.addEventListener('click', () => toggleFilter('location', loc.name.toUpperCase()));
+        frag.appendChild(item);
+    }
+
+    container.innerHTML = '';
+    container.appendChild(frag);
+    applyFilterHighlight();
+}
+
+// ── Filtering ───────────────────────────────────────────────────────────────
+
+function toggleFilter(type, name) {
+    if (activeFilter && activeFilter.type === type && activeFilter.name === name) {
+        activeFilter = null;
+    } else {
+        activeFilter = { type, name };
+    }
+    applyFilter();
+    applyFilterHighlight();
+}
+
+function applyFilter() {
+    const items = document.querySelectorAll('.nav-scene-item');
+    const filterIndicator = document.getElementById('nav-scenes-filter');
+
+    if (!activeFilter) {
+        items.forEach(item => item.classList.remove('filtered-out'));
+        if (filterIndicator) filterIndicator.classList.remove('active');
+        return;
+    }
+
+    if (filterIndicator) filterIndicator.classList.add('active');
+
+    items.forEach(item => {
+        let visible = false;
+        if (activeFilter.type === 'character') {
+            const chars = (item.dataset.characters || '').split(',');
+            visible = chars.includes(activeFilter.name);
+        } else if (activeFilter.type === 'location') {
+            // Match location by checking if the scene heading contains the location name
+            const sceneNum = parseInt(item.dataset.sceneNumber);
+            const scene = navScenes.find(s => s.scene_number === sceneNum);
+            if (scene) {
+                visible = scene.name.toUpperCase().includes(activeFilter.name);
+            }
+        }
+        item.classList.toggle('filtered-out', !visible);
+    });
+}
+
+function applyFilterHighlight() {
+    document.querySelectorAll('.nav-char-item').forEach(item => {
+        item.classList.toggle('active',
+            activeFilter && activeFilter.type === 'character' && item.dataset.charName === activeFilter.name);
+    });
+    document.querySelectorAll('.nav-loc-item').forEach(item => {
+        item.classList.toggle('active',
+            activeFilter && activeFilter.type === 'location' && item.dataset.locName === activeFilter.name);
+    });
+}
+
+// ── Click-to-scroll ────────────────────────────────────────────────────────
+
+function scrollToLine(lineNumber) {
+    if (!editorView) return;
+    // lineNumber is 0-based in the stripped text; CodeMirror lines are 1-based
+    const cmLineNum = lineNumber + 1;
+    const totalLines = editorView.state.doc.lines;
+    if (cmLineNum < 1 || cmLineNum > totalLines) return;
+
+    const line = editorView.state.doc.line(cmLineNum);
+    editorView.dispatch({
+        selection: { anchor: line.from },
+        scrollIntoView: true,
+    });
+    editorView.focus();
+}
+
+// ── Current scene tracking ─────────────────────────────────────────────────
+
+function updateCurrentScene() {
+    if (!editorView || !navScenes.length) return;
+
+    const cursor = editorView.state.selection.main.head;
+    const cursorLine = editorView.state.doc.lineAt(cursor);
+    // CodeMirror is 1-based, navScenes line_number is 0-based
+    const cursorLine0 = cursorLine.number - 1;
+
+    // Find which scene contains the cursor
+    let currentIdx = -1;
+    for (let i = navScenes.length - 1; i >= 0; i--) {
+        if (cursorLine0 >= navScenes[i].line_number) {
+            currentIdx = i;
+            break;
+        }
+    }
+
+    // Update active highlighting
+    const items = document.querySelectorAll('.nav-scene-item');
+    items.forEach((item, idx) => {
+        item.classList.toggle('active', idx === currentIdx);
+    });
+
+    // Scroll active scene into view in navigator
+    if (currentIdx >= 0 && items[currentIdx]) {
+        const el = items[currentIdx];
+        const container = document.getElementById('nav-scenes-items');
+        if (container) {
+            const elRect = el.getBoundingClientRect();
+            const containerRect = container.getBoundingClientRect();
+            if (elRect.top < containerRect.top || elRect.bottom > containerRect.bottom) {
+                el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
+        }
+    }
+
+    // Update status bar — Sc N/Total
+    const sceneEl = document.getElementById('status-scene');
+    if (sceneEl) {
+        if (currentIdx >= 0) {
+            sceneEl.textContent = `Sc ${navScenes[currentIdx].scene_number}/${navScenes.length}`;
+        } else {
+            sceneEl.textContent = `Sc \u2014/${navScenes.length}`;
+        }
+    }
+
+    // Update status bar — Chars in current scene
+    updateCharsStatus(currentIdx);
+}
+
+function updateCharsStatus(currentIdx) {
+    const charsEl = document.getElementById('status-chars');
+    if (!charsEl) return;
+
+    if (currentIdx < 0 || !navScenes[currentIdx]) {
+        charsEl.textContent = '';
+        return;
+    }
+
+    const scene = navScenes[currentIdx];
+    const chars = scene.characters || [];
+    if (!chars.length) {
+        charsEl.textContent = '';
+        return;
+    }
+
+    // Title-case the names for display
+    const titleCase = (s) => s.split(' ').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+
+    if (chars.length <= 3) {
+        charsEl.textContent = 'Chars: ' + chars.map(titleCase).join(', ');
+    } else {
+        charsEl.textContent = 'Chars: ' + chars.slice(0, 3).map(titleCase).join(', ') + `, +${chars.length - 3}`;
+    }
 }
 
 // ── Status bar ──────────────────────────────────────────────────────────────
@@ -356,6 +664,8 @@ function updateCursorStatus(state) {
 
     if (lineEl) lineEl.textContent = `Ln ${line.number}`;
     if (pageEl) pageEl.textContent = `Pg ~${Math.max(1, Math.ceil(line.number / 55))}`;
+
+    updateCurrentScene();
 }
 
 function setSaveStatus(text, color) {
@@ -392,6 +702,103 @@ function markSaveFailed() {
     setSaveStatus('Save failed', 'var(--warning)');
 }
 
+// ── Live client-side scene scan (debounced) ─────────────────────────────────
+
+function liveScanScenes() {
+    if (!editorView) return;
+
+    const text = editorView.state.doc.toString();
+    const lines = text.split('\n');
+    const scanned = [];
+    let prevBlank = true;
+
+    for (let i = 0; i < lines.length; i++) {
+        const stripped = lines[i].trim();
+        // Remove anchor tags for matching
+        const clean = stripped.replace(/\[\[scf:\w+:\d+\]\]/g, '').trim();
+
+        if (clean === '') {
+            prevBlank = true;
+            continue;
+        }
+
+        if (HEADING_RE.test(clean)) {
+            // Count characters until next heading
+            const charSet = new Set();
+            for (let j = i + 1; j < lines.length; j++) {
+                const cl = lines[j].trim().replace(/\[\[scf:\w+:\d+\]\]/g, '').trim();
+                if (cl === '') { prevBlank = true; continue; }
+                if (HEADING_RE.test(cl)) break;
+                if (prevBlank && CHARACTER_CUE_RE.test(cl) && !/[.,;!?]$/.test(cl)) {
+                    // Extract name — strip extensions
+                    let cName = cl.replace(/\s*\([^)]*\)\s*$/g, '').trim();
+                    if (cName) charSet.add(cName.toUpperCase());
+                }
+                prevBlank = (cl === '');
+            }
+
+            scanned.push({
+                scene_number: scanned.length + 1,
+                name: clean,
+                line_number: i,
+                character_count: charSet.size,
+                characters: Array.from(charSet).sort(),
+                scene_id: null,
+            });
+        }
+
+        prevBlank = (stripped === '');
+    }
+
+    // Preserve scene_ids from the API data if headings match
+    if (navScenes.length) {
+        const oldByKey = {};
+        const oldCounters = {};
+        for (const s of navScenes) {
+            const key = s.name.toUpperCase();
+            const occ = oldCounters[key] || 0;
+            oldCounters[key] = occ + 1;
+            oldByKey[key + ':' + occ] = s.scene_id;
+        }
+        const newCounters = {};
+        for (const s of scanned) {
+            const key = s.name.toUpperCase();
+            const occ = newCounters[key] || 0;
+            newCounters[key] = occ + 1;
+            s.scene_id = oldByKey[key + ':' + occ] || null;
+        }
+    }
+
+    navScenes = scanned;
+    renderScenes();
+}
+
+function scheduleLiveScan() {
+    if (liveScanTimer) clearTimeout(liveScanTimer);
+    liveScanTimer = setTimeout(liveScanScenes, 500);
+}
+
+// ── Navigator data fetching ─────────────────────────────────────────────────
+
+async function fetchNavigatorData() {
+    try {
+        const [scenesRes, charsRes, locsRes] = await Promise.all([
+            fetch('/api/screenplay/scenes'),
+            fetch('/api/screenplay/characters'),
+            fetch('/api/screenplay/locations'),
+        ]);
+        if (scenesRes.ok) navScenes = await scenesRes.json();
+        if (charsRes.ok) navCharacters = await charsRes.json();
+        if (locsRes.ok) navLocations = await locsRes.json();
+    } catch (e) {
+        // Silently fail — navigator just stays empty
+    }
+
+    renderScenes();
+    renderCharacters();
+    renderLocations();
+}
+
 // ── Save ────────────────────────────────────────────────────────────────────
 
 async function saveScreenplay() {
@@ -413,6 +820,9 @@ async function saveScreenplay() {
         const data = await res.json();
         markSaved();
         if (data.sync) showSyncToast(data.sync);
+
+        // Refresh navigator after save (sync may have created new entities)
+        fetchNavigatorData();
     } catch (e) {
         markSaveFailed();
         showToast(`Save error: ${e.message}`);
@@ -445,6 +855,9 @@ async function loadScreenplay() {
         unsaved = false;
         setSaveStatus('Loaded \u2713', 'var(--success)');
         savedTimeout = setTimeout(() => setSaveStatus('Ready', ''), 2000);
+
+        // Populate navigator after text is loaded
+        fetchNavigatorData();
     } catch (e) {
         const panel = document.getElementById('screenplay-panel');
         if (panel) {
@@ -483,6 +896,7 @@ function createEditor(container) {
                 }
                 if (update.docChanged) {
                     markUnsaved();
+                    scheduleLiveScan();
                 }
             }),
             EditorView.theme({
@@ -572,6 +986,7 @@ const container = document.getElementById('screenplay-panel');
 if (container) {
     editorView = createEditor(container);
     initNavigatorResize();
+    initCollapseHandlers();
     loadScreenplay();
 
     // Wire up header buttons

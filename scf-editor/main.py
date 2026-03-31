@@ -736,6 +736,230 @@ async def api_screenplay_save(request: Request):
     })
 
 
+@app.get("/api/screenplay/scenes")
+async def api_screenplay_scenes(request: Request):
+    """Return scene list parsed from the stripped fountain text."""
+    proj = _get_current_project(request)
+    if not proj:
+        raise HTTPException(status_code=400, detail="No project selected")
+    project_dir = Path("projects") / proj
+    db_path = _require_project(request)
+
+    fountain_files = list(project_dir.glob("*.fountain"))
+    if not fountain_files:
+        return JSONResponse([])
+
+    raw_text = fountain_files[0].read_text(encoding="utf-8")
+    stripped = fountain_anchors.strip_anchors(raw_text)
+    lines = stripped.splitlines()
+
+    # Load scene_map for scene_id lookup
+    conn = db.get_connection(db_path)
+    scene_map_by_heading = {}  # heading_lower -> [{"scene_id": N, "scene_order": M}]
+    try:
+        for row in conn.execute("SELECT scene_id, heading_text, scene_order FROM screenplay_scene_map WHERE in_screenplay = 1").fetchall():
+            key = row["heading_text"].lower() if row["heading_text"] else ""
+            scene_map_by_heading.setdefault(key, []).append({
+                "scene_id": row["scene_id"], "scene_order": row["scene_order"]
+            })
+        # Sort by scene_order
+        for entries in scene_map_by_heading.values():
+            entries.sort(key=lambda e: e["scene_order"] or 0)
+    finally:
+        conn.close()
+
+    # Scan stripped text for scene headings
+    scenes = []
+    heading_counters = {}  # heading_lower -> occurrence index
+
+    for i, line in enumerate(lines):
+        stripped_line = line.strip()
+        match = _match_scene_heading(stripped_line) if stripped_line else None
+        if match:
+            heading_lower = stripped_line.lower()
+            occ = heading_counters.get(heading_lower, 0)
+            heading_counters[heading_lower] = occ + 1
+
+            int_ext_raw, loc_part, time_part = match
+            from fountain_parser import _INT_EXT_MAP, _TIME_MAP
+            int_ext = _INT_EXT_MAP.get(int_ext_raw.upper().rstrip("."), "")
+            time_of_day = _TIME_MAP.get(time_part.upper(), time_part.title()) if time_part else ""
+
+            # Lookup scene_id
+            scene_id = None
+            entries = scene_map_by_heading.get(heading_lower)
+            if entries and occ < len(entries):
+                scene_id = entries[occ]["scene_id"]
+
+            scenes.append({
+                "scene_number": len(scenes) + 1,
+                "name": stripped_line,
+                "line_number": i,
+                "character_count": 0,  # filled below
+                "characters": [],      # filled below
+                "int_ext": int_ext,
+                "time_of_day": time_of_day,
+                "scene_id": scene_id,
+            })
+
+    # Count characters per scene by scanning between headings
+    for s_idx, scene in enumerate(scenes):
+        start = scene["line_number"] + 1
+        end = scenes[s_idx + 1]["line_number"] if s_idx + 1 < len(scenes) else len(lines)
+        chars_in_scene = set()
+        prev_blank = True
+        for j in range(start, end):
+            l = lines[j].strip()
+            if l == "":
+                prev_blank = True
+                continue
+            if prev_blank and l and _is_character_cue(l):
+                char_name = _CHAR_EXTENSION_RE.sub('', l).strip()
+                if '(' in char_name:
+                    char_name = re.sub(r'\([^)]*\)', '', char_name).strip()
+                    char_name = re.sub(r'\s{2,}', ' ', char_name)
+                if char_name:
+                    chars_in_scene.add(char_name.upper())
+            prev_blank = (l == "")
+        scene["character_count"] = len(chars_in_scene)
+        scene["characters"] = sorted(chars_in_scene)
+
+    return JSONResponse(scenes)
+
+
+@app.get("/api/screenplay/characters")
+async def api_screenplay_characters(request: Request):
+    """Return character list with scene counts and entity links."""
+    proj = _get_current_project(request)
+    if not proj:
+        raise HTTPException(status_code=400, detail="No project selected")
+    project_dir = Path("projects") / proj
+    db_path = _require_project(request)
+
+    fountain_files = list(project_dir.glob("*.fountain"))
+    if not fountain_files:
+        return JSONResponse([])
+
+    raw_text = fountain_files[0].read_text(encoding="utf-8")
+    stripped = fountain_anchors.strip_anchors(raw_text)
+    lines = stripped.splitlines()
+
+    # Scan the stripped text for character cues and count scenes per character
+    # character_name_upper -> set of scene_indices
+    char_scenes = {}
+    current_scene = -1
+    prev_blank = True
+    for i, line in enumerate(lines):
+        stripped_line = line.strip()
+        if stripped_line == "":
+            prev_blank = True
+            continue
+        if _match_scene_heading(stripped_line):
+            current_scene += 1
+            prev_blank = False
+            continue
+        if prev_blank and stripped_line and _is_character_cue(stripped_line):
+            char_name = _CHAR_EXTENSION_RE.sub('', stripped_line).strip()
+            if '(' in char_name:
+                char_name = re.sub(r'\([^)]*\)', '', char_name).strip()
+                char_name = re.sub(r'\s{2,}', ' ', char_name)
+            if char_name and current_scene >= 0:
+                upper = char_name.upper()
+                char_scenes.setdefault(upper, set()).add(current_scene)
+        prev_blank = (stripped_line == "")
+
+    # Load character mappings from DB
+    conn = db.get_connection(db_path)
+    try:
+        char_map = {}  # text_name_upper -> {character_id, display_name}
+        for row in conn.execute(
+            """SELECT cm.text_name, cm.character_id, c.name
+               FROM screenplay_character_map cm
+               LEFT JOIN character c ON cm.character_id = c.id"""
+        ).fetchall():
+            char_map[row["text_name"].upper()] = {
+                "character_id": row["character_id"],
+                "display_name": row["name"] or row["text_name"].title(),
+            }
+    finally:
+        conn.close()
+
+    result = []
+    for upper_name, scene_set in char_scenes.items():
+        mapped = char_map.get(upper_name)
+        result.append({
+            "name": upper_name,
+            "display_name": mapped["display_name"] if mapped else upper_name.title(),
+            "scene_count": len(scene_set),
+            "character_id": mapped["character_id"] if mapped else None,
+            "is_mapped": mapped is not None,
+        })
+
+    # Sort by scene_count descending
+    result.sort(key=lambda x: x["scene_count"], reverse=True)
+    return JSONResponse(result)
+
+
+@app.get("/api/screenplay/locations")
+async def api_screenplay_locations(request: Request):
+    """Return location list with scene counts and entity links."""
+    proj = _get_current_project(request)
+    if not proj:
+        raise HTTPException(status_code=400, detail="No project selected")
+    project_dir = Path("projects") / proj
+    db_path = _require_project(request)
+
+    fountain_files = list(project_dir.glob("*.fountain"))
+    if not fountain_files:
+        return JSONResponse([])
+
+    raw_text = fountain_files[0].read_text(encoding="utf-8")
+    stripped = fountain_anchors.strip_anchors(raw_text)
+    lines = stripped.splitlines()
+
+    # Scan for locations from scene headings
+    loc_scenes = {}  # loc_name_lower -> set of scene indices
+    scene_idx = -1
+    for line in lines:
+        stripped_line = line.strip()
+        match = _match_scene_heading(stripped_line) if stripped_line else None
+        if match:
+            scene_idx += 1
+            _, loc_part, _ = match
+            loc_key = loc_part.strip().lower()
+            if loc_key:
+                loc_scenes.setdefault(loc_key, set()).add(scene_idx)
+
+    # Load location mappings
+    conn = db.get_connection(db_path)
+    try:
+        loc_map = {}  # text_name_lower -> {location_id, display_name}
+        for row in conn.execute(
+            """SELECT lm.text_name, lm.location_id, l.name
+               FROM screenplay_location_map lm
+               LEFT JOIN location l ON lm.location_id = l.id"""
+        ).fetchall():
+            loc_map[row["text_name"].lower()] = {
+                "location_id": row["location_id"],
+                "display_name": row["name"] or row["text_name"].title(),
+            }
+    finally:
+        conn.close()
+
+    result = []
+    for loc_key, scene_set in loc_scenes.items():
+        mapped = loc_map.get(loc_key)
+        result.append({
+            "name": mapped["display_name"] if mapped else loc_key.title(),
+            "scene_count": len(scene_set),
+            "location_id": mapped["location_id"] if mapped else None,
+            "is_mapped": mapped is not None,
+        })
+
+    result.sort(key=lambda x: x["scene_count"], reverse=True)
+    return JSONResponse(result)
+
+
 @app.get("/api/screenplay/export")
 async def api_screenplay_export(request: Request):
     """Download a clean .fountain file with all anchors stripped."""

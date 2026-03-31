@@ -36,33 +36,37 @@
             <nav class="panel-navigator" id="navigator-panel">
                 <div class="navigator-scroll">
 
-                    <div class="nav-section">
+                    <div class="nav-section" id="nav-scenes-section">
                         <div class="nav-section-header">
-                            <span class="chevron">▸</span>
+                            <span class="chevron">&#9656;</span>
                             <span class="nav-section-label">Scenes</span>
+                            <span class="nav-count-badge" id="nav-scenes-count"></span>
+                            <span class="nav-filter-indicator" id="nav-scenes-filter" title="Filtered">&bull;</span>
                         </div>
-                        <div class="nav-section-items">
-                            <span class="nav-empty-msg">Save screenplay to populate</span>
+                        <div class="nav-section-items" id="nav-scenes-items">
+                            <span class="nav-empty-msg">Loading&hellip;</span>
                         </div>
                     </div>
 
-                    <div class="nav-section">
+                    <div class="nav-section" id="nav-characters-section">
                         <div class="nav-section-header">
-                            <span class="chevron">▸</span>
+                            <span class="chevron">&#9656;</span>
                             <span class="nav-section-label">Characters</span>
+                            <span class="nav-count-badge" id="nav-characters-count"></span>
                         </div>
-                        <div class="nav-section-items">
-                            <span class="nav-empty-msg">Save screenplay to populate</span>
+                        <div class="nav-section-items" id="nav-characters-items">
+                            <span class="nav-empty-msg">Loading&hellip;</span>
                         </div>
                     </div>
 
-                    <div class="nav-section">
+                    <div class="nav-section" id="nav-locations-section">
                         <div class="nav-section-header">
-                            <span class="chevron">▸</span>
+                            <span class="chevron">&#9656;</span>
                             <span class="nav-section-label">Locations</span>
+                            <span class="nav-count-badge" id="nav-locations-count"></span>
                         </div>
-                        <div class="nav-section-items">
-                            <span class="nav-empty-msg">Save screenplay to populate</span>
+                        <div class="nav-section-items" id="nav-locations-items">
+                            <span class="nav-empty-msg">Loading&hellip;</span>
                         </div>
                     </div>
 
@@ -77,6 +81,8 @@
         <!-- Status Bar -->
         <div class="screenplay-status-bar">
             <span class="status-item" id="status-scene">Sc &mdash;</span>
+            <span class="status-divider"></span>
+            <span class="status-item status-chars" id="status-chars"></span>
             <span class="status-divider"></span>
             <span class="status-item" id="status-line">Ln 1</span>
             <span class="status-divider"></span>
