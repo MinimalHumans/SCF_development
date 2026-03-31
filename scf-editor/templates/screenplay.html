@@ -19,6 +19,10 @@
             <a href="/browse" class="btn header-btn btn-sm">Entity Browser</a>
             <a href="/screenplay" class="btn header-btn btn-sm header-btn-active">Screenplay</a>
             <a href="/query" class="btn header-btn btn-sm">Query Explorer</a>
+            {% if has_fountain %}
+            <button id="btn-save-screenplay" class="btn btn-primary btn-sm">Save</button>
+            <button id="btn-export-screenplay" class="btn header-btn btn-sm">Export</button>
+            {% endif %}
             <a href="/project/close" class="btn header-btn btn-sm">Close Project</a>
         </header>
 

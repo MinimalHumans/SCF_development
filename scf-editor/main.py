@@ -22,8 +22,9 @@ import database as db
 import queries
 import fountain_import
 import fountain_anchors
-from fountain_parser import parse as fountain_parse
-from datetime import date
+from fountain_parser import parse as fountain_parse, _match_scene_heading, _is_character_cue, _CHAR_EXTENSION_RE
+from datetime import date, datetime
+import re
 
 
 # =============================================================================
@@ -661,9 +662,49 @@ Dialogue.
     return response
 
 
-@app.get("/api/screenplay/content")
-async def api_screenplay_content(request: Request):
-    """Return the raw .fountain file content for the current project."""
+@app.get("/api/screenplay/load")
+async def api_screenplay_load(request: Request):
+    """Load the .fountain file for editing — anchors stripped for clean display."""
+    proj = _get_current_project(request)
+    if not proj:
+        raise HTTPException(status_code=400, detail="No project selected")
+    project_dir = Path("projects") / proj
+    db_path = _require_project(request)
+
+    fountain_files = list(project_dir.glob("*.fountain"))
+    if not fountain_files:
+        return JSONResponse({"has_fountain": False})
+
+    raw_text = fountain_files[0].read_text(encoding="utf-8")
+    clean_text = fountain_anchors.strip_anchors(raw_text)
+
+    # Read screenplay_meta for title/author
+    title = ""
+    author = ""
+    conn = db.get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT title, author FROM screenplay_meta WHERE id = 1"
+        ).fetchone()
+        if row:
+            title = row["title"] or ""
+            author = row["author"] or ""
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+    return JSONResponse({
+        "has_fountain": True,
+        "text": clean_text,
+        "title": title,
+        "author": author,
+    })
+
+
+@app.put("/api/screenplay/save")
+async def api_screenplay_save(request: Request):
+    """Save editor content back to .fountain file, re-injecting anchors."""
     proj = _get_current_project(request)
     if not proj:
         raise HTTPException(status_code=400, detail="No project selected")
@@ -671,10 +712,161 @@ async def api_screenplay_content(request: Request):
 
     fountain_files = list(project_dir.glob("*.fountain"))
     if not fountain_files:
+        raise HTTPException(status_code=404, detail="No fountain file to save to")
+
+    fountain_path = fountain_files[0]
+    body = await request.json()
+    new_text = body.get("text", "")
+
+    # Read existing file to extract current anchors
+    old_text = fountain_path.read_text(encoding="utf-8")
+    reanchored = _reanchor_text(old_text, new_text)
+
+    fountain_path.write_text(reanchored, encoding="utf-8")
+
+    return JSONResponse({
+        "success": True,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+    })
+
+
+@app.get("/api/screenplay/export")
+async def api_screenplay_export(request: Request):
+    """Download a clean .fountain file with all anchors stripped."""
+    proj = _get_current_project(request)
+    if not proj:
+        raise HTTPException(status_code=400, detail="No project selected")
+    project_dir = Path("projects") / proj
+    db_path = _require_project(request)
+
+    fountain_files = list(project_dir.glob("*.fountain"))
+    if not fountain_files:
         raise HTTPException(status_code=404, detail="No fountain file found")
 
-    text = fountain_files[0].read_text(encoding="utf-8")
-    return PlainTextResponse(text)
+    raw_text = fountain_files[0].read_text(encoding="utf-8")
+    clean_text = fountain_anchors.strip_anchors(raw_text)
+
+    # Get project name for the filename
+    project_info = db.list_entities(db_path, "project", limit=1)
+    project_name = project_info[0]["name"] if project_info else proj
+
+    # Sanitise for filename
+    safe_name = "".join(c for c in project_name if c.isalnum() or c in " -_").strip()
+    safe_name = safe_name.replace(" ", "_") or proj
+
+    return PlainTextResponse(
+        clean_text,
+        media_type="text/plain",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}.fountain"',
+        },
+    )
+
+
+def _reanchor_text(old_text: str, new_text: str) -> str:
+    """Re-inject anchors from old_text into new_text by matching content lines.
+
+    Strategy: build a map of anchor_tag → associated clean content from the old
+    file, then scan the new text for matching lines and re-attach the anchors.
+    Scene heading anchors match by heading text; character anchors match by
+    character cue name.
+    """
+    # Build mapping: for each line in old_text that has anchors, record
+    # { anchor_tag: clean_line_content_stripped }
+    old_lines = old_text.splitlines()
+    anchor_re = fountain_anchors._SCF_ANCHOR_RE
+
+    # For scene headings: collect (clean_heading_lower, [anchor_tags_on_line])
+    # grouped by heading text to handle repeated headings in order
+    heading_anchors = {}   # clean_heading_lower -> [ [tag1, tag2], [tag1, tag2], ... ]
+    # For character cues: collect (CHAR_NAME_UPPER, anchor_tag) — first occurrence per scene
+    char_anchors = {}      # CHAR_NAME_UPPER -> tag  (keep last mapping)
+
+    prev_blank = True
+    for line in old_lines:
+        stripped = line.strip()
+        anchors_on_line = anchor_re.findall(stripped)
+        if not anchors_on_line:
+            prev_blank = (stripped == '')
+            continue
+
+        tags = [f"[[scf:{t}:{i}]]" for t, i in anchors_on_line]
+        clean = fountain_anchors.strip_anchor_from_line(stripped).strip()
+
+        # Is this a scene heading?
+        if _match_scene_heading(clean):
+            key = clean.lower()
+            heading_anchors.setdefault(key, [])
+            heading_anchors[key].append(tags)
+        # Is this a character cue?
+        elif prev_blank and clean and _is_character_cue(clean):
+            char_name = _CHAR_EXTENSION_RE.sub('', clean).strip()
+            if '(' in char_name:
+                char_name = re.sub(r'\([^)]*\)', '', char_name).strip()
+                char_name = re.sub(r'\s{2,}', ' ', char_name)
+            char_upper = char_name.upper()
+            # Only keep char anchors (type "char")
+            for tag in tags:
+                if '[[scf:char:' in tag:
+                    char_anchors[char_upper] = tag
+                    break
+
+        prev_blank = (stripped == '')
+
+    # Track heading occurrence counters for ordering
+    heading_counters = {}  # heading_lower -> int (next index)
+    # Track which characters have been anchored in the current scene
+    chars_anchored_this_scene = set()
+
+    new_lines = new_text.splitlines()
+    result = []
+    prev_blank = True
+
+    for line in new_lines:
+        stripped = line.strip()
+
+        if stripped == '':
+            result.append(line)
+            prev_blank = True
+            continue
+
+        # Check scene heading
+        if _match_scene_heading(stripped):
+            chars_anchored_this_scene = set()
+            key = stripped.lower()
+            occ = heading_counters.get(key, 0)
+            heading_counters[key] = occ + 1
+
+            entries = heading_anchors.get(key)
+            if entries and occ < len(entries):
+                tags = entries[occ]
+                leading = line[:len(line) - len(line.lstrip())]
+                result.append(f"{leading}{stripped} {' '.join(tags)}")
+            else:
+                result.append(line)
+            prev_blank = False
+            continue
+
+        # Check character cue
+        if prev_blank and _is_character_cue(stripped):
+            char_name = _CHAR_EXTENSION_RE.sub('', stripped).strip()
+            if '(' in char_name:
+                char_name = re.sub(r'\([^)]*\)', '', char_name).strip()
+                char_name = re.sub(r'\s{2,}', ' ', char_name)
+            char_upper = char_name.upper()
+
+            if char_upper in char_anchors and char_upper not in chars_anchored_this_scene:
+                tag = char_anchors[char_upper]
+                leading = line[:len(line) - len(line.lstrip())]
+                result.append(f"{leading}{stripped} {tag}")
+                chars_anchored_this_scene.add(char_upper)
+                prev_blank = False
+                continue
+
+        result.append(line)
+        prev_blank = False
+
+    return '\n'.join(result)
 
 
 # =============================================================================
