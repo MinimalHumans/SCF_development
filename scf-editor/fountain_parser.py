@@ -341,6 +341,7 @@ def parse(text: str) -> FountainData:
             cue_candidate = cue_candidate.rstrip('^').strip()      # dual dialogue
             cue_candidate = cue_candidate.replace('\\*', '').strip()  # escaped revision marks
             cue_candidate = cue_candidate.strip('*').strip()       # leading/trailing asterisks
+            cue_candidate = re.sub(r'\s*\[\[[^\]]*\]\]', '', cue_candidate).strip()  # [[notes]]
 
             # Strip leading (CONT'D) prefix stuck to name: (CONT'D)VICTOR -> VICTOR
             cue_candidate = re.sub(

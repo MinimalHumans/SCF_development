@@ -793,7 +793,7 @@ async def project_import_fountain(
         project_name = file.filename.rsplit(".", 1)[0].replace("-", " ").replace("_", " ").title()
 
     try:
-        db_path, summary = fountain_import.import_as_new_project(text, project_name)
+        db_path, summary, anchored_text = fountain_import.import_as_new_project(text, project_name)
     except FileExistsError:
         projects = db.list_projects()
         for p in projects:
@@ -804,10 +804,10 @@ async def project_import_fountain(
             "error": f"Project '{project_name}' already exists.",
         })
 
-    # Save the .fountain file into the project directory
+    # Save the anchored .fountain file into the project directory
     project_dir = db_path.parent
     fountain_dest = project_dir / f"{project_dir.name}.fountain"
-    fountain_dest.write_text(text, encoding="utf-8")
+    fountain_dest.write_text(anchored_text, encoding="utf-8")
 
     dir_name = project_dir.name
     response = RedirectResponse("/browse", status_code=302)

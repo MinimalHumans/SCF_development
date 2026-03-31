@@ -14,6 +14,7 @@ from fountain_parser import parse as fountain_parse, FountainData
 
 import database as db
 from entity_registry import get_entity
+import fountain_anchors
 
 
 # Confidence → scene_prop significance mapping
@@ -44,8 +45,17 @@ def import_as_new_project(fountain_text: str, project_name: str) -> tuple[Path, 
         if update:
             db.update_entity(db_path, "project", projects[0]["id"], update)
 
-    summary = _write_to_project(data, db_path, fountain_text=fountain_text)
-    return db_path, summary
+    summary, anchor_maps = _write_to_project(data, db_path, fountain_text=fountain_text)
+
+    # Inject anchors into the fountain text for the working copy
+    anchored_text = fountain_text
+    if anchor_maps:
+        scene_map, char_map, loc_map = anchor_maps
+        anchored_text = fountain_anchors.inject_anchors(
+            fountain_text, scene_map, char_map, loc_map
+        )
+
+    return db_path, summary, anchored_text
 
 
 def merge_into_project(fountain_text: str, db_path: Path) -> dict:
@@ -56,7 +66,7 @@ def merge_into_project(fountain_text: str, db_path: Path) -> dict:
     Returns summary dict of what was created vs skipped.
     """
     data = fountain_parse(fountain_text)
-    summary = _write_to_project(data, db_path, merge=True)
+    summary, _ = _write_to_project(data, db_path, merge=True)
     return summary
 
 
@@ -336,13 +346,48 @@ def _write_to_project(data: FountainData, db_path: Path, merge: bool = False,
                         (loc.name, loc_id)
                     )
 
+        # ═════════════════════════════════════════════════════════════
+        # 8. Build anchor maps for fountain text injection
+        # ═════════════════════════════════════════════════════════════
+        anchor_maps = None
+        if not merge and fountain_text:
+            # scene_map: {heading_lower: [{"id": N, "order": M}, ...]}
+            anchor_scene_map = {}
+            for scene in data.scenes:
+                scene_idx = scene.scene_number - 1
+                scene_id = scene_id_map.get(scene_idx)
+                if scene_id:
+                    key = scene.name.strip().lower()
+                    anchor_scene_map.setdefault(key, []).append({
+                        "id": scene_id, "order": scene.scene_number
+                    })
+            # Sort each heading's entries by order
+            for entries in anchor_scene_map.values():
+                entries.sort(key=lambda e: e["order"])
+
+            # character_map: {UPPERCASE_NAME: character_entity_id}
+            anchor_char_map = {}
+            for char in data.characters:
+                char_id = character_id_map.get(char.name.lower())
+                if char_id:
+                    anchor_char_map[char.raw_name.upper()] = char_id
+
+            # location_map: {normalized_loc_lower: location_entity_id}
+            anchor_loc_map = {}
+            for loc in data.locations:
+                loc_id = location_id_map.get(loc.name.lower())
+                if loc_id:
+                    anchor_loc_map[loc.name.lower()] = loc_id
+
+            anchor_maps = (anchor_scene_map, anchor_char_map, anchor_loc_map)
+
         # ── Commit everything in one transaction ──
         conn.commit()
 
     finally:
         conn.close()
 
-    return summary
+    return summary, anchor_maps
 
 
 def format_summary(summary: dict) -> str:
