@@ -292,7 +292,7 @@ def parse(text: str) -> FountainData:
             int_ext = _INT_EXT_MAP.get(int_ext_str.upper().replace('.', ''), "")
             time_of_day = _TIME_MAP.get(time_str.upper(), "") if time_str else ""
 
-            scene_name = line.strip().lstrip('.').strip()
+            scene_name = re.sub(r'\[\[scf:\w+:\d+\]\]', '', line).strip().lstrip('.').strip()
 
             current_scene = FountainScene(
                 scene_number=scene_idx + 1, name=scene_name,

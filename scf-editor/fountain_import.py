@@ -9,12 +9,20 @@ Performance: uses a single database connection and transaction for
 all writes, avoiding the overhead of per-entity connection cycling.
 """
 
+import re
 from pathlib import Path
 from fountain_parser import parse as fountain_parse, FountainData
 
 import database as db
 from entity_registry import get_entity
 import fountain_anchors
+
+# Strip SCF anchor tags from entity names
+_SCF_ANCHOR_RE = re.compile(r'\[\[scf:\w+:\d+\]\]')
+
+def _strip_anchors(text: str) -> str:
+    """Remove [[scf:...]] tags and clean up whitespace."""
+    return re.sub(r'\s{2,}', ' ', _SCF_ANCHOR_RE.sub('', text)).strip()
 
 
 # Confidence → scene_prop significance mapping
@@ -130,7 +138,7 @@ def _write_to_project(data: FountainData, db_path: Path, merge: bool = False,
                 summary["locations"]["skipped"] += 1
                 continue
 
-            loc_data = {"name": loc.name}
+            loc_data = {"name": _strip_anchors(loc.name)}
             has_int = any("INT" in h.upper().split('.')[0] for h in loc.raw_headings)
             has_ext = any("EXT" in h.upper().split('.')[0] for h in loc.raw_headings)
             if has_int and has_ext:
@@ -157,7 +165,7 @@ def _write_to_project(data: FountainData, db_path: Path, merge: bool = False,
                 summary["characters"]["skipped"] += 1
                 continue
 
-            char_data = {"name": char.name}
+            char_data = {"name": _strip_anchors(char.name)}
             if char.description:
                 char_data["summary"] = char.description
             if char.hair:
@@ -181,7 +189,7 @@ def _write_to_project(data: FountainData, db_path: Path, merge: bool = False,
                 continue
 
             scene_data = {
-                "name": scene.name,
+                "name": _strip_anchors(scene.name),
                 "scene_number": scene.scene_number,
             }
             loc_key = scene.location_name.lower()

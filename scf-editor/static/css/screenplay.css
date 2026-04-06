@@ -119,6 +119,44 @@
 .cm-line.cm-scf-boneyard { color: var(--text-muted); opacity: 0.4; }
 
 /* ==========================================================================
+   Active Line Mode Overrides
+   When writing, the active line follows the WRITING MODE, not content
+   classification. This prevents e.g. Scene mode text being styled as
+   "character" just because it's uppercase.
+   ========================================================================== */
+
+.cm-editor.mode-scene .cm-line.cm-activeLine {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    text-align: left !important;
+    font-weight: bold;
+    letter-spacing: 0.03em;
+    color: var(--text-primary);
+}
+.cm-editor.mode-character .cm-line.cm-activeLine {
+    padding-left: 35% !important;
+    padding-right: 0 !important;
+    text-align: left !important;
+    color: var(--text-accent);
+    font-weight: bold;
+}
+.cm-editor.mode-dialogue .cm-line.cm-activeLine {
+    padding-left: 20% !important;
+    padding-right: 20% !important;
+    text-align: left !important;
+    font-weight: normal;
+}
+.cm-editor.mode-transition .cm-line.cm-activeLine {
+    text-align: right !important;
+    color: var(--text-muted);
+}
+.cm-editor.mode-description .cm-line.cm-activeLine {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    text-align: left !important;
+}
+
+/* ==========================================================================
    Fountain Token Colors (span-level from StreamLanguage)
    ========================================================================== */
 

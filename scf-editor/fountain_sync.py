@@ -9,6 +9,7 @@ junctions, injects anchors for new entities, and returns a report.
 Uses a single database connection and transaction — commit once at the end.
 """
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,13 @@ import database as db
 from entity_registry import get_entity
 from fountain_parser import parse as fountain_parse, FountainData
 import fountain_anchors
+
+# Strip SCF anchor tags from entity names
+_SCF_ANCHOR_RE = re.compile(r'\[\[scf:\w+:\d+\]\]')
+
+def _strip_anchors(text: str) -> str:
+    """Remove [[scf:...]] tags and clean up whitespace."""
+    return re.sub(r'\s{2,}', ' ', _SCF_ANCHOR_RE.sub('', text)).strip()
 
 
 # =============================================================================
@@ -176,7 +184,7 @@ def sync(db_path: Path, fountain_path: Path) -> SyncReport:
 
             # Parser-derived fields for scene entity
             scene_fields = {
-                "name": scene.name,
+                "name": _strip_anchors(scene.name),
                 "scene_number": scene.scene_number,
                 "int_ext": scene.int_ext,
                 "time_of_day": scene.time_of_day,
@@ -192,7 +200,7 @@ def sync(db_path: Path, fountain_path: Path) -> SyncReport:
                     """UPDATE screenplay_scene_map
                        SET heading_text = ?, scene_order = ?, in_screenplay = 1
                        WHERE scene_id = ?""",
-                    (scene.name, scene_order, scene_id)
+                    (_strip_anchors(scene.name), scene_order, scene_id)
                 )
                 seen_scene_ids.add(scene_id)
                 report.scenes_updated += 1
@@ -232,7 +240,7 @@ def sync(db_path: Path, fountain_path: Path) -> SyncReport:
                             """INSERT INTO screenplay_scene_map
                                (scene_id, heading_text, scene_order, in_screenplay)
                                VALUES (?, ?, ?, 1)""",
-                            (scene_id, scene.name, scene_order)
+                            (scene_id, _strip_anchors(scene.name), scene_order)
                         )
                         seen_scene_ids.add(scene_id)
                         report.scenes_created += 1
@@ -305,7 +313,7 @@ def sync(db_path: Path, fountain_path: Path) -> SyncReport:
                          f"[[scf:char:{char_id}]]"))
             else:
                 # 5c. Entirely new character
-                char_data = {"name": char.name}
+                char_data = {"name": _strip_anchors(char.name)}
                 if char.description:
                     char_data["summary"] = char.description
                 if char.hair:
@@ -372,7 +380,7 @@ def sync(db_path: Path, fountain_path: Path) -> SyncReport:
                 report.locations_mapped += 1
             else:
                 # 6c. New location
-                loc_data = {"name": loc.name}
+                loc_data = {"name": _strip_anchors(loc.name)}
                 if loc_type:
                     loc_data["location_type"] = loc_type
 

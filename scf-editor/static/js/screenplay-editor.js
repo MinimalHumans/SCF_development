@@ -161,10 +161,16 @@ let modeLockUntil = 0;   // timestamp — context detection blocked until this
  */
 function setMode(mode, explicit) {
     currentMode = mode;
-    if (explicit) modeLockUntil = Date.now() + 300;
+    if (explicit) modeLockUntil = Date.now() + 500;
+    // Update editor DOM class for active-line styling
+    if (editorView) {
+        const dom = editorView.dom;
+        dom.classList.remove('mode-description', 'mode-scene', 'mode-character', 'mode-dialogue', 'mode-transition');
+        dom.classList.add('mode-' + mode);
+    }
     const el = document.getElementById('status-mode');
     if (el) {
-        const labels = { description: 'Description', scene: 'Scene', character: 'Character', dialogue: 'Dialogue' };
+        const labels = { description: 'Description', scene: 'Scene Heading', character: 'Character', dialogue: 'Dialogue', transition: 'Transition' };
         el.textContent = labels[mode] || 'Description';
     }
 }
