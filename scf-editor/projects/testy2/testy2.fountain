@@ -1,0 +1,25 @@
+Title: testy2
+Author:
+Draft date: 2026-04-06
+
+EXT. LOCATION - DAY [[scf:scene:1]] [[scf:loc:1]]
+
+Action description.
+
+CHARACTER [[scf:char:1]]
+Dialogue.
+
+
+THIS IS A SCENE HEADING - FALSE
+
+
+This is description - correct
+This is also descr - correct
+
+THIS IS A CHARCTER [[scf:char:2]]
+THIS SHOULD BE DIALGOUE BUT IT ISN'T
+
+THIS IS A TRANSITION [[scf:char:3]]
+
+THIS IS A CHARCTER
+This is finally dailogue, only working because I autoomcpleted an existing character.
