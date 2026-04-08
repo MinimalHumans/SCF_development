@@ -90,8 +90,19 @@
 .cm-editor .cm-scroller { padding: 24px 0; overflow: auto; }
 .cm-editor .cm-content { max-width: 680px; margin: 0 auto; padding: 24px 20px; }
 
-/* Scene Heading — left-aligned, bold, top padding for visual scene break */
-.cm-line.cm-scf-heading { font-weight: bold; letter-spacing: 0.03em; padding-top: 12px; color: var(--text-primary); }
+/* Scene Heading — highlighted background bar, bold, top padding */
+.cm-line.cm-scf-heading {
+    font-weight: bold;
+    letter-spacing: 0.03em;
+    padding-top: 12px;
+    padding-bottom: 4px;
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.07);
+    margin-left: -20px;
+    margin-right: -20px;
+    padding-left: 20px;
+    padding-right: 20px;
+}
 
 /* Action — default, no special styling */
 .cm-line.cm-scf-action { }
@@ -99,8 +110,12 @@
 /* Character Name — centered (screenplay convention: ~35-40% from left) */
 .cm-line.cm-scf-character { padding-left: 35%; color: var(--text-accent); }
 
-/* Dialogue — narrower column, indented from both sides */
-.cm-line.cm-scf-dialogue { padding-left: 20%; padding-right: 20%; }
+/* Dialogue — narrower column, indented, lightly tinted toward character color */
+.cm-line.cm-scf-dialogue {
+    padding-left: 20%;
+    padding-right: 20%;
+    color: #b8b8f7;
+}
 
 /* Parenthetical — more indented than dialogue, italic */
 .cm-line.cm-scf-parenthetical { padding-left: 28%; padding-right: 28%; font-style: italic; color: var(--text-secondary); }
@@ -120,9 +135,9 @@
 
 /* ==========================================================================
    Active Line Mode Overrides
-   When writing, the active line follows the WRITING MODE, not content
-   classification. This prevents e.g. Scene mode text being styled as
-   "character" just because it's uppercase.
+   The active line is styled by the current WRITING MODE so formatting
+   is visible immediately as you type — centering, color, background all
+   apply in real time, not just after pressing Enter.
    ========================================================================== */
 
 .cm-editor.mode-scene .cm-line.cm-activeLine {
@@ -132,6 +147,13 @@
     font-weight: bold;
     letter-spacing: 0.03em;
     color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.07) !important;
+    margin-left: -20px;
+    margin-right: -20px;
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+    padding-top: 12px;
+    padding-bottom: 4px;
 }
 .cm-editor.mode-character .cm-line.cm-activeLine {
     padding-left: 35% !important;
@@ -145,6 +167,7 @@
     padding-right: 20% !important;
     text-align: left !important;
     font-weight: normal;
+    color: #b8b8f7;
 }
 .cm-editor.mode-transition .cm-line.cm-activeLine {
     text-align: right !important;
@@ -162,7 +185,7 @@
 
 .cm-fountain-heading { color: var(--text-primary); font-weight: bold; }
 .cm-fountain-character { color: var(--text-accent, #8b8bff); }
-.cm-fountain-dialogue { color: var(--text-primary); }
+.cm-fountain-dialogue { color: #b8b8f7; }
 .cm-fountain-parenthetical { color: var(--text-secondary); font-style: italic; }
 .cm-fountain-transition { color: var(--text-muted); }
 .cm-fountain-note { color: var(--text-muted); opacity: 0.5; }

@@ -79,54 +79,17 @@
 
             <div class="landing-section-label">Import from Screenplay</div>
             <div style="margin-bottom: 32px;">
-                <div style="display: flex; gap: 12px; margin-bottom: 12px;">
-                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                        <input type="radio" name="fountain_mode" value="new" checked
-                               onchange="document.getElementById('fountain-new').classList.remove('hidden');
-                                         document.getElementById('fountain-merge').classList.add('hidden');">
-                        <span style="font-size: 13px; color: var(--text-secondary);">New project</span>
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                        <input type="radio" name="fountain_mode" value="merge"
-                               onchange="document.getElementById('fountain-merge').classList.remove('hidden');
-                                         document.getElementById('fountain-new').classList.add('hidden');">
-                        <span style="font-size: 13px; color: var(--text-secondary);">Merge into existing</span>
-                    </label>
-                </div>
-
-                <!-- New Project from Fountain -->
-                <form id="fountain-new" action="/project/import-fountain" method="post"
-                      enctype="multipart/form-data" class="landing-create"
-                      style="flex-wrap: wrap; gap: 8px;"
-                      onsubmit="showImportOverlay(this)">
+                <div class="landing-create" style="flex-wrap: wrap; gap: 8px;">
                     <label class="file-input-label" style="flex: 1; min-width: 200px;">
-                        <input type="file" accept=".fountain" name="file"
+                        <input type="file" accept=".fountain" id="fountain-file-input"
                                onchange="this.closest('label').querySelector('span').textContent = this.files[0]?.name ?? 'Choose .fountain file…'">
                         <span>Choose .fountain file…</span>
                     </label>
-                    <input type="text" name="project_name" placeholder="Project name (optional)"
+                    <input type="text" id="fountain-project-name" placeholder="Project name (optional)"
                            style="flex: 1; min-width: 150px;">
-                    <button type="submit" class="btn btn-primary">Import</button>
-                </form>
-
-                <!-- Merge Fountain into Existing -->
-                <form id="fountain-merge" action="/project/merge-fountain" method="post"
-                      enctype="multipart/form-data" class="landing-create hidden"
-                      style="flex-wrap: wrap; gap: 8px;"
-                      onsubmit="showImportOverlay(this)">
-                    <label class="file-input-label" style="flex: 1; min-width: 200px;">
-                        <input type="file" accept=".fountain" name="file"
-                               onchange="this.closest('label').querySelector('span').textContent = this.files[0]?.name ?? 'Choose .fountain file…'">
-                        <span>Choose .fountain file…</span>
-                    </label>
-                    <select name="target_project" style="flex: 1; min-width: 150px;">
-                        <option value="">Select target project…</option>
-                        {% for p in projects %}
-                        <option value="{{ p.filename }}">{{ p.display_name }}</option>
-                        {% endfor %}
-                    </select>
-                    <button type="submit" class="btn btn-primary">Merge</button>
-                </form>
+                    <button type="button" class="btn btn-primary" id="fountain-import-btn">Import</button>
+                </div>
+                <div id="fountain-import-status" style="font-size: 12px; color: var(--text-muted); margin-top: 8px;"></div>
             </div>
 
             {% if projects %}
@@ -154,43 +117,93 @@
     </div>
 
     <script>
-    function showImportOverlay(form) {
-        const fileInput = form.querySelector('input[type="file"]');
-        if (!fileInput || !fileInput.files.length) return;
+    document.getElementById('fountain-import-btn')?.addEventListener('click', async function() {
+        const fileInput = document.getElementById('fountain-file-input');
+        const file = fileInput?.files[0];
+        if (!file) { alert('Please select a .fountain file'); return; }
 
-        const fileName = fileInput.files[0].name;
+        const status = document.getElementById('fountain-import-status');
         const overlay = document.getElementById('import-overlay');
-        const text = document.getElementById('import-overlay-text');
-        const detail = document.getElementById('import-overlay-detail');
+        const overlayText = document.getElementById('import-overlay-text');
+        const overlayDetail = document.getElementById('import-overlay-detail');
 
-        const isMerge = form.action.includes('merge');
-        text.textContent = isMerge
-            ? 'Merging screenplay…'
-            : 'Importing screenplay…';
-        detail.textContent = fileName;
+        // Derive project name
+        let projectName = document.getElementById('fountain-project-name').value.trim();
+        if (!projectName) {
+            projectName = file.name.replace(/\.fountain$/i, '').replace(/[-_]/g, ' ');
+            // Title case
+            projectName = projectName.replace(/\b\w/g, c => c.toUpperCase());
+        }
 
+        // Show overlay
+        overlayText.textContent = 'Importing screenplay…';
+        overlayDetail.textContent = file.name;
         overlay.classList.add('active');
 
-        // Cycle through status messages to show it's working
         const messages = [
+            'Creating project…',
             'Parsing scene headings and action lines',
             'Extracting characters and descriptions',
-            'Detecting props from action text',
             'Creating locations and linking scenes',
             'Building scene-character relationships',
-            'Writing to SCF database',
             'Almost done…',
         ];
         let msgIndex = 0;
         const interval = setInterval(() => {
             if (msgIndex < messages.length) {
-                detail.textContent = messages[msgIndex];
-                msgIndex++;
+                overlayDetail.textContent = messages[msgIndex++];
             }
-        }, 2000);
+        }, 1500);
 
-        window.addEventListener('beforeunload', () => clearInterval(interval));
-    }
+        try {
+            // Step 1: Create the project
+            const createForm = new FormData();
+            createForm.append('project_name', projectName);
+            const createRes = await fetch('/project/create', {
+                method: 'POST',
+                body: createForm,
+                redirect: 'manual',  // Don't follow redirect
+            });
+
+            // The create endpoint returns a 302 redirect with a cookie.
+            // We need to extract the project name from the cookie or just
+            // derive it the same way the server does.
+            const safeName = projectName.replace(/[^a-zA-Z0-9 \-_]/g, '').trim().replace(/ /g, '_').toLowerCase();
+
+            // Set the cookie ourselves so the v2 API works
+            document.cookie = `scf_project=${safeName}; path=/; max-age=${86400 * 365}`;
+
+            // Step 2: Import fountain via v2 API
+            const importForm = new FormData();
+            importForm.append('file', file);
+            const importRes = await fetch('/api/screenplay-v2/import-fountain', {
+                method: 'POST',
+                body: importForm,
+            });
+
+            clearInterval(interval);
+
+            if (!importRes.ok) {
+                const err = await importRes.json().catch(() => ({}));
+                throw new Error(err.detail || 'Import failed');
+            }
+
+            const data = await importRes.json();
+            const s = data.summary;
+            overlayDetail.textContent = `Done: ${s.scenes_created} scenes, ${s.characters_created} characters, ${s.locations_created} locations`;
+
+            // Redirect to the screenplay editor
+            setTimeout(() => {
+                window.location.href = '/screenplay';
+            }, 1000);
+
+        } catch (e) {
+            clearInterval(interval);
+            overlay.classList.remove('active');
+            status.textContent = 'Error: ' + e.message;
+            status.style.color = 'var(--danger)';
+        }
+    });
     </script>
 </body>
 </html>

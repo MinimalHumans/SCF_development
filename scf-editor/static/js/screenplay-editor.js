@@ -198,6 +198,59 @@ function handleShiftTab() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Auto-detect mode from content under cursor
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Map line classification → editor mode. Blank lines keep current mode. */
+const CLASSIFICATION_TO_MODE = {
+    heading: 'scene',
+    character: 'character',
+    dialogue: 'dialogue',
+    parenthetical: 'dialogue',
+    transition: 'transition',
+    action: 'description',
+    section: 'description',
+    synopsis: 'description',
+    centered: 'description',
+    titlekey: 'description',
+    titlevalue: 'description',
+    boneyard: 'description',
+};
+
+function detectModeFromCursor(state) {
+    const line = state.doc.lineAt(state.selection.main.head);
+    const trimmed = line.text.trim();
+
+    // Blank line: keep current mode so you can type in any mode on empty lines
+    if (trimmed === '') return;
+
+    // Classify this line in context (need preceding lines for state)
+    const doc = state.doc;
+    const st = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
+
+    // Walk from start to current line to build accurate state
+    // (For performance, start from max 100 lines back)
+    const startLine = Math.max(1, line.number - 100);
+    if (startLine > 1) {
+        // Approximate: check if we're probably in dialogue by scanning back
+        st.inTitlePage = false;
+        for (let i = startLine; i < line.number; i++) {
+            classifyLine(doc.line(i).text.trim(), st);
+        }
+    } else {
+        for (let i = 1; i < line.number; i++) {
+            classifyLine(doc.line(i).text.trim(), st);
+        }
+    }
+
+    const classification = classifyLine(trimmed, st);
+    const newMode = CLASSIFICATION_TO_MODE[classification];
+    if (newMode && newMode !== currentMode) {
+        setMode(newMode);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Auto-Uppercase
 // ═══════════════════════════════════════════════════════════════════════════
 const autoUppercaseHandler = EditorView.inputHandler.of((view, from, to, text) => {
@@ -767,7 +820,10 @@ function createEditor(container) {
                 EditorView.updateListener.of((update) => {
                     if (update.selectionSet || update.docChanged) updateCursorStatus(update.state);
                     if (update.docChanged) { markUnsaved(); checkAutocompleteContext(); }
-                    else if (update.selectionSet) { checkAutocompleteContext(); }
+                    if (update.selectionSet) {
+                        detectModeFromCursor(update.state);
+                        checkAutocompleteContext();
+                    }
                 }),
                 EditorView.domEventHandlers({ blur() { setTimeout(hideAutocomplete, 150); } }),
                 EditorView.theme({
