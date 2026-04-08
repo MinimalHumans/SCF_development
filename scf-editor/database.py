@@ -112,6 +112,10 @@ def init_database(db_path: str | Path) -> None:
         for name, entity_def in get_all_entities().items():
             _create_entity_table(conn, entity_def)
 
+        # New structured screenplay tables (Phase 1 — SQLite-native editor)
+        import screenplay_db
+        screenplay_db.init_screenplay_tables(conn)
+
         conn.commit()
     finally:
         conn.close()

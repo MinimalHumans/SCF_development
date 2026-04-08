@@ -23,6 +23,7 @@ import queries
 import fountain_import
 import fountain_anchors
 import fountain_sync
+from screenplay_api import screenplay_router
 from fountain_parser import parse as fountain_parse, _match_scene_heading, _is_character_cue, _CHAR_EXTENSION_RE
 from datetime import date, datetime
 import re
@@ -396,6 +397,7 @@ Dialogue.
     response = RedirectResponse("/screenplay", status_code=302)
     return response
 
+app.include_router(screenplay_router)
 
 # =============================================================================
 # Screenplay Editor — API Routes
