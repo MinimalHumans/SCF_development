@@ -17,14 +17,14 @@
             <a href="/browse" class="btn header-btn btn-sm">Entity Browser</a>
             <a href="/screenplay" class="btn header-btn btn-sm header-btn-active">Screenplay</a>
             <a href="/query" class="btn header-btn btn-sm">Query Explorer</a>
-            {% if has_fountain %}
+            {% if has_screenplay %}
             <button id="btn-save-screenplay" class="btn btn-primary btn-sm">Save</button>
-            <button id="btn-export-screenplay" class="btn header-btn btn-sm">Export</button>
+            <button id="btn-export-screenplay" class="btn header-btn btn-sm">Export .fountain</button>
             {% endif %}
             <a href="/project/close" class="btn header-btn btn-sm">Close Project</a>
         </header>
 
-        {% if has_fountain %}
+        {% if has_screenplay %}
         <div class="screenplay-layout">
             <nav class="panel-navigator" id="navigator-panel">
                 <div class="navigator-scroll">
@@ -83,33 +83,81 @@
             <div class="screenplay-empty-card">
                 <h2>Screenplay Editor</h2>
                 <p class="screenplay-empty-desc">
-                    No screenplay file found for this project. Import an existing
+                    No screenplay content found for this project. Import an existing
                     Fountain file or start fresh.
                 </p>
                 <div class="screenplay-empty-options">
-                    <form class="screenplay-option" action="/project/import-fountain-into-current" method="post" enctype="multipart/form-data">
+                    <div class="screenplay-option">
                         <div class="screenplay-option-icon">📄</div>
                         <h3>Import Screenplay</h3>
-                        <p>Upload an existing <code>.fountain</code> file. Entities will be extracted and linked automatically.</p>
-                        <label class="btn btn-primary btn-sm screenplay-file-label">
+                        <p>Upload an existing <code>.fountain</code> file. Characters, locations, and scenes will be extracted and linked automatically.</p>
+                        <label class="btn btn-primary btn-sm screenplay-file-label" id="import-fountain-label">
                             Choose .fountain file
-                            <input type="file" name="file" accept=".fountain" hidden
-                                   onchange="this.closest('form').submit()">
+                            <input type="file" accept=".fountain" hidden id="import-fountain-input">
                         </label>
-                    </form>
-                    <form class="screenplay-option" action="/project/create-fountain" method="post">
+                        <div id="import-status" style="font-size: 12px; color: var(--text-muted); margin-top: 8px;"></div>
+                    </div>
+                    <div class="screenplay-option">
                         <div class="screenplay-option-icon">✏️</div>
                         <h3>Start New Screenplay</h3>
                         <p>Create a blank screenplay with a title page template. You can start writing immediately.</p>
-                        <button type="submit" class="btn btn-primary btn-sm">Create Blank Screenplay</button>
-                    </form>
+                        <button type="button" class="btn btn-primary btn-sm" id="create-blank-btn">Create Blank Screenplay</button>
+                    </div>
                 </div>
             </div>
         </div>
+
+        <script>
+        // Import fountain via v2 API (no form post, async fetch)
+        document.getElementById('import-fountain-input')?.addEventListener('change', async function() {
+            const file = this.files[0];
+            if (!file) return;
+            const status = document.getElementById('import-status');
+            status.textContent = 'Importing ' + file.name + '…';
+            status.style.color = 'var(--text-accent)';
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const res = await fetch('/api/screenplay-v2/import-fountain', {
+                    method: 'POST',
+                    body: formData,
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.detail || 'Import failed');
+                }
+                const data = await res.json();
+                const s = data.summary;
+                status.textContent = `Done: ${s.scenes_created} scenes, ${s.characters_created} characters, ${s.locations_created} locations`;
+                status.style.color = 'var(--success)';
+                // Reload page to show editor
+                setTimeout(() => window.location.reload(), 1000);
+            } catch (e) {
+                status.textContent = 'Error: ' + e.message;
+                status.style.color = 'var(--danger)';
+            }
+        });
+
+        // Create blank screenplay via v2 API
+        document.getElementById('create-blank-btn')?.addEventListener('click', async function() {
+            this.disabled = true;
+            this.textContent = 'Creating…';
+            try {
+                const res = await fetch('/api/screenplay-v2/create-blank', { method: 'POST' });
+                if (!res.ok) throw new Error('Failed');
+                window.location.reload();
+            } catch (e) {
+                this.textContent = 'Error — try again';
+                this.disabled = false;
+            }
+        });
+        </script>
         {% endif %}
     </div>
 
-    {% if has_fountain %}
+    {% if has_screenplay %}
     <script type="module" src="/static/js/screenplay-editor.js"></script>
     {% endif %}
 </body>
