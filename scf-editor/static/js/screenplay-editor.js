@@ -171,6 +171,72 @@ function adjustState(st, type) {
     }
 }
 
+/** Repair pass — fix character/dialogue pairs that the state machine missed.
+ *  Runs after initial classification. Handles paste, reorder, and structural edits.
+ *  
+ *  Rules:
+ *  1. ALL_CAPS line preceded by blank, followed by non-blank non-heading → character + dialogue
+ *  2. Character with no dialogue after it → demote to action
+ *  3. Dialogue with no character above it → demote to action
+ */
+function repairDialoguePairs(types, contents, cursorIdx) {
+    const n = types.length;
+
+    // Pass 1: Promote missed character/dialogue patterns
+    for (let i = 0; i < n; i++) {
+        if (types[i] !== 'action') continue;
+        const t = contents[i];
+        if (!t) continue;
+        // Is this an ALL_CAPS line that looks like a character cue?
+        if (!CHARACTER_CUE_RE.test(t) || t.length <= 1 || TRANSITION_RE.test(t)) continue;
+        // Prefer preceded by blank, but also allow after action/dialogue/heading
+        // (paste often omits the blank line before character cues)
+        const prevType = i > 0 ? types[i - 1] : 'blank';
+        const prevOk = prevType === 'blank' || prevType === 'action' || prevType === 'dialogue'
+            || prevType === 'parenthetical' || prevType === 'heading' || prevType === 'transition';
+        if (!prevOk) continue;
+        // Must be followed by at least one non-blank content line
+        const nextIdx = i + 1;
+        if (nextIdx >= n || types[nextIdx] === 'blank') continue;
+        // The next line shouldn't be a heading or transition (those stand alone)
+        if (types[nextIdx] === 'heading' || types[nextIdx] === 'transition') continue;
+        // Promote: this is a character cue
+        types[i] = 'character';
+        // Mark subsequent lines as dialogue/parenthetical until blank or next structure
+        for (let j = i + 1; j < n; j++) {
+            if (j === cursorIdx) continue; // don't override active typing
+            if (types[j] === 'blank' || types[j] === 'heading' || types[j] === 'transition') break;
+            if (PARENTHETICAL_RE.test(contents[j])) { types[j] = 'parenthetical'; }
+            else { types[j] = 'dialogue'; }
+        }
+    }
+
+    // Pass 2: Demote orphan characters (no dialogue follows) — skip cursor line
+    for (let i = 0; i < n; i++) {
+        if (i === cursorIdx) continue;
+        if (types[i] !== 'character') continue;
+        let hasDialogue = false;
+        for (let j = i + 1; j < n; j++) {
+            if (types[j] === 'dialogue' || types[j] === 'parenthetical') { hasDialogue = true; break; }
+            if (types[j] === 'blank' || types[j] === 'heading' || types[j] === 'character' || types[j] === 'transition') break;
+        }
+        if (!hasDialogue) types[i] = 'action';
+    }
+
+    // Pass 3: Demote orphan dialogue (no character above) — skip cursor line
+    for (let i = 0; i < n; i++) {
+        if (i === cursorIdx) continue;
+        if (types[i] !== 'dialogue' && types[i] !== 'parenthetical') continue;
+        let hasCharacter = false;
+        for (let j = i - 1; j >= 0; j--) {
+            if (types[j] === 'character') { hasCharacter = true; break; }
+            if (types[j] === 'dialogue' || types[j] === 'parenthetical') continue; // keep walking up
+            break; // blank, heading, action, etc. — stop
+        }
+        if (!hasCharacter) types[i] = 'action';
+    }
+}
+
 /** Rebuild lineTypes from the document. Preserves user-set types where content hasn't changed. */
 function rebuildLineTypes(state) {
     const doc = state.doc;
@@ -216,6 +282,9 @@ function rebuildLineTypes(state) {
         newTypes.push(actualType);
         newContents.push(trimmed);
     }
+
+    // Structural repair: fix character/dialogue pairs missed by state machine
+    repairDialoguePairs(newTypes, newContents, cursorLine - 1);
 
     lineTypes = newTypes;
     lineContents = newContents;
