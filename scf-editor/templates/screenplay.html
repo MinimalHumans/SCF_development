@@ -19,6 +19,7 @@
             <a href="/query" class="btn header-btn btn-sm">Query Explorer</a>
             {% if has_screenplay %}
             <button id="btn-save-screenplay" class="btn btn-primary btn-sm">Save</button>
+            <button id="btn-versions" class="btn btn-sm btn-publish" title="Publish &amp; Version History">Versions</button>
             <button id="btn-export-screenplay" class="btn header-btn btn-sm">Export .fountain</button>
             <button id="btn-help-screenplay" class="btn header-btn btn-sm" onclick="document.getElementById('help-modal').classList.add('active')">Help</button>
             {% endif %}
@@ -111,7 +112,7 @@
         </div>
 
         <script>
-        // Import fountain via v2 API (no form post, async fetch)
+        // Import fountain via v2 API
         document.getElementById('import-fountain-input')?.addEventListener('change', async function() {
             const file = this.files[0];
             if (!file) return;
@@ -135,7 +136,6 @@
                 const s = data.summary;
                 status.textContent = `Done: ${s.scenes_created} scenes, ${s.characters_created} characters, ${s.locations_created} locations`;
                 status.style.color = 'var(--success)';
-                // Reload page to show editor
                 setTimeout(() => window.location.reload(), 1000);
             } catch (e) {
                 status.textContent = 'Error: ' + e.message;
@@ -143,7 +143,7 @@
             }
         });
 
-        // Create blank screenplay via v2 API
+        // Create blank screenplay
         document.getElementById('create-blank-btn')?.addEventListener('click', async function() {
             this.disabled = true;
             this.textContent = 'Creating…';
@@ -160,7 +160,31 @@
         {% endif %}
     </div>
 
-    <!-- Help Modal -->
+    <!-- ================================================================== -->
+    <!-- Version Drawer                                                     -->
+    <!-- ================================================================== -->
+    <div class="version-drawer-overlay" id="version-drawer-overlay"></div>
+    <div class="version-drawer" id="version-drawer">
+        <div class="version-drawer-header">
+            <h2>Screenplay Versions</h2>
+            <button class="version-drawer-close" id="version-drawer-close">&times;</button>
+        </div>
+        <div class="version-drawer-body">
+            <div class="version-publish-form">
+                <input type="text" id="version-publish-input"
+                       placeholder="Version description (e.g. First draft)"
+                       maxlength="200" autocomplete="off">
+                <button class="btn btn-primary btn-sm" id="version-publish-btn">Publish</button>
+            </div>
+            <div class="version-list" id="version-list">
+                <div class="version-empty">Loading…</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================== -->
+    <!-- Help Modal                                                         -->
+    <!-- ================================================================== -->
     <div class="help-modal-overlay" id="help-modal" onclick="if(event.target===this)this.classList.remove('active')">
         <div class="help-modal">
             <div class="help-modal-header">
@@ -216,6 +240,15 @@
                     <li>Typing a name that doesn't exist yet will create it as a new entity when you save.</li>
                 </ul>
 
+                <h3>Publishing Versions</h3>
+                <p>Click <strong>Versions</strong> in the header to open the version drawer. Type a short description (like a commit message) and click <strong>Publish</strong> to create a locked snapshot of the current screenplay.</p>
+                <ul>
+                    <li><strong>Publish</strong> creates a read-only copy of all screenplay lines with their entity links.</li>
+                    <li><strong>Restore</strong> replaces the live screenplay with a published version's content. Scene-character junctions are rebuilt automatically.</li>
+                    <li>Entity tables (characters, locations, scenes) are never deleted by restore — only their screenplay links update.</li>
+                    <li>You can continue editing after publishing. Publish again when you're happy with new changes.</li>
+                </ul>
+
                 <h3>Saving</h3>
                 <p>Press <kbd>Ctrl+S</kbd> (or <kbd>Cmd+S</kbd> on Mac) or click the <strong>Save</strong> button. The save process:</p>
                 <ol>
@@ -250,6 +283,7 @@
 
     {% if has_screenplay %}
     <script type="module" src="/static/js/screenplay-editor.js"></script>
+    <script src="/static/js/screenplay-versions.js"></script>
     <script>
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {

@@ -236,6 +236,57 @@ async def create_blank(request: Request):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Versioning — Publish / Restore / List / Delete
+# ═══════════════════════════════════════════════════════════════════════════
+
+@screenplay_router.get("/versions")
+async def versions_list(request: Request):
+    """List all published screenplay versions."""
+    db_path = _require_project(request)
+    versions = screenplay_db.list_versions(db_path)
+    return JSONResponse(versions)
+
+
+@screenplay_router.post("/publish")
+async def publish(request: Request):
+    """Publish the current live screenplay as a new version."""
+    db_path = _require_project(request)
+    body = await request.json()
+    description = body.get("description", "").strip()
+
+    if not description:
+        raise HTTPException(status_code=400, detail="Description is required")
+
+    try:
+        result = screenplay_db.publish_version(db_path, description)
+        return JSONResponse(result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@screenplay_router.post("/restore/{version_id}")
+async def restore(request: Request, version_id: int):
+    """Restore a published version as the live screenplay."""
+    db_path = _require_project(request)
+
+    try:
+        result = screenplay_db.restore_version(db_path, version_id)
+        return JSONResponse(result)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@screenplay_router.delete("/versions/{version_id}")
+async def version_delete(request: Request, version_id: int):
+    """Delete a published version."""
+    db_path = _require_project(request)
+    success = screenplay_db.delete_version(db_path, version_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return JSONResponse({"success": True})
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Line-level operations (for future incremental saves)
 # ═══════════════════════════════════════════════════════════════════════════
 

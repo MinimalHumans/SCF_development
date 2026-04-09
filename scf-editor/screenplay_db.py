@@ -8,8 +8,11 @@ No Fountain parsing on save. No anchor injection. The structured data IS
 the screenplay.
 
 Tables:
-  screenplay_lines     — ordered lines with type + entity links
-  screenplay_title_page — key/value title page metadata
+  screenplay_lines             — ordered lines with type + entity links
+  screenplay_title_page        — key/value title page metadata
+  screenplay_versions          — published version snapshots
+  screenplay_version_lines     — snapshot of lines per version
+  screenplay_version_title_page — snapshot of title page per version
 """
 
 import re
@@ -106,6 +109,49 @@ def init_screenplay_tables(conn) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS screenplay_title_page (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL DEFAULT '',
+            sort_order INTEGER DEFAULT 0
+        )
+    """)
+
+    # ── Version tables ──
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS screenplay_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            version_number INTEGER NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            published_at TEXT DEFAULT (datetime('now')),
+            line_count INTEGER DEFAULT 0,
+            scene_count INTEGER DEFAULT 0,
+            character_count INTEGER DEFAULT 0,
+            location_count INTEGER DEFAULT 0,
+            word_count INTEGER DEFAULT 0
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS screenplay_version_lines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            version_id INTEGER NOT NULL REFERENCES screenplay_versions(id) ON DELETE CASCADE,
+            line_order INTEGER NOT NULL,
+            line_type TEXT NOT NULL DEFAULT 'action',
+            content TEXT NOT NULL DEFAULT '',
+            scene_id INTEGER,
+            character_id INTEGER,
+            location_id INTEGER,
+            metadata JSON
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_version_lines_version
+        ON screenplay_version_lines(version_id)
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS screenplay_version_title_page (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            version_id INTEGER NOT NULL REFERENCES screenplay_versions(id) ON DELETE CASCADE,
             key TEXT NOT NULL,
             value TEXT NOT NULL DEFAULT '',
             sort_order INTEGER DEFAULT 0
@@ -1054,3 +1100,218 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
         conn.close()
 
     return summary
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Versioning — Publish / Restore / List / Delete
+# ═══════════════════════════════════════════════════════════════════════════
+
+def publish_version(db_path: Path, description: str = "") -> dict:
+    """
+    Snapshot the current live screenplay as a published version.
+
+    Copies all rows from screenplay_lines and screenplay_title_page
+    into the versioned tables with a new version number.
+
+    Returns version info dict.
+    """
+    conn = db.get_connection(db_path)
+    try:
+        # Determine next version number
+        row = conn.execute(
+            "SELECT COALESCE(MAX(version_number), 0) + 1 AS next_num FROM screenplay_versions"
+        ).fetchone()
+        version_number = row["next_num"]
+
+        # Count stats from current live data
+        line_count = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM screenplay_lines"
+        ).fetchone()["cnt"]
+
+        if line_count == 0:
+            raise ValueError("Cannot publish an empty screenplay")
+
+        scene_count = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM screenplay_lines WHERE line_type = 'heading'"
+        ).fetchone()["cnt"]
+
+        char_count = conn.execute(
+            "SELECT COUNT(DISTINCT character_id) AS cnt FROM screenplay_lines WHERE character_id IS NOT NULL"
+        ).fetchone()["cnt"]
+
+        loc_count = conn.execute(
+            "SELECT COUNT(DISTINCT location_id) AS cnt FROM screenplay_lines WHERE location_id IS NOT NULL"
+        ).fetchone()["cnt"]
+
+        # Word count from content
+        all_content = conn.execute(
+            "SELECT content FROM screenplay_lines WHERE content != ''"
+        ).fetchall()
+        word_count = sum(len(r["content"].split()) for r in all_content)
+
+        # Create version record
+        cursor = conn.execute(
+            """INSERT INTO screenplay_versions
+               (version_number, description, line_count, scene_count,
+                character_count, location_count, word_count)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (version_number, description, line_count, scene_count,
+             char_count, loc_count, word_count)
+        )
+        version_id = cursor.lastrowid
+
+        # Snapshot lines — copy all columns including entity FKs
+        conn.execute(
+            """INSERT INTO screenplay_version_lines
+               (version_id, line_order, line_type, content,
+                scene_id, character_id, location_id, metadata)
+               SELECT ?, line_order, line_type, content,
+                      scene_id, character_id, location_id, metadata
+               FROM screenplay_lines
+               ORDER BY line_order""",
+            (version_id,)
+        )
+
+        # Snapshot title page
+        conn.execute(
+            """INSERT INTO screenplay_version_title_page
+               (version_id, key, value, sort_order)
+               SELECT ?, key, value, sort_order
+               FROM screenplay_title_page
+               ORDER BY sort_order, id""",
+            (version_id,)
+        )
+
+        conn.commit()
+
+        return {
+            "version_id": version_id,
+            "version_number": version_number,
+            "description": description,
+            "line_count": line_count,
+            "scene_count": scene_count,
+            "character_count": char_count,
+            "location_count": loc_count,
+            "word_count": word_count,
+            "published_at": datetime.now().isoformat(timespec="seconds"),
+        }
+
+    finally:
+        conn.close()
+
+
+def list_versions(db_path: Path) -> list[dict]:
+    """List all published versions, newest first."""
+    conn = db.get_connection(db_path)
+    try:
+        rows = conn.execute(
+            """SELECT id, version_number, description, published_at,
+                      line_count, scene_count, character_count,
+                      location_count, word_count
+               FROM screenplay_versions
+               ORDER BY version_number DESC"""
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def restore_version(db_path: Path, version_id: int) -> dict:
+    """
+    Restore a published version as the live screenplay.
+
+    1. Clears current screenplay_lines and screenplay_title_page
+    2. Copies version data back into live tables
+    3. Rebuilds scene_character junctions via _rebuild_junctions()
+    4. Updates screenplay_meta
+
+    Entity tables (character, location, scene) are NOT modified.
+    Entities created in later drafts remain — only their junction
+    links are updated to reflect the restored screenplay content.
+
+    Returns summary dict.
+    """
+    conn = db.get_connection(db_path)
+    summary = {
+        "version_id": version_id,
+        "version_number": 0,
+        "lines_restored": 0,
+        "junctions_rebuilt": 0,
+        "errors": [],
+    }
+
+    try:
+        # Verify version exists
+        ver = conn.execute(
+            "SELECT version_number, description FROM screenplay_versions WHERE id = ?",
+            (version_id,)
+        ).fetchone()
+        if not ver:
+            raise ValueError(f"Version {version_id} not found")
+
+        summary["version_number"] = ver["version_number"]
+
+        # Clear live data
+        conn.execute("DELETE FROM screenplay_lines")
+        conn.execute("DELETE FROM screenplay_title_page")
+
+        # Restore lines from version snapshot
+        conn.execute(
+            """INSERT INTO screenplay_lines
+               (line_order, line_type, content, scene_id,
+                character_id, location_id, metadata)
+               SELECT line_order, line_type, content, scene_id,
+                      character_id, location_id, metadata
+               FROM screenplay_version_lines
+               WHERE version_id = ?
+               ORDER BY line_order""",
+            (version_id,)
+        )
+        summary["lines_restored"] = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM screenplay_lines"
+        ).fetchone()["cnt"]
+
+        # Restore title page
+        conn.execute(
+            """INSERT INTO screenplay_title_page (key, value, sort_order)
+               SELECT key, value, sort_order
+               FROM screenplay_version_title_page
+               WHERE version_id = ?
+               ORDER BY sort_order, id""",
+            (version_id,)
+        )
+
+        # Rebuild junctions from restored line data
+        summary["junctions_rebuilt"] = _rebuild_junctions(conn)
+
+        # Update meta
+        scene_count = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM screenplay_lines WHERE line_type = 'heading'"
+        ).fetchone()["cnt"]
+        _update_meta(conn, scene_count, summary["lines_restored"])
+
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        summary["errors"].append(str(e))
+        raise
+    finally:
+        conn.close()
+
+    return summary
+
+
+def delete_version(db_path: Path, version_id: int) -> bool:
+    """Delete a published version. Returns True if deleted."""
+    conn = db.get_connection(db_path)
+    try:
+        # CASCADE handles version_lines and version_title_page
+        cursor = conn.execute(
+            "DELETE FROM screenplay_versions WHERE id = ?",
+            (version_id,)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
