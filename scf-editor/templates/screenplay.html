@@ -20,6 +20,7 @@
             {% if has_screenplay %}
             <button id="btn-save-screenplay" class="btn btn-primary btn-sm">Save</button>
             <button id="btn-export-screenplay" class="btn header-btn btn-sm">Export .fountain</button>
+            <button id="btn-help-screenplay" class="btn header-btn btn-sm" onclick="document.getElementById('help-modal').classList.add('active')">Help</button>
             {% endif %}
             <a href="/project/close" class="btn header-btn btn-sm">Close Project</a>
         </header>
@@ -157,8 +158,107 @@
         {% endif %}
     </div>
 
+    <!-- Help Modal -->
+    <div class="help-modal-overlay" id="help-modal" onclick="if(event.target===this)this.classList.remove('active')">
+        <div class="help-modal">
+            <div class="help-modal-header">
+                <h2>Screenplay Editor — Quick Reference</h2>
+                <button class="help-modal-close" onclick="document.getElementById('help-modal').classList.remove('active')">&times;</button>
+            </div>
+            <div class="help-modal-body">
+
+                <h3>Modes</h3>
+                <p>The editor uses a mode system to format your text. The current mode is shown in the status bar at the bottom left.</p>
+                <p>Press <kbd>Tab</kbd> to cycle forward through modes: Description → Scene Heading → Character → Dialogue → Transition</p>
+                <p>Press <kbd>Shift+Tab</kbd> to cycle backward.</p>
+
+                <h3>Writing in Each Mode</h3>
+                <dl class="help-dl">
+                    <dt>Description</dt>
+                    <dd>Standard action lines. Left-aligned, white text. Use for scene descriptions, stage directions, and narrative.</dd>
+                    <dt>Scene Heading</dt>
+                    <dd>Creates a new scene and location. Text is auto-capitalized with a highlighted background. Standard format is <code>INT. LOCATION - DAY</code> but any text works — the location is created from whatever you type.</dd>
+                    <dt>Character</dt>
+                    <dd>Character name before dialogue. Auto-capitalized, centered. Autocomplete suggests existing characters as you type. New names are created as character entities on save.</dd>
+                    <dt>Dialogue</dt>
+                    <dd>What the character says. Indented with a light purple tint.</dd>
+                    <dt>Transition</dt>
+                    <dd>Right-aligned, auto-capitalized. For CUT TO:, FADE OUT, etc.</dd>
+                </dl>
+
+                <h3>Automatic Mode Switching</h3>
+                <p>The editor switches mode automatically in these cases:</p>
+                <ul>
+                    <li><strong>Enter after a Scene Heading</strong> → switches to Description</li>
+                    <li><strong>Enter after a Character name</strong> → switches to Dialogue</li>
+                    <li><strong>Enter after Dialogue</strong> → switches to Description</li>
+                </ul>
+                <p>You can always override by pressing Tab to pick a different mode. The auto-switch only happens on Enter, never from clicking or arrow keys.</p>
+
+                <h3>Clicking Existing Lines</h3>
+                <p>When you click on an existing line, the mode automatically switches to match that line's type. This prevents accidentally mixing formats on a single line.</p>
+                <p>Clicking on a blank line keeps whatever mode you're currently in.</p>
+
+                <h3>Scene Headings &amp; Locations</h3>
+                <p>Every scene heading creates a location entity in the SCF database. The location name is extracted by stripping the INT/EXT prefix and time-of-day suffix.</p>
+                <p>Supported prefixes: <code>INT.</code> <code>EXT.</code> <code>INT./EXT.</code> <code>I/E.</code> <code>EST.</code></p>
+                <p>Supported time suffixes: <code>DAY</code> <code>NIGHT</code> <code>MORNING</code> <code>AFTERNOON</code> <code>EVENING</code> <code>DAWN</code> <code>DUSK</code> <code>SUNSET</code> <code>SUNRISE</code> <code>CONTINUOUS</code> <code>SAME TIME</code> <code>LATER</code> <code>MOMENTS LATER</code></p>
+                <p>Headings without a prefix are also valid — the full text becomes the location name.</p>
+                <p>Multiple headings sharing the same location name (e.g. <code>INT. WAREHOUSE - DAY</code> and <code>EXT. WAREHOUSE - NIGHT</code>) link to the same location entity.</p>
+
+                <h3>Autocomplete</h3>
+                <ul>
+                    <li>In <strong>Character</strong> mode, type 2+ characters to see matching character names from the database.</li>
+                    <li>In <strong>Scene Heading</strong> mode, after typing <code>INT.</code> or <code>EXT.</code> followed by text, matching locations appear.</li>
+                    <li>Select a suggestion with <kbd>Enter</kbd> or <kbd>Tab</kbd>, or use arrow keys to navigate the dropdown.</li>
+                    <li>Typing a name that doesn't exist yet will create it as a new entity when you save.</li>
+                </ul>
+
+                <h3>Saving</h3>
+                <p>Press <kbd>Ctrl+S</kbd> (or <kbd>Cmd+S</kbd> on Mac) or click the <strong>Save</strong> button. The save process:</p>
+                <ol>
+                    <li>Writes all lines to the database with their types and entity links</li>
+                    <li>Creates any new characters, locations, or scenes that don't exist yet</li>
+                    <li>Rebuilds scene-character relationships from the screenplay content</li>
+                    <li>Updates the navigator panel with fresh data</li>
+                </ol>
+                <p>The status bar shows save state: <strong>Ready</strong>, <strong>Unsaved •</strong>, <strong>Saving…</strong>, or <strong>Saved ✓</strong>.</p>
+
+                <h3>Navigator Panel</h3>
+                <p>The left panel shows scenes, characters, and locations extracted from the screenplay.</p>
+                <ul>
+                    <li>Click a <strong>scene</strong> to jump to that heading in the editor.</li>
+                    <li>Click a <strong>character</strong> or <strong>location</strong> to filter the scene list to only scenes containing that entity.</li>
+                    <li>Click the <strong>→</strong> arrow next to any item to open it in the Entity Browser for detailed editing.</li>
+                </ul>
+
+                <h3>Keyboard Shortcuts</h3>
+                <table class="help-shortcuts">
+                    <tbody>
+                        <tr><td><kbd>Tab</kbd></td><td>Next mode</td></tr>
+                        <tr><td><kbd>Shift+Tab</kbd></td><td>Previous mode</td></tr>
+                        <tr><td><kbd>Ctrl/Cmd+S</kbd></td><td>Save</td></tr>
+                        <tr><td><kbd>Enter</kbd></td><td>New line + auto mode switch</td></tr>
+                        <tr><td><kbd>Escape</kbd></td><td>Close autocomplete</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     {% if has_screenplay %}
     <script type="module" src="/static/js/screenplay-editor.js"></script>
+    <script>
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            const modal = document.getElementById('help-modal');
+            if (modal && modal.classList.contains('active')) {
+                modal.classList.remove('active');
+                e.stopPropagation();
+            }
+        }
+    });
+    </script>
     {% endif %}
 </body>
 </html>

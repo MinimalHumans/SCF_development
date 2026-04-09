@@ -381,7 +381,7 @@ function selectSuggestion(index) {
         // Cache the character_id for this content
         cacheEntityIds('character', newText, { character_id: item.character_id });
     } else if (acType === 'location') {
-        const m = line.text.match(/^(\.?(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s*)/i);
+        const m = line.text.match(/^(\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s*)/i);
         const prefix = m ? m[1] : '';
         const newText = prefix + item.name.toUpperCase() + ' - ';
         editorView.dispatch({
@@ -407,7 +407,7 @@ function checkAutocompleteContext() {
         if (query.length >= 2) { triggerAutocomplete('character', query); return; }
     }
     if (currentMode === 'scene') {
-        const m = trimmed.match(/^(\.?(?:INT\.|EXT\.|EST\.|I\/E|INT\.\/EXT\.)\s+)(.+)/i);
+        const m = trimmed.match(/^(\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s+)(.+)/i);
         if (m && !m[2].includes(' - ') && m[2].trim().length >= 1) {
             triggerAutocomplete('location', m[2].replace(/\s*-\s*$/, '').trim());
             return;
