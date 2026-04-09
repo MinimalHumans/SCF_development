@@ -19,7 +19,7 @@
 
 const CM_STATE_DEP = '@codemirror/state@6.5.2';
 const { EditorState } = await import(`https://esm.sh/@codemirror/state@6.5.2`);
-const { EditorView, keymap, placeholder, drawSelection, Decoration, ViewPlugin, MatchDecorator } =
+const { EditorView, keymap, placeholder, drawSelection, highlightActiveLine, Decoration, ViewPlugin, MatchDecorator } =
     await import(`https://esm.sh/@codemirror/view@6.36.5?deps=${CM_STATE_DEP}`);
 const { defaultKeymap, history, historyKeymap } =
     await import(`https://esm.sh/@codemirror/commands@6.8.0?deps=${CM_STATE_DEP}`);
@@ -138,7 +138,97 @@ const fountainStreamMode = {
 const fountainLanguage = StreamLanguage.define(fountainStreamMode);
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Line Decoration Plugin (visual formatting per line type)
+// Line Type Registry — authoritative record of what each line IS
+// ═══════════════════════════════════════════════════════════════════════════
+// The user's mode (via Tab) is the authority. Content classification is only
+// a fallback for lines the user hasn't explicitly typed/set.
+
+let lineTypes = [];    // parallel to doc lines, 0-indexed: 'heading', 'action', etc.
+let lineContents = []; // content when type was set — used to detect stale entries
+
+function modeToLineType(mode) {
+    return { description: 'action', scene: 'heading', character: 'character',
+             dialogue: 'dialogue', transition: 'transition' }[mode] || 'action';
+}
+
+function lineTypeToMode(type) {
+    return { heading: 'scene', character: 'character', dialogue: 'dialogue',
+             parenthetical: 'dialogue', transition: 'transition',
+             action: 'description' }[type] || 'description';
+}
+
+/** Adjust parser state to match a forced type (so subsequent lines classify correctly). */
+function adjustState(st, type) {
+    switch (type) {
+        case 'heading':    st.inDialogue = false; st.prevBlank = false; break;
+        case 'character':  st.inDialogue = true;  st.prevBlank = false; break;
+        case 'dialogue':   st.prevBlank = false; break; // inDialogue stays
+        case 'parenthetical': st.prevBlank = false; break;
+        case 'transition': st.inDialogue = false; st.prevBlank = false; break;
+        case 'action':     st.inDialogue = false; st.prevBlank = false; break;
+        case 'blank':      st.prevBlank = true; st.inDialogue = false; break;
+        default:           st.prevBlank = false; break;
+    }
+}
+
+/** Rebuild lineTypes from the document. Preserves user-set types where content hasn't changed. */
+function rebuildLineTypes(state) {
+    const doc = state.doc;
+    const cursorLine = doc.lineAt(state.selection.main.head).number;
+    const st = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
+    const newTypes = [];
+    const newContents = [];
+
+    for (let i = 1; i <= doc.lines; i++) {
+        const trimmed = doc.line(i).text.trim();
+
+        // Always run classifyLine to get the content-based classification and maintain state
+        const contentType = classifyLine(trimmed, st);
+
+        let actualType;
+
+        if (i === cursorLine) {
+            // Active line: user's mode is the absolute authority
+            actualType = trimmed === '' ? 'blank' : modeToLineType(currentMode);
+        } else if (trimmed === '') {
+            actualType = 'blank';
+        } else {
+            // Check if we have a stored type whose content still matches
+            const idx = i - 1;
+            if (idx < lineTypes.length
+                && lineTypes[idx]
+                && lineTypes[idx] !== 'blank'
+                && idx < lineContents.length
+                && lineContents[idx] === trimmed) {
+                // Content unchanged at this position — keep the user-set type
+                actualType = lineTypes[idx];
+            } else {
+                // New or changed content — fall back to content classification
+                actualType = contentType;
+            }
+        }
+
+        // If we overrode classifyLine's result, fix parser state for subsequent lines
+        if (actualType !== contentType) {
+            adjustState(st, actualType);
+        }
+
+        newTypes.push(actualType);
+        newContents.push(trimmed);
+    }
+
+    lineTypes = newTypes;
+    lineContents = newContents;
+}
+
+/** Initialize lineTypes from server data (on load). */
+function initLineTypesFromServer(serverLines) {
+    lineTypes = serverLines.map(l => l.line_type || 'action');
+    lineContents = serverLines.map(l => (l.content || '').trim());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Line Decoration Plugin — uses lineTypes registry, not content classification
 // ═══════════════════════════════════════════════════════════════════════════
 const LINE_CLS = {
     heading: 'cm-scf-heading', action: 'cm-scf-action', character: 'cm-scf-character',
@@ -154,10 +244,10 @@ const lineDecorationPlugin = ViewPlugin.fromClass(class {
     build(view) {
         const decos = [], doc = view.state.doc;
         const cursorLine = doc.lineAt(view.state.selection.main.head).number;
-        const st = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
         for (let i = 1; i <= doc.lines; i++) {
-            const type = classifyLine(doc.line(i).text.trim(), st);
+            // Skip cursor line — mode CSS handles it via .cm-activeLine
             if (i === cursorLine) continue;
+            const type = (i - 1 < lineTypes.length) ? lineTypes[i - 1] : 'action';
             const cls = LINE_CLS[type];
             if (cls) decos.push(Decoration.line({ attributes: { class: cls } }).range(doc.line(i).from));
         }
@@ -198,55 +288,23 @@ function handleShiftTab() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Auto-detect mode from content under cursor
+// Auto-detect mode from stored line type (on click/arrow, not while typing)
 // ═══════════════════════════════════════════════════════════════════════════
-
-/** Map line classification → editor mode. Blank lines keep current mode. */
-const CLASSIFICATION_TO_MODE = {
-    heading: 'scene',
-    character: 'character',
-    dialogue: 'dialogue',
-    parenthetical: 'dialogue',
-    transition: 'transition',
-    action: 'description',
-    section: 'description',
-    synopsis: 'description',
-    centered: 'description',
-    titlekey: 'description',
-    titlevalue: 'description',
-    boneyard: 'description',
-};
 
 function detectModeFromCursor(state) {
     const line = state.doc.lineAt(state.selection.main.head);
     const trimmed = line.text.trim();
 
-    // Blank line: keep current mode so you can type in any mode on empty lines
+    // Blank line: keep current mode
     if (trimmed === '') return;
 
-    // Classify this line in context (need preceding lines for state)
-    const doc = state.doc;
-    const st = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
-
-    // Walk from start to current line to build accurate state
-    // (For performance, start from max 100 lines back)
-    const startLine = Math.max(1, line.number - 100);
-    if (startLine > 1) {
-        // Approximate: check if we're probably in dialogue by scanning back
-        st.inTitlePage = false;
-        for (let i = startLine; i < line.number; i++) {
-            classifyLine(doc.line(i).text.trim(), st);
+    // Read from the lineTypes registry — this IS the authoritative type
+    const idx = line.number - 1;
+    if (idx < lineTypes.length && lineTypes[idx] && lineTypes[idx] !== 'blank') {
+        const newMode = lineTypeToMode(lineTypes[idx]);
+        if (newMode && newMode !== currentMode) {
+            setMode(newMode);
         }
-    } else {
-        for (let i = 1; i < line.number; i++) {
-            classifyLine(doc.line(i).text.trim(), st);
-        }
-    }
-
-    const classification = classifyLine(trimmed, st);
-    const newMode = CLASSIFICATION_TO_MODE[classification];
-    if (newMode && newMode !== currentMode) {
-        setMode(newMode);
     }
 }
 
@@ -462,6 +520,9 @@ async function loadScreenplay() {
             }
         }
 
+        // Initialize the line type registry from server data
+        initLineTypesFromServer(data.lines);
+
         // Build plain text for CodeMirror
         const text = data.lines.map(l => l.content).join('\n');
 
@@ -492,20 +553,23 @@ async function saveScreenplay() {
     hideAutocomplete();
 
     try {
-        const text = editorView.state.doc.toString();
-        const classified = classifyAllLines(text);
+        // Ensure lineTypes is current before saving
+        rebuildLineTypes(editorView.state);
 
-        // Build structured line objects with cached entity IDs
-        const lines = classified.map(line => {
-            const cached = getCachedIds(line.line_type, line.content);
-            return {
-                line_type: line.line_type,
-                content: line.content,
+        const doc = editorView.state.doc;
+        const lines = [];
+        for (let i = 0; i < doc.lines; i++) {
+            const content = doc.line(i + 1).text.trim();
+            const lineType = (i < lineTypes.length) ? lineTypes[i] : 'action';
+            const cached = getCachedIds(lineType, content);
+            lines.push({
+                line_type: lineType,
+                content: content,
                 scene_id: cached.scene_id || null,
                 character_id: cached.character_id || null,
                 location_id: cached.location_id || null,
-            };
-        });
+            });
+        }
 
         const payload = {
             title_page: loadedTitlePage,
@@ -546,6 +610,8 @@ async function saveScreenplay() {
                 }
             }
             loadedTitlePage = reloaded.title_page || [];
+            // Refresh lineTypes from server (preserves user-set types via DB round-trip)
+            initLineTypesFromServer(reloaded.lines);
         }
 
     } catch (e) {
@@ -804,7 +870,7 @@ function createEditor(container) {
         state: EditorState.create({
             doc: '',
             extensions: [
-                fountainLanguage, history(), drawSelection(), EditorView.lineWrapping,
+                fountainLanguage, history(), drawSelection(), highlightActiveLine(), EditorView.lineWrapping,
                 placeholder('Start writing your screenplay…'),
                 lineDecorationPlugin,
                 autoUppercaseHandler,
@@ -819,8 +885,14 @@ function createEditor(container) {
                 ]),
                 EditorView.updateListener.of((update) => {
                     if (update.selectionSet || update.docChanged) updateCursorStatus(update.state);
-                    if (update.docChanged) { markUnsaved(); checkAutocompleteContext(); }
-                    if (update.selectionSet) {
+                    if (update.docChanged) {
+                        rebuildLineTypes(update.state);
+                        markUnsaved();
+                        checkAutocompleteContext();
+                    }
+                    // Only auto-detect mode on pure cursor movement (click/arrows),
+                    // NOT when typing (docChanged + selectionSet both true)
+                    if (update.selectionSet && !update.docChanged) {
                         detectModeFromCursor(update.state);
                         checkAutocompleteContext();
                     }
