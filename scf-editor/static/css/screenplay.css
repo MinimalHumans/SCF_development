@@ -88,7 +88,26 @@
    ========================================================================== */
 
 .cm-editor .cm-scroller { padding: 24px 0; overflow: auto; }
-.cm-editor .cm-content { max-width: 680px; margin: 0 auto; padding: 24px 20px; }
+.cm-editor .cm-content { max-width: 680px; margin: 0 auto; padding: 24px 20px; border-left: 1px solid rgba(255, 255, 255, 0.04); border-right: 1px solid rgba(255, 255, 255, 0.04); }
+
+/* Page break line — visual divider after every N lines */
+.cm-line.cm-scf-pagebreak {
+    border-bottom: 1px dashed rgba(255, 255, 255, 0.12);
+    padding-bottom: 14px !important;
+    margin-bottom: 14px;
+    position: relative;
+}
+.cm-line.cm-scf-pagebreak::after {
+    content: attr(data-page);
+    position: absolute;
+    right: -20px;
+    bottom: -9px;
+    font-family: var(--font-mono, monospace);
+    font-size: 10px;
+    color: var(--text-muted);
+    opacity: 0.5;
+    pointer-events: none;
+}
 
 /* Scene Heading — highlighted background bar, bold, top padding */
 .cm-line.cm-scf-heading {

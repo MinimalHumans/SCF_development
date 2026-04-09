@@ -238,6 +238,8 @@ const LINE_CLS = {
     boneyard: 'cm-scf-boneyard',
 };
 
+const LINES_PER_PAGE = 55;
+
 const lineDecorationPlugin = ViewPlugin.fromClass(class {
     constructor(view) { this.decorations = this.build(view); }
     update(update) { if (update.docChanged || update.viewportChanged || update.selectionSet) this.decorations = this.build(update.view); }
@@ -245,11 +247,20 @@ const lineDecorationPlugin = ViewPlugin.fromClass(class {
         const decos = [], doc = view.state.doc;
         const cursorLine = doc.lineAt(view.state.selection.main.head).number;
         for (let i = 1; i <= doc.lines; i++) {
-            // Skip cursor line — mode CSS handles it via .cm-activeLine
-            if (i === cursorLine) continue;
-            const type = (i - 1 < lineTypes.length) ? lineTypes[i - 1] : 'action';
-            const cls = LINE_CLS[type];
-            if (cls) decos.push(Decoration.line({ attributes: { class: cls } }).range(doc.line(i).from));
+            const attrs = {};
+            // Line type class (skip cursor line — mode CSS handles it)
+            if (i !== cursorLine) {
+                const type = (i - 1 < lineTypes.length) ? lineTypes[i - 1] : 'action';
+                const cls = LINE_CLS[type];
+                if (cls) attrs.class = cls;
+            }
+            // Page break on every LINES_PER_PAGE-th line
+            if (i % LINES_PER_PAGE === 0 && i < doc.lines) {
+                const pageNum = i / LINES_PER_PAGE;
+                attrs.class = (attrs.class || '') + ' cm-scf-pagebreak';
+                attrs['data-page'] = String(pageNum);
+            }
+            if (attrs.class) decos.push(Decoration.line({ attributes: attrs }).range(doc.line(i).from));
         }
         return Decoration.set(decos, true);
     }
@@ -848,9 +859,19 @@ function updateCurrentScene() {
 // ═══════════════════════════════════════════════════════════════════════════
 function updateCursorStatus(state) {
     const line = state.doc.lineAt(state.selection.main.head);
+    const totalLines = state.doc.lines;
+    const curPage = Math.max(1, Math.ceil(line.number / LINES_PER_PAGE));
+    const totalPages = Math.max(1, Math.ceil(totalLines / LINES_PER_PAGE));
     const le = document.getElementById('status-line'), pe = document.getElementById('status-page');
     if (le) le.textContent = `Ln ${line.number}`;
-    if (pe) pe.textContent = `Pg ~${Math.max(1, Math.ceil(line.number / 55))}`;
+    if (pe) pe.textContent = `Pg ${curPage}/${totalPages}`;
+    // Word count
+    const we = document.getElementById('status-words');
+    if (we) {
+        const text = state.doc.toString();
+        const wc = text.trim() ? text.trim().split(/\s+/).length : 0;
+        we.textContent = `${wc.toLocaleString()} words`;
+    }
     updateCurrentScene();
 }
 function setSaveStatus(text, color) { const el = document.getElementById('status-save'); if (el) { el.textContent = text; el.style.color = color || ''; } }
