@@ -878,6 +878,22 @@ function createEditor(container) {
                 keymap.of([
                     { key: 'Tab', run: handleTab },
                     { key: 'Shift-Tab', run: handleShiftTab },
+                    { key: 'Enter', run(view) {
+                        if (isAutocompleteVisible()) return false;
+                        // Capture mode BEFORE inserting newline
+                        const modeBeforeEnter = currentMode;
+                        // Insert newline (replicate default behavior)
+                        const { from, to } = view.state.selection.main;
+                        view.dispatch({
+                            changes: { from, to, insert: '\n' },
+                            selection: { anchor: from + 1 },
+                        });
+                        // Auto-switch mode based on what we just left
+                        if (modeBeforeEnter === 'scene') setMode('description');
+                        else if (modeBeforeEnter === 'character') setMode('dialogue');
+                        else if (modeBeforeEnter === 'dialogue') setMode('description');
+                        return true;
+                    }},
                 ]),
                 keymap.of([
                     { key: 'Mod-s', run() { saveScreenplay(); return true; } },
