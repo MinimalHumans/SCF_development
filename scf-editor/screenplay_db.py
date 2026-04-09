@@ -63,6 +63,14 @@ _TIME_MAP = {
     "SUNSET": "Dusk", "SUNRISE": "Dawn",
 }
 
+# For bare headings without INT/EXT — strips trailing time-of-day
+_BARE_TOD_RE = re.compile(
+    r'\s*[-\.]\s*(DAY|NIGHT|MORNING|EVENING|DAWN|DUSK|AFTERNOON|MIDDAY|'
+    r'TWILIGHT|SUNSET|SUNRISE|CONTINUOUS|LATER|MOMENTS?\s+LATER|SAME\s+TIME)'
+    r'\s*$',
+    re.IGNORECASE
+)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Table Creation
@@ -258,12 +266,17 @@ def save_screenplay(db_path: Path, title_page: list[dict], lines: list[dict]) ->
 
                 parsed = parse_heading(content)
 
-                # Location resolution
-                if not location_id and parsed["location_name"]:
-                    location_id = _find_or_create_location(
-                        conn, parsed["location_name"],
-                        parsed["int_ext"], summary
-                    )
+                # Every heading gets a location — use parsed name, fall back to raw content
+                if not location_id:
+                    loc_name = parsed["location_name"]
+                    if not loc_name:
+                        # Bare heading with no parseable structure — entire text is the location
+                        loc_name = _smart_title(content.strip().lstrip(".").strip())
+                    if loc_name:
+                        location_id = _find_or_create_location(
+                            conn, loc_name,
+                            parsed["int_ext"], summary
+                        )
 
                 # Scene resolution
                 if not scene_id:
@@ -451,18 +464,42 @@ def get_locations(db_path: Path) -> list[dict]:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def parse_heading(text: str) -> dict:
-    """Parse a scene heading into components."""
+    """Parse a scene heading into components.
+
+    Handles standard Fountain headings (INT. WAREHOUSE - DAY) and bare
+    headings (WAREHOUSE, BOBOBEEBBEEE IS COOL). Every heading produces
+    a location_name — if there's no INT/EXT prefix the full text
+    (minus any time-of-day suffix) becomes the location.
+    """
     result = {"int_ext": "", "location_name": "", "time_of_day": ""}
-    m = _HEADING_RE.match(text.strip())
-    if not m:
+    raw = text.strip()
+    if not raw:
         return result
 
-    ie_raw = m.group("ie").upper().replace(".", "")
-    result["int_ext"] = _INT_EXT_MAP.get(ie_raw, "")
-    result["location_name"] = _smart_title(m.group("location").strip().rstrip("-."))
-    tod = m.group("tod")
-    if tod:
-        result["time_of_day"] = _TIME_MAP.get(tod.upper(), tod.title())
+    # Try the full INT/EXT regex first
+    m = _HEADING_RE.match(raw)
+    if m:
+        ie_raw = m.group("ie").upper().replace(".", "")
+        result["int_ext"] = _INT_EXT_MAP.get(ie_raw, "")
+        result["location_name"] = _smart_title(m.group("location").strip().rstrip("-."))
+        tod = m.group("tod")
+        if tod:
+            result["time_of_day"] = _TIME_MAP.get(tod.upper(), tod.title())
+        return result
+
+    # No INT/EXT prefix — treat the whole line as a location.
+    # Strip any trailing time-of-day suffix: "WAREHOUSE - NIGHT" → "WAREHOUSE"
+    loc = raw
+    tod_match = _BARE_TOD_RE.search(loc)
+    if tod_match:
+        result["time_of_day"] = _TIME_MAP.get(tod_match.group(1).upper(), tod_match.group(1).title())
+        loc = loc[:tod_match.start()].strip().rstrip("-. ")
+
+    # Strip leading . (forced heading marker in Fountain)
+    loc = loc.lstrip(".").strip()
+
+    if loc:
+        result["location_name"] = _smart_title(loc)
 
     return result
 
