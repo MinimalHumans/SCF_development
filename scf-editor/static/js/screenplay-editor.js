@@ -314,7 +314,7 @@ function detectModeFromCursor(state) {
 const autoUppercaseHandler = EditorView.inputHandler.of((view, from, to, text) => {
     if (text.length !== 1 || !/[a-z]/.test(text)) return false;
     if (currentMode === 'scene' || currentMode === 'character' || currentMode === 'transition') {
-        view.dispatch({ changes: { from, to, insert: text.toUpperCase() }, selection: { anchor: from + 1 } });
+        view.dispatch({ changes: { from, to, insert: text.toUpperCase() }, selection: { anchor: from + 1 }, scrollIntoView: true });
         return true;
     }
     return false;
@@ -702,9 +702,7 @@ function renderScenes() {
 
         const name = document.createElement('span');
         name.className = 'nav-item-name';
-        let dn = sc.heading.replace(/^(\.?(?:INT|EXT|EST|I\/E|INT\.\/EXT\.)[\s.]+)/i, '').trim();
-        dn = dn.replace(/\s*[-\.]\s*(DAY|NIGHT|MORNING|EVENING|DAWN|DUSK|AFTERNOON|MIDDAY|TWILIGHT|SUNSET|SUNRISE|CONTINUOUS|LATER|MOMENTS?\s+LATER|SAME\s+TIME)\s*$/i, '');
-        name.textContent = dn || sc.heading;
+        name.textContent = sc.heading;
         name.title = sc.heading;
 
         item.appendChild(num);
@@ -887,6 +885,7 @@ function createEditor(container) {
                         view.dispatch({
                             changes: { from, to, insert: '\n' },
                             selection: { anchor: from + 1 },
+                            scrollIntoView: true,
                         });
                         // Auto-switch mode based on what we just left
                         if (modeBeforeEnter === 'scene') setMode('description');

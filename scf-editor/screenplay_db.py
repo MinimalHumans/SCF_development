@@ -39,7 +39,7 @@ LINE_TYPES = (
 
 # For parsing heading text into components
 _HEADING_RE = re.compile(
-    r'^\.?(?P<ie>INT|EXT|I/E|INT\./EXT|EXT\./INT|EST)'
+    r'^\.?(?P<ie>INT\./EXT|EXT\./INT|INT/EXT|EXT/INT|I/E|INT|EXT|EST)'
     r'[\.\s]+\s*'
     r'(?P<location>.+?)'
     r'(?:\s*[-\.]\s*(?P<tod>DAY|NIGHT|MORNING|EVENING|DAWN|DUSK|AFTERNOON|'
@@ -50,7 +50,9 @@ _HEADING_RE = re.compile(
 
 _INT_EXT_MAP = {
     "INT": "Interior", "EXT": "Exterior", "I/E": "Int/Ext",
-    "INT./EXT": "Int/Ext", "EST": "Exterior",
+    "INT./EXT": "Int/Ext", "EXT./INT": "Int/Ext",
+    "INT/EXT": "Int/Ext", "EXT/INT": "Int/Ext",
+    "EST": "Exterior",
 }
 
 _TIME_MAP = {
