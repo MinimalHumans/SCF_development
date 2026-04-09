@@ -551,6 +551,7 @@ let unsaved = false, saving = false, savedTimeout = null;
 let navScenes = [], navCharacters = [], navLocations = [];
 let activeFilter = null;
 let loadedTitlePage = [];
+let lastEnterTime = 0;  // For double-return → scene heading detection
 
 function showToast(msg) {
     const t = document.createElement('div');
@@ -968,9 +969,22 @@ function createEditor(container) {
                     { key: 'Shift-Tab', run: handleShiftTab },
                     { key: 'Enter', run(view) {
                         if (isAutocompleteVisible()) return false;
-                        // Capture mode BEFORE inserting newline
+
+                        const now = Date.now();
+                        const timeSinceLast = now - lastEnterTime;
+                        lastEnterTime = now;
+
+                        // ── Double-return: switch to Scene Heading mode ──
+                        // Second Enter within 350ms — don't insert another line,
+                        // just switch mode. The first Enter already created the
+                        // blank line that Fountain needs before a heading.
+                        if (timeSinceLast < 350 && timeSinceLast > 30) {
+                            setMode('scene');
+                            return true;
+                        }
+
+                        // ── Normal Enter: insert newline + auto-switch mode ──
                         const modeBeforeEnter = currentMode;
-                        // Insert newline (replicate default behavior)
                         const { from, to } = view.state.selection.main;
                         view.dispatch({
                             changes: { from, to, insert: '\n' },
@@ -980,7 +994,7 @@ function createEditor(container) {
                         // Auto-switch mode based on what we just left
                         if (modeBeforeEnter === 'scene') setMode('description');
                         else if (modeBeforeEnter === 'character') setMode('dialogue');
-                        else if (modeBeforeEnter === 'dialogue') setMode('description');
+                        else if (modeBeforeEnter === 'dialogue') setMode('character');
                         return true;
                     }},
                 ]),
