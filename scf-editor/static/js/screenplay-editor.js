@@ -237,44 +237,59 @@ function repairDialoguePairs(types, contents, cursorIdx) {
     }
 }
 
-/** Rebuild lineTypes from the document. Preserves user-set types where content hasn't changed. */
+/** Rebuild lineTypes from the document.
+ *  Uses a content-keyed map instead of positional matching so that
+ *  line insertions/deletions don't cascade wrong types to every line below.
+ *  Nearest-position tiebreaker handles duplicate content with different types.
+ */
 function rebuildLineTypes(state) {
     const doc = state.doc;
     const cursorLine = doc.lineAt(state.selection.main.head).number;
+
+    const contentTypeMap = new Map();
+    for (let i = 0; i < lineTypes.length; i++) {
+        const type = lineTypes[i];
+        const content = lineContents[i];
+        if (type && type !== 'blank' && content) {
+            if (!contentTypeMap.has(content)) contentTypeMap.set(content, []);
+            contentTypeMap.get(content).push({ type, oldPos: i });
+        }
+    }
+
     const st = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
     const newTypes = [];
     const newContents = [];
+    const lineCountDelta = Math.abs(doc.lines - lineTypes.length);
 
     for (let i = 1; i <= doc.lines; i++) {
         const trimmed = doc.line(i).text.trim();
-
-        // Always run classifyLine to get the content-based classification and maintain state
         const contentType = classifyLine(trimmed, st);
-
         let actualType;
 
         if (i === cursorLine) {
-            // Active line: user's mode is the absolute authority
             actualType = trimmed === '' ? 'blank' : modeToLineType(currentMode);
         } else if (trimmed === '') {
             actualType = 'blank';
         } else {
-            // Check if we have a stored type whose content still matches
-            const idx = i - 1;
-            if (idx < lineTypes.length
-                && lineTypes[idx]
-                && lineTypes[idx] !== 'blank'
-                && idx < lineContents.length
-                && lineContents[idx] === trimmed) {
-                // Content unchanged at this position — keep the user-set type
-                actualType = lineTypes[idx];
+            const candidates = contentTypeMap.get(trimmed);
+            if (candidates && candidates.length > 0) {
+                const newIdx = i - 1;
+                let bestIdx = 0;
+                let bestDist = Math.abs(candidates[0].oldPos - newIdx);
+                for (let j = 1; j < candidates.length; j++) {
+                    const dist = Math.abs(candidates[j].oldPos - newIdx);
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        bestIdx = j;
+                    }
+                }
+                actualType = candidates[bestIdx].type;
+                candidates.splice(bestIdx, 1);
             } else {
-                // New or changed content — fall back to content classification
                 actualType = contentType;
             }
         }
 
-        // If we overrode classifyLine's result, fix parser state for subsequent lines
         if (actualType !== contentType) {
             adjustState(st, actualType);
         }
@@ -283,8 +298,9 @@ function rebuildLineTypes(state) {
         newContents.push(trimmed);
     }
 
-    // Structural repair: fix character/dialogue pairs missed by state machine
-    repairDialoguePairs(newTypes, newContents, cursorLine - 1);
+    if (lineCountDelta > 3) {
+        repairDialoguePairs(newTypes, newContents, cursorLine - 1);
+    }
 
     lineTypes = newTypes;
     lineContents = newContents;
