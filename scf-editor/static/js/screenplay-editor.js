@@ -435,7 +435,7 @@ function showAutocompleteDropdown(items, type, coords) {
     items.forEach((item, i) => {
         const el = document.createElement('div');
         el.className = 'screenplay-ac-item' + (i === 0 ? ' highlighted' : '');
-        const icon = type === 'character' ? '👤' : '📍';
+        const icon = { character: '👤', location: '📍', prefix: '🎬', tod: '🕐' }[type] || '📍';
         const name = type === 'character' ? (item.display_name || item.name) : item.name;
         el.innerHTML = `<span class="screenplay-ac-icon">${icon}</span><span class="screenplay-ac-name">${esc(name)}</span>`;
         el.addEventListener('click', (e) => { e.stopPropagation(); selectSuggestion(i); });
@@ -470,30 +470,130 @@ function selectSuggestion(index) {
         });
         // Cache the location_id for heading lines containing this location
         cacheEntityIds('location_hint', item.name.toUpperCase(), { location_id: item.location_id });
+    } else if (acType === 'prefix') {
+        // Replace entire line with the selected prefix (e.g. "INT. ")
+        const newText = item.value;
+        editorView.dispatch({
+            changes: { from: line.from, to: line.to, insert: newText },
+            selection: { anchor: line.from + newText.length }
+        });
+    } else if (acType === 'tod') {
+        // Append time-of-day after the " - " separator
+        // Find where " - " ends (or where trailing partial text starts)
+        const dashMatch = line.text.match(/^(.+\s-\s*)/);
+        const beforeTod = dashMatch ? dashMatch[1] : line.text;
+        const newText = beforeTod + item.value;
+        editorView.dispatch({
+            changes: { from: line.from, to: line.to, insert: newText },
+            selection: { anchor: line.from + newText.length }
+        });
     }
     hideAutocomplete();
     editorView.focus();
 }
 
+// ── Static autocomplete data for scene headings ──
+const HEADING_PREFIXES = [
+    { name: 'INT.',      value: 'INT. ' },
+    { name: 'EXT.',      value: 'EXT. ' },
+    { name: 'INT./EXT.', value: 'INT./EXT. ' },
+];
+
+const TIME_OF_DAY_OPTIONS = [
+    { name: 'DAY',            value: 'DAY' },
+    { name: 'NIGHT',          value: 'NIGHT' },
+    { name: 'MORNING',        value: 'MORNING' },
+    { name: 'AFTERNOON',      value: 'AFTERNOON' },
+    { name: 'EVENING',        value: 'EVENING' },
+    { name: 'DAWN',           value: 'DAWN' },
+    { name: 'DUSK',           value: 'DUSK' },
+    { name: 'SUNSET',         value: 'SUNSET' },
+    { name: 'SUNRISE',        value: 'SUNRISE' },
+    { name: 'TWILIGHT',       value: 'TWILIGHT' },
+    { name: 'MIDDAY',         value: 'MIDDAY' },
+    { name: 'CONTINUOUS',     value: 'CONTINUOUS' },
+    { name: 'LATER',          value: 'LATER' },
+    { name: 'MOMENTS LATER',  value: 'MOMENTS LATER' },
+    { name: 'SAME TIME',      value: 'SAME TIME' },
+];
+
+// Regex to detect a complete "PREFIX LOCATION - " pattern (ready for time-of-day)
+const HEADING_READY_FOR_TOD_RE = /^\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s+.+\s-\s*/i;
+// Regex to detect we already have a prefix but are still typing location
+const HEADING_HAS_PREFIX_RE = /^\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s+/i;
+
 function checkAutocompleteContext() {
     if (!editorView) return;
     const sel = editorView.state.selection.main;
     if (!sel.empty) { hideAutocomplete(); return; }
-    const trimmed = editorView.state.doc.lineAt(sel.head).text.trim();
-    if (!trimmed || trimmed.length < 2) { hideAutocomplete(); return; }
+    const lineText = editorView.state.doc.lineAt(sel.head).text;
+    const trimmed = lineText.trim();
 
+    // ── Character mode: name autocomplete (unchanged) ──
     if (currentMode === 'character') {
+        if (!trimmed || trimmed.length < 2) { hideAutocomplete(); return; }
         const query = trimmed.replace(/\s*\([^)]*\)\s*$/g, '').trim();
         if (query.length >= 2) { triggerAutocomplete('character', query); return; }
     }
+
+    // ── Scene mode: prefix → location → time-of-day ──
     if (currentMode === 'scene') {
-        const m = trimmed.match(/^(\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s+)(.+)/i);
-        if (m && !m[2].includes(' - ') && m[2].trim().length >= 1) {
-            triggerAutocomplete('location', m[2].replace(/\s*-\s*$/, '').trim());
+        const upper = trimmed.toUpperCase();
+
+        // Phase 3: After "PREFIX LOCATION - " → time-of-day suggestions
+        if (HEADING_READY_FOR_TOD_RE.test(trimmed)) {
+            // Extract what's been typed after the dash
+            const dashIdx = trimmed.lastIndexOf(' - ');
+            const afterDash = dashIdx >= 0 ? trimmed.slice(dashIdx + 3).toUpperCase() : '';
+            // Filter TOD options by what's typed so far
+            const filtered = afterDash
+                ? TIME_OF_DAY_OPTIONS.filter(o => o.name.startsWith(afterDash))
+                : TIME_OF_DAY_OPTIONS;
+            if (filtered.length > 0) {
+                showStaticAutocomplete(filtered, 'tod');
+                return;
+            }
+            hideAutocomplete();
+            return;
+        }
+
+        // Phase 2: After prefix, typing location → location autocomplete
+        if (HEADING_HAS_PREFIX_RE.test(trimmed)) {
+            const m = trimmed.match(/^(\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s+)(.+)/i);
+            if (m && m[2].trim().length >= 1) {
+                triggerAutocomplete('location', m[2].replace(/\s*-\s*$/, '').trim());
+                return;
+            }
+            hideAutocomplete();
+            return;
+        }
+
+        // Phase 1: Empty or partial text → prefix suggestions (INT./EXT./INT./EXT.)
+        // Show when line is empty, or starts matching a prefix
+        if (trimmed.length === 0) {
+            showStaticAutocomplete(HEADING_PREFIXES, 'prefix');
+            return;
+        }
+        // Filter prefixes by partial typing
+        const prefixMatches = HEADING_PREFIXES.filter(p =>
+            p.value.toUpperCase().startsWith(upper) || p.name.startsWith(upper)
+        );
+        if (prefixMatches.length > 0 && trimmed.length < 10) {
+            showStaticAutocomplete(prefixMatches, 'prefix');
             return;
         }
     }
+
     hideAutocomplete();
+}
+
+/** Show a static autocomplete dropdown (no API call). */
+function showStaticAutocomplete(items, type) {
+    if (!editorView) return;
+    // Don't re-render if showing the same type with same items
+    if (acType === type && isAutocompleteVisible() && acItems.length === items.length) return;
+    const coords = editorView.coordsAtPos(editorView.state.selection.main.head);
+    if (coords) showAutocompleteDropdown(items, type, coords);
 }
 
 function triggerAutocomplete(type, query) {
@@ -968,7 +1068,11 @@ function createEditor(container) {
                     { key: 'Tab', run: handleTab },
                     { key: 'Shift-Tab', run: handleShiftTab },
                     { key: 'Enter', run(view) {
-                        if (isAutocompleteVisible()) return false;
+                        // Dismiss autocomplete if it has no actionable selection
+                        // (e.g. "new character" indicator). Only let autocomplete
+                        // consume Enter if there's an actual highlighted item.
+                        if (isAutocompleteVisible() && acItems.length > 0 && acHighlight >= 0) return false;
+                        hideAutocomplete();
 
                         const now = Date.now();
                         const timeSinceLast = now - lastEnterTime;
@@ -983,18 +1087,24 @@ function createEditor(container) {
                             return true;
                         }
 
-                        // ── Normal Enter: insert newline + auto-switch mode ──
+                        // ── Normal Enter: set mode BEFORE dispatch ──
+                        // dispatch() triggers updateListener synchronously, which
+                        // calls checkAutocompleteContext(). If we set mode after
+                        // dispatch, the listener still sees the old mode and may
+                        // show stale autocomplete (e.g. scene prefixes after
+                        // switching to description, or character AC persisting
+                        // instead of switching to dialogue).
                         const modeBeforeEnter = currentMode;
+                        if (modeBeforeEnter === 'scene') setMode('description');
+                        else if (modeBeforeEnter === 'character') setMode('dialogue');
+                        else if (modeBeforeEnter === 'dialogue') setMode('character');
+
                         const { from, to } = view.state.selection.main;
                         view.dispatch({
                             changes: { from, to, insert: '\n' },
                             selection: { anchor: from + 1 },
                             scrollIntoView: true,
                         });
-                        // Auto-switch mode based on what we just left
-                        if (modeBeforeEnter === 'scene') setMode('description');
-                        else if (modeBeforeEnter === 'character') setMode('dialogue');
-                        else if (modeBeforeEnter === 'dialogue') setMode('character');
                         return true;
                     }},
                 ]),
