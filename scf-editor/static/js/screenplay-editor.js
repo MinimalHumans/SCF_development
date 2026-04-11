@@ -172,7 +172,8 @@ function adjustState(st, type) {
 }
 
 /** Repair pass — fix character/dialogue pairs that the state machine missed.
- *  Runs after initial classification. Handles paste, reorder, and structural edits.
+ *  Runs ONLY for large changes (paste, import, bulk operations).
+ *  For small edits the content map preserves user intent correctly.
  *  
  *  Rules:
  *  1. ALL_CAPS line preceded by blank, followed by non-blank non-heading → character + dialogue
@@ -187,24 +188,17 @@ function repairDialoguePairs(types, contents, cursorIdx) {
         if (types[i] !== 'action') continue;
         const t = contents[i];
         if (!t) continue;
-        // Is this an ALL_CAPS line that looks like a character cue?
         if (!CHARACTER_CUE_RE.test(t) || t.length <= 1 || TRANSITION_RE.test(t)) continue;
-        // Prefer preceded by blank, but also allow after action/dialogue/heading
-        // (paste often omits the blank line before character cues)
         const prevType = i > 0 ? types[i - 1] : 'blank';
         const prevOk = prevType === 'blank' || prevType === 'action' || prevType === 'dialogue'
             || prevType === 'parenthetical' || prevType === 'heading' || prevType === 'transition';
         if (!prevOk) continue;
-        // Must be followed by at least one non-blank content line
         const nextIdx = i + 1;
         if (nextIdx >= n || types[nextIdx] === 'blank') continue;
-        // The next line shouldn't be a heading or transition (those stand alone)
         if (types[nextIdx] === 'heading' || types[nextIdx] === 'transition') continue;
-        // Promote: this is a character cue
         types[i] = 'character';
-        // Mark subsequent lines as dialogue/parenthetical until blank or next structure
         for (let j = i + 1; j < n; j++) {
-            if (j === cursorIdx) continue; // don't override active typing
+            if (j === cursorIdx) continue;
             if (types[j] === 'blank' || types[j] === 'heading' || types[j] === 'transition') break;
             if (PARENTHETICAL_RE.test(contents[j])) { types[j] = 'parenthetical'; }
             else { types[j] = 'dialogue'; }
@@ -230,22 +224,33 @@ function repairDialoguePairs(types, contents, cursorIdx) {
         let hasCharacter = false;
         for (let j = i - 1; j >= 0; j--) {
             if (types[j] === 'character') { hasCharacter = true; break; }
-            if (types[j] === 'dialogue' || types[j] === 'parenthetical') continue; // keep walking up
-            break; // blank, heading, action, etc. — stop
+            if (types[j] === 'dialogue' || types[j] === 'parenthetical') continue;
+            break;
         }
         if (!hasCharacter) types[i] = 'action';
     }
 }
 
 /** Rebuild lineTypes from the document.
- *  Uses a content-keyed map instead of positional matching so that
- *  line insertions/deletions don't cascade wrong types to every line below.
- *  Nearest-position tiebreaker handles duplicate content with different types.
+ *
+ *  Uses a content-keyed map (not positional) so line insertions/deletions
+ *  don't cascade wrong types to every line below.
+ *
+ *  KEY INSIGHT: The cursor line is only overridden by the current mode when
+ *  the user is TYPING (line count same or increased). When lines are DELETED
+ *  (backspace-merge, line deletion), the cursor line is resolved from the
+ *  content map or state machine — then the mode syncs to match. This prevents
+ *  structural edits from corrupting line types.
  */
 function rebuildLineTypes(state) {
     const doc = state.doc;
     const cursorLine = doc.lineAt(state.selection.main.head).number;
 
+    // ── Detect structural vs content edit ──
+    const prevLineCount = lineTypes.length;
+    const linesDeleted = doc.lines < prevLineCount;
+
+    // ── Build content → [{type, oldPos}] map from previous state ──
     const contentTypeMap = new Map();
     for (let i = 0; i < lineTypes.length; i++) {
         const type = lineTypes[i];
@@ -259,20 +264,27 @@ function rebuildLineTypes(state) {
     const st = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
     const newTypes = [];
     const newContents = [];
-    const lineCountDelta = Math.abs(doc.lines - lineTypes.length);
 
     for (let i = 1; i <= doc.lines; i++) {
         const trimmed = doc.line(i).text.trim();
+
+        // Always run classifyLine to maintain parser state
         const contentType = classifyLine(trimmed, st);
+
         let actualType;
 
-        if (i === cursorLine) {
+        if (i === cursorLine && !linesDeleted) {
+            // ── Typing or line insertion: mode is authority ──
+            // The user is actively writing — their chosen mode determines the type.
             actualType = trimmed === '' ? 'blank' : modeToLineType(currentMode);
         } else if (trimmed === '') {
             actualType = 'blank';
         } else {
+            // ── Content-map lookup (position-independent) ──
+            // Handles: shifted lines after delete, structural edits, undo
             const candidates = contentTypeMap.get(trimmed);
             if (candidates && candidates.length > 0) {
+                // Pick the candidate nearest to this position
                 const newIdx = i - 1;
                 let bestIdx = 0;
                 let bestDist = Math.abs(candidates[0].oldPos - newIdx);
@@ -284,12 +296,15 @@ function rebuildLineTypes(state) {
                     }
                 }
                 actualType = candidates[bestIdx].type;
-                candidates.splice(bestIdx, 1);
+                candidates.splice(bestIdx, 1); // consume so duplicates resolve correctly
             } else {
+                // ── Truly new content: fall back to state-machine classification ──
+                // Covers: merged lines (backspace), freshly typed content on delete
                 actualType = contentType;
             }
         }
 
+        // Fix parser state if we overrode classifyLine's result
         if (actualType !== contentType) {
             adjustState(st, actualType);
         }
@@ -298,12 +313,33 @@ function rebuildLineTypes(state) {
         newContents.push(trimmed);
     }
 
+    // Structural repair only for large changes (paste, bulk delete, import).
+    // For small edits (1-3 lines), the content map preserves types correctly
+    // and repair's aggressive reclassification causes more harm than good.
+    const lineCountDelta = Math.abs(doc.lines - prevLineCount);
     if (lineCountDelta > 3) {
         repairDialoguePairs(newTypes, newContents, cursorLine - 1);
     }
 
     lineTypes = newTypes;
     lineContents = newContents;
+
+    // ── After structural deletes: sync mode to cursor line's resolved type ──
+    // The cursor landed on a line whose type was resolved from the content map
+    // or state machine (not the mode). Update the mode to match so the user
+    // sees the correct mode indicator and subsequent typing uses the right type.
+    if (linesDeleted) {
+        const cursorIdx = cursorLine - 1;
+        if (cursorIdx >= 0 && cursorIdx < newTypes.length) {
+            const resolvedType = newTypes[cursorIdx];
+            if (resolvedType && resolvedType !== 'blank') {
+                const newMode = lineTypeToMode(resolvedType);
+                if (newMode !== currentMode) {
+                    setMode(newMode);
+                }
+            }
+        }
+    }
 }
 
 /** Initialize lineTypes from server data (on load). */
@@ -495,7 +531,6 @@ function selectSuggestion(index) {
         });
     } else if (acType === 'tod') {
         // Append time-of-day after the " - " separator
-        // Find where " - " ends (or where trailing partial text starts)
         const dashMatch = line.text.match(/^(.+\s-\s*)/);
         const beforeTod = dashMatch ? dashMatch[1] : line.text;
         const newText = beforeTod + item.value;
@@ -545,7 +580,7 @@ function checkAutocompleteContext() {
     const lineText = editorView.state.doc.lineAt(sel.head).text;
     const trimmed = lineText.trim();
 
-    // ── Character mode: name autocomplete (unchanged) ──
+    // ── Character mode: name autocomplete ──
     if (currentMode === 'character') {
         if (!trimmed || trimmed.length < 2) { hideAutocomplete(); return; }
         const query = trimmed.replace(/\s*\([^)]*\)\s*$/g, '').trim();
@@ -558,10 +593,8 @@ function checkAutocompleteContext() {
 
         // Phase 3: After "PREFIX LOCATION - " → time-of-day suggestions
         if (HEADING_READY_FOR_TOD_RE.test(trimmed)) {
-            // Extract what's been typed after the dash
             const dashIdx = trimmed.lastIndexOf(' - ');
             const afterDash = dashIdx >= 0 ? trimmed.slice(dashIdx + 3).toUpperCase() : '';
-            // Filter TOD options by what's typed so far
             const filtered = afterDash
                 ? TIME_OF_DAY_OPTIONS.filter(o => o.name.startsWith(afterDash))
                 : TIME_OF_DAY_OPTIONS;
@@ -584,13 +617,11 @@ function checkAutocompleteContext() {
             return;
         }
 
-        // Phase 1: Empty or partial text → prefix suggestions (INT./EXT./INT./EXT.)
-        // Show when line is empty, or starts matching a prefix
+        // Phase 1: Empty or partial text → prefix suggestions
         if (trimmed.length === 0) {
             showStaticAutocomplete(HEADING_PREFIXES, 'prefix');
             return;
         }
-        // Filter prefixes by partial typing
         const prefixMatches = HEADING_PREFIXES.filter(p =>
             p.value.toUpperCase().startsWith(upper) || p.name.startsWith(upper)
         );
@@ -606,7 +637,6 @@ function checkAutocompleteContext() {
 /** Show a static autocomplete dropdown (no API call). */
 function showStaticAutocomplete(items, type) {
     if (!editorView) return;
-    // Don't re-render if showing the same type with same items
     if (acType === type && isAutocompleteVisible() && acItems.length === items.length) return;
     const coords = editorView.coordsAtPos(editorView.state.selection.main.head);
     if (coords) showAutocompleteDropdown(items, type, coords);
@@ -617,7 +647,6 @@ function triggerAutocomplete(type, query) {
     acQuery = query;
     if (acDebounce) clearTimeout(acDebounce);
     acDebounce = setTimeout(async () => {
-        // Use v2 endpoints
         const endpoint = type === 'character'
             ? `/api/screenplay-v2/autocomplete-characters?q=${encodeURIComponent(query)}`
             : `/api/screenplay-v2/autocomplete-locations?q=${encodeURIComponent(query)}`;
@@ -667,7 +696,7 @@ let unsaved = false, saving = false, savedTimeout = null;
 let navScenes = [], navCharacters = [], navLocations = [];
 let activeFilter = null;
 let loadedTitlePage = [];
-let lastEnterTime = 0;  // For double-return → scene heading detection
+let lastEnterTime = 0;
 
 function showToast(msg) {
     const t = document.createElement('div');
@@ -702,10 +731,8 @@ async function loadScreenplay() {
             return;
         }
 
-        // Store title page for round-tripping
         loadedTitlePage = data.title_page || [];
 
-        // Build entity cache from loaded data
         entityCache.clear();
         for (const line of data.lines) {
             const ids = {};
@@ -717,10 +744,8 @@ async function loadScreenplay() {
             }
         }
 
-        // Initialize the line type registry from server data
         initLineTypesFromServer(data.lines);
 
-        // Build plain text for CodeMirror
         const text = data.lines.map(l => l.content).join('\n');
 
         editorView.dispatch({
@@ -731,7 +756,6 @@ async function loadScreenplay() {
         setSaveStatus('Loaded ✓', 'var(--success)');
         savedTimeout = setTimeout(() => setSaveStatus('Ready', ''), 2000);
 
-        // Fetch navigator data from DB
         fetchNavigatorData();
 
     } catch (e) {
@@ -750,7 +774,6 @@ async function saveScreenplay() {
     hideAutocomplete();
 
     try {
-        // Ensure lineTypes is current before saving
         rebuildLineTypes(editorView.state);
 
         const doc = editorView.state.doc;
@@ -789,10 +812,8 @@ async function saveScreenplay() {
 
         if (data.summary) showSyncToast(data.summary);
 
-        // Refresh navigator and entity cache from DB
         fetchNavigatorData();
 
-        // Reload to refresh entity cache with server-assigned IDs
         const reloadRes = await fetch('/api/screenplay-v2/load');
         if (reloadRes.ok) {
             const reloaded = await reloadRes.json();
@@ -807,7 +828,6 @@ async function saveScreenplay() {
                 }
             }
             loadedTitlePage = reloaded.title_page || [];
-            // Refresh lineTypes from server (preserves user-set types via DB round-trip)
             initLineTypesFromServer(reloaded.lines);
         }
 
@@ -1051,7 +1071,6 @@ function updateCursorStatus(state) {
     const le = document.getElementById('status-line'), pe = document.getElementById('status-page');
     if (le) le.textContent = `Ln ${line.number}`;
     if (pe) pe.textContent = `Pg ${curPage}/${totalPages}`;
-    // Word count
     const we = document.getElementById('status-words');
     if (we) {
         const text = state.doc.toString();
@@ -1084,9 +1103,6 @@ function createEditor(container) {
                     { key: 'Tab', run: handleTab },
                     { key: 'Shift-Tab', run: handleShiftTab },
                     { key: 'Enter', run(view) {
-                        // Dismiss autocomplete if it has no actionable selection
-                        // (e.g. "new character" indicator). Only let autocomplete
-                        // consume Enter if there's an actual highlighted item.
                         if (isAutocompleteVisible() && acItems.length > 0 && acHighlight >= 0) return false;
                         hideAutocomplete();
 
@@ -1094,22 +1110,11 @@ function createEditor(container) {
                         const timeSinceLast = now - lastEnterTime;
                         lastEnterTime = now;
 
-                        // ── Double-return: switch to Scene Heading mode ──
-                        // Second Enter within 350ms — don't insert another line,
-                        // just switch mode. The first Enter already created the
-                        // blank line that Fountain needs before a heading.
                         if (timeSinceLast < 350 && timeSinceLast > 30) {
                             setMode('scene');
                             return true;
                         }
 
-                        // ── Normal Enter: set mode BEFORE dispatch ──
-                        // dispatch() triggers updateListener synchronously, which
-                        // calls checkAutocompleteContext(). If we set mode after
-                        // dispatch, the listener still sees the old mode and may
-                        // show stale autocomplete (e.g. scene prefixes after
-                        // switching to description, or character AC persisting
-                        // instead of switching to dialogue).
                         const modeBeforeEnter = currentMode;
                         if (modeBeforeEnter === 'scene') setMode('description');
                         else if (modeBeforeEnter === 'character') setMode('dialogue');
@@ -1135,8 +1140,6 @@ function createEditor(container) {
                         markUnsaved();
                         checkAutocompleteContext();
                     }
-                    // Only auto-detect mode on pure cursor movement (click/arrows),
-                    // NOT when typing (docChanged + selectionSet both true)
                     if (update.selectionSet && !update.docChanged) {
                         detectModeFromCursor(update.state);
                         checkAutocompleteContext();
