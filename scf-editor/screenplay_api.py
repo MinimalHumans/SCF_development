@@ -159,28 +159,8 @@ async def autocomplete_locations(request: Request, q: str = Query("")):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Fountain Import / Export
+# Fountain Import (kept — ingest is still useful)
 # ═══════════════════════════════════════════════════════════════════════════
-
-@screenplay_router.get("/export-fountain")
-async def export_fountain(request: Request):
-    """Export the screenplay as a clean .fountain file."""
-    db_path = _require_project(request)
-    text = screenplay_db.export_fountain(db_path)
-
-    project_info = db.list_entities(db_path, "project", limit=1)
-    project_name = project_info[0]["name"] if project_info else "screenplay"
-    safe_name = "".join(c for c in project_name if c.isalnum() or c in " -_").strip()
-    safe_name = safe_name.replace(" ", "_") or "screenplay"
-
-    return PlainTextResponse(
-        text,
-        media_type="text/plain",
-        headers={
-            "Content-Disposition": f'attachment; filename="{safe_name}.fountain"',
-        },
-    )
-
 
 @screenplay_router.post("/import-fountain")
 async def import_fountain(request: Request, file: UploadFile = File(...)):
@@ -215,16 +195,12 @@ async def create_blank(request: Request):
         {"key": "Draft date", "value": today},
     ]
 
-    # Create a minimal starting scene
+    # Create a minimal starting scene — no structural blanks
     lines = [
-        {"line_type": "blank", "content": ""},
         {"line_type": "heading", "content": "EXT. LOCATION - DAY"},
-        {"line_type": "blank", "content": ""},
         {"line_type": "action", "content": "Action description."},
-        {"line_type": "blank", "content": ""},
         {"line_type": "character", "content": "CHARACTER"},
         {"line_type": "dialogue", "content": "Dialogue."},
-        {"line_type": "blank", "content": ""},
     ]
 
     summary = screenplay_db.save_screenplay(db_path, title_page, lines)
@@ -295,7 +271,6 @@ async def link_line_entity(request: Request, line_id: int):
     """
     Update entity links on a specific line.
     Body: {"character_id": N} or {"location_id": N} or {"scene_id": N}
-    Used when the user selects an autocomplete suggestion.
     """
     db_path = _require_project(request)
     body = await request.json()

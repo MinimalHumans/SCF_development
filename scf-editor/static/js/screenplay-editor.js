@@ -11,6 +11,10 @@
  * Tab cycles modes: Description → Scene → Character → Dialogue → Transition
  * Autocomplete: Character mode → character names, Scene mode → locations
  * Navigator: DB queries via /api/screenplay-v2/scenes|characters|locations
+ * 
+ * STRUCTURAL SPACING: Visual gaps between screenplay elements are rendered
+ * via CSS margins, not blank lines. The document contains only content lines
+ * and intentional user-inserted blanks.
  */
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -86,8 +90,6 @@ function classifyAllLines(text) {
 // ═══════════════════════════════════════════════════════════════════════════
 // Entity Cache — content-addressed ID lookup
 // ═══════════════════════════════════════════════════════════════════════════
-// Maps "type:CONTENT" → {scene_id, character_id, location_id}
-// Survives edits because it's keyed by content, not position.
 
 const entityCache = new Map();
 
@@ -106,7 +108,7 @@ function getCachedIds(lineType, content) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Fountain StreamLanguage (syntax coloring — unchanged)
+// Fountain StreamLanguage (syntax coloring)
 // ═══════════════════════════════════════════════════════════════════════════
 const fountainStreamMode = {
     name: 'fountain',
@@ -138,13 +140,11 @@ const fountainStreamMode = {
 const fountainLanguage = StreamLanguage.define(fountainStreamMode);
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Line Type Registry — authoritative record of what each line IS
+// Line Type Registry
 // ═══════════════════════════════════════════════════════════════════════════
-// The user's mode (via Tab) is the authority. Content classification is only
-// a fallback for lines the user hasn't explicitly typed/set.
 
-let lineTypes = [];    // parallel to doc lines, 0-indexed: 'heading', 'action', etc.
-let lineContents = []; // content when type was set — used to detect stale entries
+let lineTypes = [];
+let lineContents = [];
 
 function modeToLineType(mode) {
     return { description: 'action', scene: 'heading', character: 'character',
@@ -157,12 +157,11 @@ function lineTypeToMode(type) {
              action: 'description' }[type] || 'description';
 }
 
-/** Adjust parser state to match a forced type (so subsequent lines classify correctly). */
 function adjustState(st, type) {
     switch (type) {
         case 'heading':    st.inDialogue = false; st.prevBlank = false; break;
         case 'character':  st.inDialogue = true;  st.prevBlank = false; break;
-        case 'dialogue':   st.prevBlank = false; break; // inDialogue stays
+        case 'dialogue':   st.prevBlank = false; break;
         case 'parenthetical': st.prevBlank = false; break;
         case 'transition': st.inDialogue = false; st.prevBlank = false; break;
         case 'action':     st.inDialogue = false; st.prevBlank = false; break;
@@ -171,19 +170,9 @@ function adjustState(st, type) {
     }
 }
 
-/** Repair pass — fix character/dialogue pairs that the state machine missed.
- *  Runs ONLY for large changes (paste, import, bulk operations).
- *  For small edits the content map preserves user intent correctly.
- *  
- *  Rules:
- *  1. ALL_CAPS line preceded by blank, followed by non-blank non-heading → character + dialogue
- *  2. Character with no dialogue after it → demote to action
- *  3. Dialogue with no character above it → demote to action
- */
+/** Repair pass — only for large changes (paste, import). */
 function repairDialoguePairs(types, contents, cursorIdx) {
     const n = types.length;
-
-    // Pass 1: Promote missed character/dialogue patterns
     for (let i = 0; i < n; i++) {
         if (types[i] !== 'action') continue;
         const t = contents[i];
@@ -204,8 +193,6 @@ function repairDialoguePairs(types, contents, cursorIdx) {
             else { types[j] = 'dialogue'; }
         }
     }
-
-    // Pass 2: Demote orphan characters (no dialogue follows) — skip cursor line
     for (let i = 0; i < n; i++) {
         if (i === cursorIdx) continue;
         if (types[i] !== 'character') continue;
@@ -216,8 +203,6 @@ function repairDialoguePairs(types, contents, cursorIdx) {
         }
         if (!hasDialogue) types[i] = 'action';
     }
-
-    // Pass 3: Demote orphan dialogue (no character above) — skip cursor line
     for (let i = 0; i < n; i++) {
         if (i === cursorIdx) continue;
         if (types[i] !== 'dialogue' && types[i] !== 'parenthetical') continue;
@@ -231,26 +216,16 @@ function repairDialoguePairs(types, contents, cursorIdx) {
     }
 }
 
-/** Rebuild lineTypes from the document.
- *
- *  Uses a content-keyed map (not positional) so line insertions/deletions
- *  don't cascade wrong types to every line below.
- *
- *  KEY INSIGHT: The cursor line is only overridden by the current mode when
- *  the user is TYPING (line count same or increased). When lines are DELETED
- *  (backspace-merge, line deletion), the cursor line is resolved from the
- *  content map or state machine — then the mode syncs to match. This prevents
- *  structural edits from corrupting line types.
+/** Rebuild lineTypes using content-keyed map.
+ *  Cursor line override only when typing (not deleting).
+ *  Mode syncs to resolved type after structural deletes.
  */
 function rebuildLineTypes(state) {
     const doc = state.doc;
     const cursorLine = doc.lineAt(state.selection.main.head).number;
-
-    // ── Detect structural vs content edit ──
     const prevLineCount = lineTypes.length;
     const linesDeleted = doc.lines < prevLineCount;
 
-    // ── Build content → [{type, oldPos}] map from previous state ──
     const contentTypeMap = new Map();
     for (let i = 0; i < lineTypes.length; i++) {
         const type = lineTypes[i];
@@ -267,55 +242,35 @@ function rebuildLineTypes(state) {
 
     for (let i = 1; i <= doc.lines; i++) {
         const trimmed = doc.line(i).text.trim();
-
-        // Always run classifyLine to maintain parser state
         const contentType = classifyLine(trimmed, st);
-
         let actualType;
 
         if (i === cursorLine && !linesDeleted) {
-            // ── Typing or line insertion: mode is authority ──
-            // The user is actively writing — their chosen mode determines the type.
             actualType = trimmed === '' ? 'blank' : modeToLineType(currentMode);
         } else if (trimmed === '') {
             actualType = 'blank';
         } else {
-            // ── Content-map lookup (position-independent) ──
-            // Handles: shifted lines after delete, structural edits, undo
             const candidates = contentTypeMap.get(trimmed);
             if (candidates && candidates.length > 0) {
-                // Pick the candidate nearest to this position
                 const newIdx = i - 1;
                 let bestIdx = 0;
                 let bestDist = Math.abs(candidates[0].oldPos - newIdx);
                 for (let j = 1; j < candidates.length; j++) {
                     const dist = Math.abs(candidates[j].oldPos - newIdx);
-                    if (dist < bestDist) {
-                        bestDist = dist;
-                        bestIdx = j;
-                    }
+                    if (dist < bestDist) { bestDist = dist; bestIdx = j; }
                 }
                 actualType = candidates[bestIdx].type;
-                candidates.splice(bestIdx, 1); // consume so duplicates resolve correctly
+                candidates.splice(bestIdx, 1);
             } else {
-                // ── Truly new content: fall back to state-machine classification ──
-                // Covers: merged lines (backspace), freshly typed content on delete
                 actualType = contentType;
             }
         }
 
-        // Fix parser state if we overrode classifyLine's result
-        if (actualType !== contentType) {
-            adjustState(st, actualType);
-        }
-
+        if (actualType !== contentType) adjustState(st, actualType);
         newTypes.push(actualType);
         newContents.push(trimmed);
     }
 
-    // Structural repair only for large changes (paste, bulk delete, import).
-    // For small edits (1-3 lines), the content map preserves types correctly
-    // and repair's aggressive reclassification causes more harm than good.
     const lineCountDelta = Math.abs(doc.lines - prevLineCount);
     if (lineCountDelta > 3) {
         repairDialoguePairs(newTypes, newContents, cursorLine - 1);
@@ -324,32 +279,66 @@ function rebuildLineTypes(state) {
     lineTypes = newTypes;
     lineContents = newContents;
 
-    // ── After structural deletes: sync mode to cursor line's resolved type ──
-    // The cursor landed on a line whose type was resolved from the content map
-    // or state machine (not the mode). Update the mode to match so the user
-    // sees the correct mode indicator and subsequent typing uses the right type.
     if (linesDeleted) {
         const cursorIdx = cursorLine - 1;
         if (cursorIdx >= 0 && cursorIdx < newTypes.length) {
             const resolvedType = newTypes[cursorIdx];
             if (resolvedType && resolvedType !== 'blank') {
                 const newMode = lineTypeToMode(resolvedType);
-                if (newMode !== currentMode) {
-                    setMode(newMode);
-                }
+                if (newMode !== currentMode) setMode(newMode);
             }
         }
     }
 }
 
-/** Initialize lineTypes from server data (on load). */
 function initLineTypesFromServer(serverLines) {
     lineTypes = serverLines.map(l => l.line_type || 'action');
     lineContents = serverLines.map(l => (l.content || '').trim());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Line Decoration Plugin — uses lineTypes registry, not content classification
+// Structural Spacing — Gap class resolver
+// ═══════════════════════════════════════════════════════════════════════════
+// Determines CSS margin class based on the transition between consecutive
+// line types. Replaces blank lines as visual separators.
+
+const _DIALOGUE_BLOCK_TYPES = new Set(['dialogue', 'parenthetical', 'character']);
+
+function getGapClass(currType, prevType) {
+    if (!prevType) return null;
+
+    // Scene heading: always large gap (scene break)
+    if (currType === 'heading') {
+        return 'cm-scf-gap-scene';
+    }
+
+    // Character cue: new dialogue block — gap unless preceded by nothing meaningful
+    if (currType === 'character') {
+        // Gap before character cue (start of dialogue block)
+        if (prevType !== 'blank') return 'cm-scf-gap-block';
+        return null;
+    }
+
+    // Transition: gap before
+    if (currType === 'transition') {
+        return 'cm-scf-gap-element';
+    }
+
+    // Action after dialogue/parenthetical: end of dialogue block
+    if (currType === 'action' && (prevType === 'dialogue' || prevType === 'parenthetical')) {
+        return 'cm-scf-gap-element';
+    }
+
+    // Action after transition
+    if (currType === 'action' && prevType === 'transition') {
+        return 'cm-scf-gap-element';
+    }
+
+    return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Line Decoration Plugin — applies type classes AND structural gap margins
 // ═══════════════════════════════════════════════════════════════════════════
 const LINE_CLS = {
     heading: 'cm-scf-heading', action: 'cm-scf-action', character: 'cm-scf-character',
@@ -368,24 +357,84 @@ const lineDecorationPlugin = ViewPlugin.fromClass(class {
         const decos = [], doc = view.state.doc;
         const cursorLine = doc.lineAt(view.state.selection.main.head).number;
         for (let i = 1; i <= doc.lines; i++) {
-            const attrs = {};
+            const classes = [];
+
             // Line type class (skip cursor line — mode CSS handles it)
             if (i !== cursorLine) {
                 const type = (i - 1 < lineTypes.length) ? lineTypes[i - 1] : 'action';
                 const cls = LINE_CLS[type];
-                if (cls) attrs.class = cls;
+                if (cls) classes.push(cls);
             }
+
+            // Structural gap margin — based on type transition from previous line
+            const currType = (i - 1 < lineTypes.length) ? lineTypes[i - 1] : 'action';
+            const prevType = (i > 1 && i - 2 < lineTypes.length) ? lineTypes[i - 2] : null;
+            const gapCls = getGapClass(currType, prevType);
+            if (gapCls) classes.push(gapCls);
+
             // Page break on every LINES_PER_PAGE-th line
             if (i % LINES_PER_PAGE === 0 && i < doc.lines) {
                 const pageNum = i / LINES_PER_PAGE;
-                attrs.class = (attrs.class || '') + ' cm-scf-pagebreak';
-                attrs['data-page'] = String(pageNum);
+                classes.push('cm-scf-pagebreak');
+                // Build attrs with both class and data-page
+                const combined = classes.join(' ');
+                decos.push(Decoration.line({ attributes: { class: combined, 'data-page': String(pageNum) } }).range(doc.line(i).from));
+                continue;
             }
-            if (attrs.class) decos.push(Decoration.line({ attributes: attrs }).range(doc.line(i).from));
+
+            if (classes.length > 0) {
+                decos.push(Decoration.line({ attributes: { class: classes.join(' ') } }).range(doc.line(i).from));
+            }
         }
         return Decoration.set(decos, true);
     }
 }, { decorations: v => v.decorations });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Structural Blank Stripping — Phase 2
+// ═══════════════════════════════════════════════════════════════════════════
+// Removes blank lines that exist only as structural separators (between
+// different element types). Keeps intentional blanks (consecutive blanks,
+// blanks between same-type elements).
+
+function stripStructuralBlanks(lines) {
+    const result = [];
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        // A line is "blank" if its content is empty, regardless of stored type
+        if (line.content.trim() !== '') {
+            result.push(line);
+            continue;
+        }
+
+        const prev = i > 0 ? lines[i - 1] : null;
+        const next = i < lines.length - 1 ? lines[i + 1] : null;
+
+        if (isStructuralBlank(prev, next)) {
+            continue;
+        }
+
+        result.push(line);
+    }
+    return result;
+}
+
+function isStructuralBlank(prev, next) {
+    if (!prev || !next) return false;
+
+    const prevEmpty = prev.content.trim() === '';
+    const nextEmpty = next.content.trim() === '';
+
+    // Adjacent to another blank → intentional spacing, keep
+    if (prevEmpty || nextEmpty) return false;
+
+    // Between two same-type content lines → intentional paragraph break, keep
+    if (prev.line_type === next.line_type) return false;
+
+    // Single blank between two different content types → structural, strip it
+    return true;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Mode System — Tab cycles
@@ -420,23 +469,17 @@ function handleShiftTab() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Auto-detect mode from stored line type (on click/arrow, not while typing)
+// Auto-detect mode from stored line type
 // ═══════════════════════════════════════════════════════════════════════════
 
 function detectModeFromCursor(state) {
     const line = state.doc.lineAt(state.selection.main.head);
     const trimmed = line.text.trim();
-
-    // Blank line: keep current mode
     if (trimmed === '') return;
-
-    // Read from the lineTypes registry — this IS the authoritative type
     const idx = line.number - 1;
     if (idx < lineTypes.length && lineTypes[idx] && lineTypes[idx] !== 'blank') {
         const newMode = lineTypeToMode(lineTypes[idx]);
-        if (newMode && newMode !== currentMode) {
-            setMode(newMode);
-        }
+        if (newMode && newMode !== currentMode) setMode(newMode);
     }
 }
 
@@ -505,12 +548,11 @@ function selectSuggestion(index) {
     const line = editorView.state.doc.lineAt(editorView.state.selection.main.head);
 
     if (acType === 'character') {
-        const newText = item.name; // Already uppercase from API
+        const newText = item.name;
         editorView.dispatch({
             changes: { from: line.from, to: line.to, insert: newText },
             selection: { anchor: line.from + newText.length }
         });
-        // Cache the character_id for this content
         cacheEntityIds('character', newText, { character_id: item.character_id });
     } else if (acType === 'location') {
         const m = line.text.match(/^(\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s*)/i);
@@ -520,17 +562,14 @@ function selectSuggestion(index) {
             changes: { from: line.from, to: line.to, insert: newText },
             selection: { anchor: line.from + newText.length }
         });
-        // Cache the location_id for heading lines containing this location
         cacheEntityIds('location_hint', item.name.toUpperCase(), { location_id: item.location_id });
     } else if (acType === 'prefix') {
-        // Replace entire line with the selected prefix (e.g. "INT. ")
         const newText = item.value;
         editorView.dispatch({
             changes: { from: line.from, to: line.to, insert: newText },
             selection: { anchor: line.from + newText.length }
         });
     } else if (acType === 'tod') {
-        // Append time-of-day after the " - " separator
         const dashMatch = line.text.match(/^(.+\s-\s*)/);
         const beforeTod = dashMatch ? dashMatch[1] : line.text;
         const newText = beforeTod + item.value;
@@ -543,7 +582,6 @@ function selectSuggestion(index) {
     editorView.focus();
 }
 
-// ── Static autocomplete data for scene headings ──
 const HEADING_PREFIXES = [
     { name: 'INT.',      value: 'INT. ' },
     { name: 'EXT.',      value: 'EXT. ' },
@@ -568,9 +606,7 @@ const TIME_OF_DAY_OPTIONS = [
     { name: 'SAME TIME',      value: 'SAME TIME' },
 ];
 
-// Regex to detect a complete "PREFIX LOCATION - " pattern (ready for time-of-day)
 const HEADING_READY_FOR_TOD_RE = /^\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s+.+\s-\s*/i;
-// Regex to detect we already have a prefix but are still typing location
 const HEADING_HAS_PREFIX_RE = /^\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s+/i;
 
 function checkAutocompleteContext() {
@@ -580,61 +616,36 @@ function checkAutocompleteContext() {
     const lineText = editorView.state.doc.lineAt(sel.head).text;
     const trimmed = lineText.trim();
 
-    // ── Character mode: name autocomplete ──
     if (currentMode === 'character') {
         if (!trimmed || trimmed.length < 2) { hideAutocomplete(); return; }
         const query = trimmed.replace(/\s*\([^)]*\)\s*$/g, '').trim();
         if (query.length >= 2) { triggerAutocomplete('character', query); return; }
     }
 
-    // ── Scene mode: prefix → location → time-of-day ──
     if (currentMode === 'scene') {
         const upper = trimmed.toUpperCase();
-
-        // Phase 3: After "PREFIX LOCATION - " → time-of-day suggestions
         if (HEADING_READY_FOR_TOD_RE.test(trimmed)) {
             const dashIdx = trimmed.lastIndexOf(' - ');
             const afterDash = dashIdx >= 0 ? trimmed.slice(dashIdx + 3).toUpperCase() : '';
             const filtered = afterDash
                 ? TIME_OF_DAY_OPTIONS.filter(o => o.name.startsWith(afterDash))
                 : TIME_OF_DAY_OPTIONS;
-            if (filtered.length > 0) {
-                showStaticAutocomplete(filtered, 'tod');
-                return;
-            }
-            hideAutocomplete();
-            return;
+            if (filtered.length > 0) { showStaticAutocomplete(filtered, 'tod'); return; }
+            hideAutocomplete(); return;
         }
-
-        // Phase 2: After prefix, typing location → location autocomplete
         if (HEADING_HAS_PREFIX_RE.test(trimmed)) {
             const m = trimmed.match(/^(\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s+)(.+)/i);
-            if (m && m[2].trim().length >= 1) {
-                triggerAutocomplete('location', m[2].replace(/\s*-\s*$/, '').trim());
-                return;
-            }
-            hideAutocomplete();
-            return;
+            if (m && m[2].trim().length >= 1) { triggerAutocomplete('location', m[2].replace(/\s*-\s*$/, '').trim()); return; }
+            hideAutocomplete(); return;
         }
-
-        // Phase 1: Empty or partial text → prefix suggestions
-        if (trimmed.length === 0) {
-            showStaticAutocomplete(HEADING_PREFIXES, 'prefix');
-            return;
-        }
-        const prefixMatches = HEADING_PREFIXES.filter(p =>
-            p.value.toUpperCase().startsWith(upper) || p.name.startsWith(upper)
-        );
-        if (prefixMatches.length > 0 && trimmed.length < 10) {
-            showStaticAutocomplete(prefixMatches, 'prefix');
-            return;
-        }
+        if (trimmed.length === 0) { showStaticAutocomplete(HEADING_PREFIXES, 'prefix'); return; }
+        const prefixMatches = HEADING_PREFIXES.filter(p => p.value.toUpperCase().startsWith(upper) || p.name.startsWith(upper));
+        if (prefixMatches.length > 0 && trimmed.length < 10) { showStaticAutocomplete(prefixMatches, 'prefix'); return; }
     }
 
     hideAutocomplete();
 }
 
-/** Show a static autocomplete dropdown (no API call). */
 function showStaticAutocomplete(items, type) {
     if (!editorView) return;
     if (acType === type && isAutocompleteVisible() && acItems.length === items.length) return;
@@ -716,7 +727,7 @@ function showSyncToast(summary) {
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Load — structured lines → CodeMirror text
+// Load — strip structural blanks, then build CodeMirror text
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function loadScreenplay() {
@@ -733,6 +744,7 @@ async function loadScreenplay() {
 
         loadedTitlePage = data.title_page || [];
 
+        // Build entity cache from loaded data (before stripping)
         entityCache.clear();
         for (const line of data.lines) {
             const ids = {};
@@ -744,9 +756,14 @@ async function loadScreenplay() {
             }
         }
 
-        initLineTypesFromServer(data.lines);
+        // Phase 2: Strip structural blanks — CSS margins handle spacing
+        const contentLines = stripStructuralBlanks(data.lines);
 
-        const text = data.lines.map(l => l.content).join('\n');
+        // Initialize line type registry from stripped content
+        initLineTypesFromServer(contentLines);
+
+        // Build plain text for CodeMirror
+        const text = contentLines.map(l => l.content).join('\n');
 
         editorView.dispatch({
             changes: { from: 0, to: editorView.state.doc.length, insert: text }
@@ -765,7 +782,7 @@ async function loadScreenplay() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Save — CodeMirror text → classify → structured lines → API
+// Save — Phase 3: saves content lines only (no structural blanks)
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function saveScreenplay() {
@@ -791,10 +808,7 @@ async function saveScreenplay() {
             });
         }
 
-        const payload = {
-            title_page: loadedTitlePage,
-            lines: lines,
-        };
+        const payload = { title_page: loadedTitlePage, lines: lines };
 
         const res = await fetch('/api/screenplay-v2/save', {
             method: 'PUT',
@@ -811,9 +825,9 @@ async function saveScreenplay() {
         markSaved();
 
         if (data.summary) showSyncToast(data.summary);
-
         fetchNavigatorData();
 
+        // Reload to refresh entity cache with server-assigned IDs
         const reloadRes = await fetch('/api/screenplay-v2/load');
         if (reloadRes.ok) {
             const reloaded = await reloadRes.json();
@@ -828,7 +842,11 @@ async function saveScreenplay() {
                 }
             }
             loadedTitlePage = reloaded.title_page || [];
-            initLineTypesFromServer(reloaded.lines);
+
+            // Strip blanks again for line type registry (DB may have stored blanks
+            // from old saves; after this session's save it won't)
+            const contentLines = stripStructuralBlanks(reloaded.lines);
+            initLineTypesFromServer(contentLines);
         }
 
     } catch (e) {
@@ -837,14 +855,8 @@ async function saveScreenplay() {
     }
 }
 
-function exportScreenplay() {
-    const a = document.createElement('a');
-    a.href = '/api/screenplay-v2/export-fountain';
-    a.click();
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
-// Navigator — DB-driven, no live scanning
+// Navigator — DB-driven
 // ═══════════════════════════════════════════════════════════════════════════
 
 function initNavigatorResize() {
@@ -1171,9 +1183,8 @@ if (container) {
     initCollapseHandlers();
     loadScreenplay();
     document.getElementById('btn-save-screenplay')?.addEventListener('click', saveScreenplay);
-    document.getElementById('btn-export-screenplay')?.addEventListener('click', exportScreenplay);
     window.addEventListener('beforeunload', (e) => { if (unsaved) { e.preventDefault(); e.returnValue = ''; } });
     setMode('description');
 }
 
-export { editorView, saveScreenplay, exportScreenplay };
+export { editorView, saveScreenplay };

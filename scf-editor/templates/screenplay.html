@@ -20,7 +20,6 @@
             {% if has_screenplay %}
             <button id="btn-save-screenplay" class="btn btn-primary btn-sm">Save</button>
             <button id="btn-versions" class="btn btn-sm btn-publish" title="Publish &amp; Version History">Versions</button>
-            <button id="btn-export-screenplay" class="btn header-btn btn-sm">Export .fountain</button>
             <button id="btn-help-screenplay" class="btn header-btn btn-sm" onclick="document.getElementById('help-modal').classList.add('active')">Help</button>
             {% endif %}
             <a href="/project/close" class="btn header-btn btn-sm">Close Project</a>
@@ -112,7 +111,6 @@
         </div>
 
         <script>
-        // Import fountain via v2 API
         document.getElementById('import-fountain-input')?.addEventListener('change', async function() {
             const file = this.files[0];
             if (!file) return;
@@ -143,7 +141,6 @@
             }
         });
 
-        // Create blank screenplay
         document.getElementById('create-blank-btn')?.addEventListener('click', async function() {
             this.disabled = true;
             this.textContent = 'Creating…';
@@ -160,9 +157,7 @@
         {% endif %}
     </div>
 
-    <!-- ================================================================== -->
-    <!-- Version Drawer                                                     -->
-    <!-- ================================================================== -->
+    <!-- Version Drawer -->
     <div class="version-drawer-overlay" id="version-drawer-overlay"></div>
     <div class="version-drawer" id="version-drawer">
         <div class="version-drawer-header">
@@ -182,9 +177,7 @@
         </div>
     </div>
 
-    <!-- ================================================================== -->
-    <!-- Help Modal                                                         -->
-    <!-- ================================================================== -->
+    <!-- Help Modal -->
     <div class="help-modal-overlay" id="help-modal" onclick="if(event.target===this)this.classList.remove('active')">
         <div class="help-modal">
             <div class="help-modal-header">
@@ -203,14 +196,18 @@
                     <dt>Description</dt>
                     <dd>Standard action lines. Left-aligned, white text. Use for scene descriptions, stage directions, and narrative.</dd>
                     <dt>Scene Heading</dt>
-                    <dd>Creates a new scene and location. Text is auto-capitalized with a highlighted background. Standard format is <code>INT. LOCATION - DAY</code> but any text works — the location is created from whatever you type.</dd>
+                    <dd>Creates a new scene and location. Text is auto-capitalized with a highlighted background. Standard format is <code>INT. LOCATION - DAY</code> but any text works.</dd>
                     <dt>Character</dt>
-                    <dd>Character name before dialogue. Auto-capitalized, centered. Autocomplete suggests existing characters as you type. New names are created as character entities on save.</dd>
+                    <dd>Character name before dialogue. Auto-capitalized, centered. Autocomplete suggests existing characters as you type.</dd>
                     <dt>Dialogue</dt>
                     <dd>What the character says. Indented with a light purple tint.</dd>
                     <dt>Transition</dt>
                     <dd>Right-aligned, auto-capitalized. For CUT TO:, FADE OUT, etc.</dd>
                 </dl>
+
+                <h3>Structural Spacing</h3>
+                <p>The editor automatically adds visual spacing between different screenplay elements — you don't need to insert blank lines between scenes, before character cues, or after dialogue blocks. The spacing is handled by the editor's formatting.</p>
+                <p>If you want an intentional extra blank line (e.g., a dramatic pause within action text), press Enter on an empty line.</p>
 
                 <h3>Automatic Mode Switching</h3>
                 <p>The editor switches mode automatically in these cases:</p>
@@ -219,53 +216,17 @@
                     <li><strong>Enter after a Character name</strong> → switches to Dialogue</li>
                     <li><strong>Enter after Dialogue</strong> → switches to Description</li>
                 </ul>
-                <p>You can always override by pressing Tab to pick a different mode. The auto-switch only happens on Enter, never from clicking or arrow keys.</p>
-
-                <h3>Clicking Existing Lines</h3>
-                <p>When you click on an existing line, the mode automatically switches to match that line's type. This prevents accidentally mixing formats on a single line.</p>
-                <p>Clicking on a blank line keeps whatever mode you're currently in.</p>
-
-                <h3>Scene Headings &amp; Locations</h3>
-                <p>Every scene heading creates a location entity in the SCF database. The location name is extracted by stripping the INT/EXT prefix and time-of-day suffix.</p>
-                <p>Supported prefixes: <code>INT.</code> <code>EXT.</code> <code>INT./EXT.</code> <code>I/E.</code> <code>EST.</code></p>
-                <p>Supported time suffixes: <code>DAY</code> <code>NIGHT</code> <code>MORNING</code> <code>AFTERNOON</code> <code>EVENING</code> <code>DAWN</code> <code>DUSK</code> <code>SUNSET</code> <code>SUNRISE</code> <code>CONTINUOUS</code> <code>SAME TIME</code> <code>LATER</code> <code>MOMENTS LATER</code></p>
-                <p>Headings without a prefix are also valid — the full text becomes the location name.</p>
-                <p>Multiple headings sharing the same location name (e.g. <code>INT. WAREHOUSE - DAY</code> and <code>EXT. WAREHOUSE - NIGHT</code>) link to the same location entity.</p>
 
                 <h3>Autocomplete</h3>
                 <ul>
                     <li>In <strong>Character</strong> mode, type 2+ characters to see matching character names from the database.</li>
                     <li>In <strong>Scene Heading</strong> mode, after typing <code>INT.</code> or <code>EXT.</code> followed by text, matching locations appear.</li>
-                    <li>Select a suggestion with <kbd>Enter</kbd> or <kbd>Tab</kbd>, or use arrow keys to navigate the dropdown.</li>
-                    <li>Typing a name that doesn't exist yet will create it as a new entity when you save.</li>
-                </ul>
-
-                <h3>Publishing Versions</h3>
-                <p>Click <strong>Versions</strong> in the header to open the version drawer. Type a short description (like a commit message) and click <strong>Publish</strong> to create a locked snapshot of the current screenplay.</p>
-                <ul>
-                    <li><strong>Publish</strong> creates a read-only copy of all screenplay lines with their entity links.</li>
-                    <li><strong>Restore</strong> replaces the live screenplay with a published version's content. Scene-character junctions are rebuilt automatically.</li>
-                    <li>Entity tables (characters, locations, scenes) are never deleted by restore — only their screenplay links update.</li>
-                    <li>You can continue editing after publishing. Publish again when you're happy with new changes.</li>
+                    <li>Select a suggestion with <kbd>Enter</kbd> or <kbd>Tab</kbd>.</li>
+                    <li>New names are created as entities on save.</li>
                 </ul>
 
                 <h3>Saving</h3>
-                <p>Press <kbd>Ctrl+S</kbd> (or <kbd>Cmd+S</kbd> on Mac) or click the <strong>Save</strong> button. The save process:</p>
-                <ol>
-                    <li>Writes all lines to the database with their types and entity links</li>
-                    <li>Creates any new characters, locations, or scenes that don't exist yet</li>
-                    <li>Rebuilds scene-character relationships from the screenplay content</li>
-                    <li>Updates the navigator panel with fresh data</li>
-                </ol>
-                <p>The status bar shows save state: <strong>Ready</strong>, <strong>Unsaved •</strong>, <strong>Saving…</strong>, or <strong>Saved ✓</strong>.</p>
-
-                <h3>Navigator Panel</h3>
-                <p>The left panel shows scenes, characters, and locations extracted from the screenplay.</p>
-                <ul>
-                    <li>Click a <strong>scene</strong> to jump to that heading in the editor.</li>
-                    <li>Click a <strong>character</strong> or <strong>location</strong> to filter the scene list to only scenes containing that entity.</li>
-                    <li>Click the <strong>→</strong> arrow next to any item to open it in the Entity Browser for detailed editing.</li>
-                </ul>
+                <p>Press <kbd>Ctrl+S</kbd> (or <kbd>Cmd+S</kbd> on Mac) or click <strong>Save</strong>. The save process creates any new characters, locations, or scenes and rebuilds scene-character relationships.</p>
 
                 <h3>Keyboard Shortcuts</h3>
                 <table class="help-shortcuts">

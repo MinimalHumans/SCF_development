@@ -782,54 +782,6 @@ def _smart_title(text: str) -> str:
     return _title_case_name(text)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Fountain Export
-# ═══════════════════════════════════════════════════════════════════════════
-
-def export_fountain(db_path: Path) -> str:
-    """Export the screenplay as a Fountain-formatted plain text string."""
-    data = load_screenplay(db_path)
-
-    parts = []
-
-    # Title page
-    for tp in data["title_page"]:
-        parts.append(f"{tp['key']}: {tp['value']}")
-    if data["title_page"]:
-        parts.append("")  # blank line after title page
-
-    # Lines
-    for line in data["lines"]:
-        lt = line["line_type"]
-        content = line["content"]
-
-        if lt == "heading":
-            parts.append(content)
-        elif lt == "action":
-            parts.append(content)
-        elif lt == "character":
-            parts.append(content)
-        elif lt == "dialogue":
-            parts.append(content)
-        elif lt == "parenthetical":
-            # Ensure wrapped in parens
-            if not content.startswith("("):
-                content = f"({content})"
-            parts.append(content)
-        elif lt == "transition":
-            parts.append(content)
-        elif lt == "blank":
-            parts.append("")
-        elif lt == "section":
-            parts.append(content)
-        elif lt == "synopsis":
-            parts.append(content)
-        elif lt == "centered":
-            parts.append(content)
-        else:
-            parts.append(content)
-
-    return "\n".join(parts)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
