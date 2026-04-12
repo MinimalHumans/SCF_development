@@ -253,8 +253,9 @@ function rebuildLineTypes(state) {
             // The handler already determined which type wins (upper line).
             actualType = pendingMergeType;
             mergeTypeUsed = true;
-        } else if (i === cursorLine && !linesDeleted) {
+        } else if (i === cursorLine && !linesDeleted && !isLoading) {
             // Typing or line insertion — user's mode is authority
+            // Skipped during load (isLoading) to preserve server-provided types
             actualType = modeToLineType(currentMode);
         } else {
             const candidates = contentTypeMap.get(trimmed);
@@ -726,6 +727,7 @@ let activeFilter = null;
 let loadedTitlePage = [];
 let lastEnterTime = 0;
 let pendingMergeType = null;  // Set by Backspace/Delete handlers — upper line's type wins on merge
+let isLoading = false;        // True during initial load — prevents cursor-line type override
 
 function showToast(msg) {
     const t = document.createElement('div');
@@ -783,9 +785,18 @@ async function loadScreenplay() {
         // Build plain text for CodeMirror
         const text = contentLines.map(l => l.content).join('\n');
 
+        // Load into CodeMirror — isLoading prevents cursor-line type override
+        // so server-provided types are preserved (especially the first heading)
+        isLoading = true;
         editorView.dispatch({
             changes: { from: 0, to: editorView.state.doc.length, insert: text }
         });
+        isLoading = false;
+
+        // Sync mode to whatever line the cursor landed on
+        if (lineTypes.length > 0 && lineTypes[0] && lineTypes[0] !== 'blank') {
+            setMode(lineTypeToMode(lineTypes[0]));
+        }
 
         unsaved = false;
         setSaveStatus('Loaded ✓', 'var(--success)');

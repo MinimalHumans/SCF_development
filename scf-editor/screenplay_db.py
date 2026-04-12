@@ -164,30 +164,7 @@ def init_screenplay_tables(conn) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def load_screenplay(db_path: Path) -> dict:
-    """
-    Load the full screenplay for the editor.
-
-    Returns:
-        {
-            "title_page": [{"key": "Title", "value": "My Film"}, ...],
-            "lines": [
-                {
-                    "id": 1,
-                    "line_order": 0,
-                    "line_type": "heading",
-                    "content": "INT. COFFEE SHOP - MORNING",
-                    "scene_id": 5,
-                    "character_id": null,
-                    "location_id": 3,
-                    "scene_name": "INT. COFFEE SHOP - MORNING",
-                    "character_name": null,
-                    "location_name": "Coffee Shop",
-                },
-                ...
-            ],
-            "has_content": true
-        }
-    """
+    """Load the full screenplay for the editor."""
     conn = db.get_connection(db_path)
     try:
         # Title page
@@ -250,19 +227,6 @@ def save_screenplay(db_path: Path, title_page: list[dict], lines: list[dict]) ->
     """
     Save the full screenplay from the editor. Replaces all content.
 
-    Args:
-        title_page: [{"key": "Title", "value": "My Film"}, ...]
-        lines: [
-            {
-                "line_type": "heading",
-                "content": "INT. COFFEE SHOP - MORNING",
-                "scene_id": 5 or null,
-                "character_id": null,
-                "location_id": 3 or null,
-            },
-            ...
-        ]
-
     The save process:
     1. Replace title_page rows
     2. Replace screenplay_lines rows
@@ -314,11 +278,10 @@ def save_screenplay(db_path: Path, title_page: list[dict], lines: list[dict]) ->
 
                 parsed = parse_heading(content)
 
-                # Every heading gets a location — use parsed name, fall back to raw content
+                # Every heading gets a location
                 if not location_id:
                     loc_name = parsed["location_name"]
                     if not loc_name:
-                        # Bare heading with no parseable structure — entire text is the location
                         loc_name = _smart_title(content.strip().lstrip(".").strip())
                     if loc_name:
                         location_id = _find_or_create_location(
@@ -333,7 +296,6 @@ def save_screenplay(db_path: Path, title_page: list[dict], lines: list[dict]) ->
                         location_id, parsed, summary
                     )
                 else:
-                    # Update existing scene with current data
                     _update_scene_from_heading(
                         conn, scene_id, content, scene_number,
                         location_id, parsed, summary
@@ -420,7 +382,6 @@ def get_scenes(db_path: Path) -> list[dict]:
         for r in rows:
             scene_id = r["scene_id"]
 
-            # Get characters in this scene
             chars = []
             if scene_id:
                 char_rows = conn.execute("""
@@ -512,19 +473,12 @@ def get_locations(db_path: Path) -> list[dict]:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def parse_heading(text: str) -> dict:
-    """Parse a scene heading into components.
-
-    Handles standard Fountain headings (INT. WAREHOUSE - DAY) and bare
-    headings (WAREHOUSE, BOBOBEEBBEEE IS COOL). Every heading produces
-    a location_name — if there's no INT/EXT prefix the full text
-    (minus any time-of-day suffix) becomes the location.
-    """
+    """Parse a scene heading into components."""
     result = {"int_ext": "", "location_name": "", "time_of_day": ""}
     raw = text.strip()
     if not raw:
         return result
 
-    # Try the full INT/EXT regex first
     m = _HEADING_RE.match(raw)
     if m:
         ie_raw = m.group("ie").upper().replace(".", "")
@@ -535,15 +489,12 @@ def parse_heading(text: str) -> dict:
             result["time_of_day"] = _TIME_MAP.get(tod.upper(), tod.title())
         return result
 
-    # No INT/EXT prefix — treat the whole line as a location.
-    # Strip any trailing time-of-day suffix: "WAREHOUSE - NIGHT" → "WAREHOUSE"
     loc = raw
     tod_match = _BARE_TOD_RE.search(loc)
     if tod_match:
         result["time_of_day"] = _TIME_MAP.get(tod_match.group(1).upper(), tod_match.group(1).title())
         loc = loc[:tod_match.start()].strip().rstrip("-. ")
 
-    # Strip leading . (forced heading marker in Fountain)
     loc = loc.lstrip(".").strip()
 
     if loc:
@@ -564,7 +515,6 @@ def _find_or_create_location(conn, name: str, int_ext: str, summary: dict) -> in
     if row:
         return row["id"]
 
-    # Create new location
     loc_data = {"name": name}
     if int_ext:
         loc_data["location_type"] = int_ext
@@ -585,21 +535,18 @@ def _find_or_create_location(conn, name: str, int_ext: str, summary: dict) -> in
 
 def _find_or_create_character(conn, name: str, summary: dict) -> int:
     """Find existing character by name or create a new one. Returns character ID."""
-    # Try exact match first (case-insensitive)
     row = conn.execute(
         "SELECT id FROM character WHERE LOWER(name) = LOWER(?)", (name,)
     ).fetchone()
     if row:
         return row["id"]
 
-    # Try uppercase match (screenplay format)
     row = conn.execute(
         "SELECT id FROM character WHERE UPPER(name) = UPPER(?)", (name,)
     ).fetchone()
     if row:
         return row["id"]
 
-    # Create new character with title-cased name
     tc_name = _title_case_name(name)
     cursor = conn.execute(
         "INSERT INTO character (name) VALUES (?)", (tc_name,)
@@ -656,12 +603,7 @@ def _update_scene_from_heading(conn, scene_id: int, heading: str,
 
 
 def _rebuild_junctions(conn) -> int:
-    """
-    Rebuild scene_character junctions from screenplay_lines data.
-    Deletes existing junctions for scenes that appear in the screenplay,
-    then recreates from the line-level character_id references.
-    """
-    # Get all scene_ids in the screenplay
+    """Rebuild scene_character junctions from screenplay_lines data."""
     scene_ids = [r["scene_id"] for r in conn.execute(
         "SELECT DISTINCT scene_id FROM screenplay_lines WHERE scene_id IS NOT NULL"
     ).fetchall()]
@@ -669,14 +611,12 @@ def _rebuild_junctions(conn) -> int:
     if not scene_ids:
         return 0
 
-    # Delete existing junctions for these scenes
     placeholders = ", ".join(["?"] * len(scene_ids))
     conn.execute(
         f"DELETE FROM scene_character WHERE scene_id IN ({placeholders})",
         scene_ids
     )
 
-    # Build new junctions from line data
     pairs = conn.execute("""
         SELECT DISTINCT scene_id, character_id
         FROM screenplay_lines
@@ -688,7 +628,6 @@ def _rebuild_junctions(conn) -> int:
         scene_id = pair["scene_id"]
         character_id = pair["character_id"]
 
-        # Count how many characters are in this scene for role assignment
         char_count = conn.execute(
             """SELECT COUNT(DISTINCT character_id) FROM screenplay_lines
                WHERE scene_id = ? AND character_id IS NOT NULL""",
@@ -745,11 +684,8 @@ _CHAR_EXTENSION_RE = re.compile(
 def _clean_character_name(text: str) -> str:
     """Extract character name from a character cue line."""
     name = text.strip()
-    # Remove @-prefix (forced character in Fountain)
     name = name.lstrip("@")
-    # Remove extensions like (V.O.), (O.S.), (CONT'D)
     name = _CHAR_EXTENSION_RE.sub("", name).strip()
-    # Remove any remaining parentheticals
     name = re.sub(r'\([^)]*\)', '', name).strip()
     name = re.sub(r'\s{2,}', ' ', name)
     return name
@@ -782,6 +718,80 @@ def _smart_title(text: str) -> str:
     return _title_case_name(text)
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Structural Blank Stripping — Phase 6
+# ═══════════════════════════════════════════════════════════════════════════
+# After import, removes blank lines that are purely structural separators.
+# CSS margins in the editor handle visual spacing between element types.
+# Keeps intentional blanks (consecutive blanks, blanks between same-type lines).
+
+def _strip_structural_blanks_from_db(conn) -> int:
+    """
+    Remove structural blank lines from screenplay_lines and re-number line_order.
+    Returns the number of blanks removed.
+    """
+    rows = conn.execute(
+        "SELECT id, line_order, line_type, content FROM screenplay_lines ORDER BY line_order"
+    ).fetchall()
+
+    to_delete = []
+    for i, row in enumerate(rows):
+        # A line is "blank" if its content is empty, regardless of stored type
+        if row["content"].strip() != "":
+            continue
+
+        prev = rows[i - 1] if i > 0 else None
+        nxt = rows[i + 1] if i < len(rows) - 1 else None
+
+        if _is_structural_blank(prev, nxt):
+            to_delete.append(row["id"])
+
+    if not to_delete:
+        return 0
+
+    # Delete structural blanks
+    placeholders = ",".join(["?"] * len(to_delete))
+    conn.execute(
+        f"DELETE FROM screenplay_lines WHERE id IN ({placeholders})", to_delete
+    )
+
+    # Re-number line_order to be contiguous
+    remaining = conn.execute(
+        "SELECT id FROM screenplay_lines ORDER BY line_order"
+    ).fetchall()
+    for i, row in enumerate(remaining):
+        conn.execute(
+            "UPDATE screenplay_lines SET line_order = ? WHERE id = ?",
+            (i, row["id"])
+        )
+
+    return len(to_delete)
+
+
+def _is_structural_blank(prev, nxt) -> bool:
+    """
+    Determine if a blank line is structural (CSS handles the spacing)
+    vs intentional (user-inserted paragraph break).
+
+    Structural: single blank between two different non-blank content types.
+    Intentional: consecutive blanks, or blank between same-type content lines.
+    """
+    if not prev or not nxt:
+        return False
+
+    prev_empty = prev["content"].strip() == ""
+    next_empty = nxt["content"].strip() == ""
+
+    # Adjacent to another blank → intentional spacing, keep both
+    if prev_empty or next_empty:
+        return False
+
+    # Between two same-type content lines → intentional paragraph break
+    if prev["line_type"] == nxt["line_type"]:
+        return False
+
+    # Single blank between two different content types → structural
+    return True
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -793,8 +803,8 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
     Parse a Fountain screenplay and write it into screenplay_lines.
     Also creates/links scene, character, location entities.
 
-    This replaces the anchor-based import. The result is structured
-    line data with direct entity FK references.
+    After writing all lines, structural blanks are stripped — CSS margins
+    in the editor handle visual spacing between element types.
 
     Returns summary dict.
     """
@@ -808,6 +818,7 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
         "characters_created": 0,
         "locations_created": 0,
         "junctions_rebuilt": 0,
+        "blanks_stripped": 0,
         "errors": [],
     }
 
@@ -829,12 +840,10 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
             )
 
         # ── Build entity lookup maps ──
-        # Characters: name.lower() -> id
         char_map = {}
         for row in conn.execute("SELECT id, name FROM character").fetchall():
             char_map[row["name"].lower()] = row["id"]
 
-        # Locations: name.lower() -> id
         loc_map = {}
         for row in conn.execute("SELECT id, name FROM location").fetchall():
             loc_map[row["name"].lower()] = row["id"]
@@ -843,11 +852,6 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
         for char in parsed.characters:
             key = char.name.lower()
             if key not in char_map:
-                char_data = {"name": char.name}
-                if char.description:
-                    char_data["summary"] = char.description
-                if char.hair:
-                    char_data["hair"] = char.hair
                 cursor = conn.execute(
                     "INSERT INTO character (name, summary, hair) VALUES (?, ?, ?)",
                     (char.name, char.description or None, char.hair or None)
@@ -869,7 +873,7 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
                 summary["locations_created"] += 1
 
         # Create scene entities
-        scene_map = {}  # scene_index -> scene_id
+        scene_map = {}
         for scene in parsed.scenes:
             loc_key = scene.location_name.lower()
             location_id = loc_map.get(loc_key)
@@ -890,11 +894,10 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
             scene_map[scene.scene_number - 1] = cursor.lastrowid
             summary["scenes_created"] += 1
 
-        # ── Now walk the raw text line-by-line and classify ──
+        # ── Walk the raw text line-by-line and classify ──
         text = fountain_text.replace('\r\n', '\n').replace('\r', '\n')
         raw_lines = text.split('\n')
 
-        # Parse title page to find content start
         from fountain_parser import _parse_title_page
         _, _, content_start = _parse_title_page(raw_lines)
 
@@ -932,7 +935,6 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
                 current_char_id = None
                 in_dialogue = False
 
-                # Get location_id for this scene
                 loc_id = None
                 if current_scene_id:
                     row = conn.execute(
@@ -1036,11 +1038,19 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
             prev_blank = False
             in_dialogue = False
 
+        # ── Strip structural blanks (Phase 6) ──
+        # CSS margins in the editor handle visual spacing between element types.
+        # Only intentional blanks (consecutive, or between same-type lines) are kept.
+        summary["blanks_stripped"] = _strip_structural_blanks_from_db(conn)
+
         # ── Rebuild junctions ──
         summary["junctions_rebuilt"] = _rebuild_junctions(conn)
 
         # ── Update meta ──
-        _update_meta(conn, len(parsed.scenes), line_order)
+        final_line_count = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM screenplay_lines"
+        ).fetchone()["cnt"]
+        _update_meta(conn, len(parsed.scenes), final_line_count)
 
         conn.commit()
 
@@ -1059,23 +1069,14 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def publish_version(db_path: Path, description: str = "") -> dict:
-    """
-    Snapshot the current live screenplay as a published version.
-
-    Copies all rows from screenplay_lines and screenplay_title_page
-    into the versioned tables with a new version number.
-
-    Returns version info dict.
-    """
+    """Snapshot the current live screenplay as a published version."""
     conn = db.get_connection(db_path)
     try:
-        # Determine next version number
         row = conn.execute(
             "SELECT COALESCE(MAX(version_number), 0) + 1 AS next_num FROM screenplay_versions"
         ).fetchone()
         version_number = row["next_num"]
 
-        # Count stats from current live data
         line_count = conn.execute(
             "SELECT COUNT(*) AS cnt FROM screenplay_lines"
         ).fetchone()["cnt"]
@@ -1095,13 +1096,11 @@ def publish_version(db_path: Path, description: str = "") -> dict:
             "SELECT COUNT(DISTINCT location_id) AS cnt FROM screenplay_lines WHERE location_id IS NOT NULL"
         ).fetchone()["cnt"]
 
-        # Word count from content
         all_content = conn.execute(
             "SELECT content FROM screenplay_lines WHERE content != ''"
         ).fetchall()
         word_count = sum(len(r["content"].split()) for r in all_content)
 
-        # Create version record
         cursor = conn.execute(
             """INSERT INTO screenplay_versions
                (version_number, description, line_count, scene_count,
@@ -1112,7 +1111,6 @@ def publish_version(db_path: Path, description: str = "") -> dict:
         )
         version_id = cursor.lastrowid
 
-        # Snapshot lines — copy all columns including entity FKs
         conn.execute(
             """INSERT INTO screenplay_version_lines
                (version_id, line_order, line_type, content,
@@ -1124,7 +1122,6 @@ def publish_version(db_path: Path, description: str = "") -> dict:
             (version_id,)
         )
 
-        # Snapshot title page
         conn.execute(
             """INSERT INTO screenplay_version_title_page
                (version_id, key, value, sort_order)
@@ -1169,20 +1166,7 @@ def list_versions(db_path: Path) -> list[dict]:
 
 
 def restore_version(db_path: Path, version_id: int) -> dict:
-    """
-    Restore a published version as the live screenplay.
-
-    1. Clears current screenplay_lines and screenplay_title_page
-    2. Copies version data back into live tables
-    3. Rebuilds scene_character junctions via _rebuild_junctions()
-    4. Updates screenplay_meta
-
-    Entity tables (character, location, scene) are NOT modified.
-    Entities created in later drafts remain — only their junction
-    links are updated to reflect the restored screenplay content.
-
-    Returns summary dict.
-    """
+    """Restore a published version as the live screenplay."""
     conn = db.get_connection(db_path)
     summary = {
         "version_id": version_id,
@@ -1193,7 +1177,6 @@ def restore_version(db_path: Path, version_id: int) -> dict:
     }
 
     try:
-        # Verify version exists
         ver = conn.execute(
             "SELECT version_number, description FROM screenplay_versions WHERE id = ?",
             (version_id,)
@@ -1203,11 +1186,9 @@ def restore_version(db_path: Path, version_id: int) -> dict:
 
         summary["version_number"] = ver["version_number"]
 
-        # Clear live data
         conn.execute("DELETE FROM screenplay_lines")
         conn.execute("DELETE FROM screenplay_title_page")
 
-        # Restore lines from version snapshot
         conn.execute(
             """INSERT INTO screenplay_lines
                (line_order, line_type, content, scene_id,
@@ -1223,7 +1204,6 @@ def restore_version(db_path: Path, version_id: int) -> dict:
             "SELECT COUNT(*) AS cnt FROM screenplay_lines"
         ).fetchone()["cnt"]
 
-        # Restore title page
         conn.execute(
             """INSERT INTO screenplay_title_page (key, value, sort_order)
                SELECT key, value, sort_order
@@ -1233,10 +1213,8 @@ def restore_version(db_path: Path, version_id: int) -> dict:
             (version_id,)
         )
 
-        # Rebuild junctions from restored line data
         summary["junctions_rebuilt"] = _rebuild_junctions(conn)
 
-        # Update meta
         scene_count = conn.execute(
             "SELECT COUNT(*) AS cnt FROM screenplay_lines WHERE line_type = 'heading'"
         ).fetchone()["cnt"]
@@ -1258,7 +1236,6 @@ def delete_version(db_path: Path, version_id: int) -> bool:
     """Delete a published version. Returns True if deleted."""
     conn = db.get_connection(db_path)
     try:
-        # CASCADE handles version_lines and version_title_page
         cursor = conn.execute(
             "DELETE FROM screenplay_versions WHERE id = ?",
             (version_id,)

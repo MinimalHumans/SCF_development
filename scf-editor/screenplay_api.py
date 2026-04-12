@@ -195,12 +195,20 @@ async def create_blank(request: Request):
         {"key": "Draft date", "value": today},
     ]
 
-    # Create a minimal starting scene — no structural blanks
+    # Create a minimal starting screenplay — no structural blanks
+    # Title page content as action lines, followed by all major line types
     lines = [
+        {"line_type": "action", "content": project_name},
+        {"line_type": "action", "content": "Written by"},
+        {"line_type": "action", "content": "[Author Name]"},
+        {"line_type": "action", "content": f"Draft: {today}"},
         {"line_type": "heading", "content": "EXT. LOCATION - DAY"},
         {"line_type": "action", "content": "Action description."},
         {"line_type": "character", "content": "CHARACTER"},
         {"line_type": "dialogue", "content": "Dialogue."},
+        {"line_type": "transition", "content": "CUT TO:"},
+        {"line_type": "heading", "content": "INT. LOCATION - NIGHT"},
+        {"line_type": "action", "content": "A new scene begins."},
     ]
 
     summary = screenplay_db.save_screenplay(db_path, title_page, lines)
