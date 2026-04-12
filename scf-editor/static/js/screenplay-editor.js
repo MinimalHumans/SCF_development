@@ -239,16 +239,23 @@ function rebuildLineTypes(state) {
     const st = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
     const newTypes = [];
     const newContents = [];
+    let mergeTypeUsed = false;
 
     for (let i = 1; i <= doc.lines; i++) {
         const trimmed = doc.line(i).text.trim();
         const contentType = classifyLine(trimmed, st);
         let actualType;
 
-        if (i === cursorLine && !linesDeleted) {
-            actualType = trimmed === '' ? 'blank' : modeToLineType(currentMode);
-        } else if (trimmed === '') {
+        if (trimmed === '') {
             actualType = 'blank';
+        } else if (i === cursorLine && pendingMergeType) {
+            // Explicit merge via Backspace/Delete at line boundary.
+            // The handler already determined which type wins (upper line).
+            actualType = pendingMergeType;
+            mergeTypeUsed = true;
+        } else if (i === cursorLine && !linesDeleted) {
+            // Typing or line insertion — user's mode is authority
+            actualType = modeToLineType(currentMode);
         } else {
             const candidates = contentTypeMap.get(trimmed);
             if (candidates && candidates.length > 0) {
@@ -279,7 +286,9 @@ function rebuildLineTypes(state) {
     lineTypes = newTypes;
     lineContents = newContents;
 
-    if (linesDeleted) {
+    // After structural deletes (not explicit merges), sync mode to cursor line's
+    // resolved type. Skip if pendingMergeType was used — handler already set mode.
+    if (linesDeleted && !mergeTypeUsed) {
         const cursorIdx = cursorLine - 1;
         if (cursorIdx >= 0 && cursorIdx < newTypes.length) {
             const resolvedType = newTypes[cursorIdx];
@@ -289,6 +298,9 @@ function rebuildLineTypes(state) {
             }
         }
     }
+
+    // Always clear — consumed or not
+    pendingMergeType = null;
 }
 
 function initLineTypesFromServer(serverLines) {
@@ -408,31 +420,36 @@ function stripStructuralBlanks(lines) {
             continue;
         }
 
+        // Empty line — check if it's structural (CSS handles spacing) or intentional
         const prev = i > 0 ? lines[i - 1] : null;
         const next = i < lines.length - 1 ? lines[i + 1] : null;
 
         if (isStructuralBlank(prev, next)) {
+            // Skip — CSS padding handles this spacing
             continue;
         }
 
+        // Intentional blank — keep it
         result.push(line);
     }
     return result;
 }
 
 function isStructuralBlank(prev, next) {
+    // No context: keep the blank (edge case — blank at start/end of doc)
     if (!prev || !next) return false;
 
     const prevEmpty = prev.content.trim() === '';
     const nextEmpty = next.content.trim() === '';
 
-    // Adjacent to another blank → intentional spacing, keep
+    // Adjacent to another blank: intentional spacing — keep both
     if (prevEmpty || nextEmpty) return false;
 
-    // Between two same-type content lines → intentional paragraph break, keep
+    // Between two same-type content lines: intentional paragraph break — keep
     if (prev.line_type === next.line_type) return false;
 
-    // Single blank between two different content types → structural, strip it
+    // Single blank between two different content types: structural separator.
+    // CSS gap classes handle this spacing visually.
     return true;
 }
 
@@ -708,6 +725,7 @@ let navScenes = [], navCharacters = [], navLocations = [];
 let activeFilter = null;
 let loadedTitlePage = [];
 let lastEnterTime = 0;
+let pendingMergeType = null;  // Set by Backspace/Delete handlers — upper line's type wins on merge
 
 function showToast(msg) {
     const t = document.createElement('div');
@@ -1114,6 +1132,68 @@ function createEditor(container) {
                 keymap.of([
                     { key: 'Tab', run: handleTab },
                     { key: 'Shift-Tab', run: handleShiftTab },
+
+                    // ── Backspace at line boundary: merge up, upper type wins ──
+                    // Exception: if upper line is blank, lower (current) line's type wins
+                    // because a blank line has no semantic type.
+                    { key: 'Backspace', run(view) {
+                        const { head, empty } = view.state.selection.main;
+                        if (!empty) return false; // selection — let default handle
+
+                        const line = view.state.doc.lineAt(head);
+                        if (head !== line.from) return false; // mid-line — let default handle
+                        if (line.number === 1) return false; // first line — nothing above
+
+                        const prevLine = view.state.doc.line(line.number - 1);
+                        const prevIdx = prevLine.number - 1;
+                        const prevType = (prevIdx < lineTypes.length) ? lineTypes[prevIdx] : 'action';
+
+                        const currIdx = line.number - 1;
+                        const currType = (currIdx < lineTypes.length) ? lineTypes[currIdx] : 'action';
+
+                        // Determine winning type: upper wins UNLESS upper is blank
+                        const winType = (prevType === 'blank') ? currType : prevType;
+                        pendingMergeType = winType;
+                        setMode(lineTypeToMode(winType));
+
+                        // Delete the newline to merge lines
+                        view.dispatch({
+                            changes: { from: prevLine.to, to: line.from },
+                            selection: { anchor: prevLine.to },
+                        });
+
+                        return true;
+                    }},
+
+                    // ── Delete at line boundary: merge down, current type wins ──
+                    // Exception: if current line is blank, lower line's type wins.
+                    { key: 'Delete', run(view) {
+                        const { head, empty } = view.state.selection.main;
+                        if (!empty) return false; // selection — let default handle
+
+                        const line = view.state.doc.lineAt(head);
+                        if (head !== line.to) return false; // mid-line — let default handle
+                        if (line.number === view.state.doc.lines) return false; // last line
+
+                        const currIdx = line.number - 1;
+                        const currType = (currIdx < lineTypes.length) ? lineTypes[currIdx] : 'action';
+
+                        const nextLine = view.state.doc.line(line.number + 1);
+                        const nextIdx = nextLine.number - 1;
+                        const nextType = (nextIdx < lineTypes.length) ? lineTypes[nextIdx] : 'action';
+
+                        // Current line wins UNLESS current is blank
+                        const winType = (currType === 'blank') ? nextType : currType;
+                        pendingMergeType = winType;
+                        setMode(lineTypeToMode(winType));
+
+                        view.dispatch({
+                            changes: { from: line.to, to: nextLine.from },
+                        });
+
+                        return true;
+                    }},
+
                     { key: 'Enter', run(view) {
                         if (isAutocompleteVisible() && acItems.length > 0 && acHighlight >= 0) return false;
                         hideAutocomplete();

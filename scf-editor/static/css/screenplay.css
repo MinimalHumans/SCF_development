@@ -158,39 +158,31 @@
    These replace blank lines as visual separators between screenplay elements.
    Applied by lineDecorationPlugin based on type transitions between adjacent
    lines. The document contains only content lines; spacing is presentation.
+   
+   IMPORTANT: Uses padding-top, NOT margin-top. CodeMirror 6 manages line
+   heights via a heightmap and ignores margins on .cm-line elements.
+   Padding works because CM6 measures actual DOM element height.
    ========================================================================== */
 
 /* Scene break — largest gap (before every scene heading) */
 .cm-line.cm-scf-gap-scene {
-    margin-top: 28px;
-    position: relative;
+    padding-top: 28px !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
-/* Subtle divider line before scene headings */
-.cm-line.cm-scf-gap-scene::before {
-    content: '';
-    position: absolute;
-    top: -14px;
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: rgba(255, 255, 255, 0.06);
-}
-/* Don't show divider or gap on the very first heading in the document */
-.cm-content > .cm-line.cm-scf-gap-scene:first-child::before {
-    display: none;
-}
+/* Don't show divider or extra gap on the very first heading in the document */
 .cm-content > .cm-line.cm-scf-gap-scene:first-child {
-    margin-top: 0;
+    padding-top: 0 !important;
+    border-top: none;
 }
 
 /* New dialogue block — gap before character cue */
 .cm-line.cm-scf-gap-block {
-    margin-top: 18px;
+    padding-top: 18px !important;
 }
 
 /* Element separator — action after dialogue, before/after transition */
 .cm-line.cm-scf-gap-element {
-    margin-top: 14px;
+    padding-top: 14px !important;
 }
 
 /* ==========================================================================
