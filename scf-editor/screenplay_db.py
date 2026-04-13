@@ -76,6 +76,13 @@ _BARE_TOD_RE = re.compile(
     re.IGNORECASE
 )
 
+# ── PHASE 1: Prop confidence → scene_prop significance mapping ──
+_CONFIDENCE_TO_SIGNIFICANCE = {
+    "high": "Key",
+    "medium": "Present",
+    "low": "Background",
+}
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Table Creation
@@ -839,7 +846,7 @@ def export_fountain(db_path: Path) -> str:
 def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
     """
     Parse a Fountain screenplay and write it into screenplay_lines.
-    Also creates/links scene, character, location entities.
+    Also creates/links scene, character, location, and prop entities.
 
     This replaces the anchor-based import. The result is structured
     line data with direct entity FK references.
@@ -855,6 +862,8 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
         "scenes_created": 0,
         "characters_created": 0,
         "locations_created": 0,
+        "props_created": 0,            # ── PHASE 1 ──
+        "scene_props_created": 0,      # ── PHASE 1 ──
         "junctions_rebuilt": 0,
         "errors": [],
     }
@@ -886,6 +895,11 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
         loc_map = {}
         for row in conn.execute("SELECT id, name FROM location").fetchall():
             loc_map[row["name"].lower()] = row["id"]
+
+        # ── PHASE 1: Props: name.lower() -> id ──
+        prop_map = {}
+        for row in conn.execute("SELECT id, name FROM prop").fetchall():
+            prop_map[row["name"].lower()] = row["id"]
 
         # Create entities from parsed data
         for char in parsed.characters:
@@ -937,6 +951,46 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
             )
             scene_map[scene.scene_number - 1] = cursor.lastrowid
             summary["scenes_created"] += 1
+
+        # ═════════════════════════════════════════════════════════════
+        # PHASE 1: Create prop entities from parsed props
+        # ═════════════════════════════════════════════════════════════
+        prop_id_map = {}  # prop_name.lower() -> prop entity id
+
+        for prop in parsed.props:
+            key = prop.name.lower()
+
+            # Check if prop already exists (from a previous import or manual creation)
+            if key in prop_map:
+                prop_id_map[key] = prop_map[key]
+                continue
+
+            # Build prop data
+            prop_data_fields = {"name": prop.name}
+            if prop.context:
+                prop_data_fields["narrative_significance"] = prop.context[:500]
+            if prop.first_scene < len(parsed.scenes):
+                scene_name = parsed.scenes[prop.first_scene].name
+                prop_data_fields["first_appearance"] = f"Scene {prop.first_scene + 1}: {scene_name}"
+
+            # Insert using validated fields
+            from entity_registry import get_entity
+            entity_def = get_entity("prop")
+            valid_fields = {f.name for f in entity_def.fields}
+            filtered = {k: v for k, v in prop_data_fields.items()
+                        if k in valid_fields and v is not None and v != ""}
+
+            if filtered:
+                cols = ", ".join(filtered.keys())
+                placeholders = ", ".join(["?"] * len(filtered))
+                cursor = conn.execute(
+                    f"INSERT INTO prop ({cols}) VALUES ({placeholders})",
+                    list(filtered.values())
+                )
+                prop_id = cursor.lastrowid
+                prop_id_map[key] = prop_id
+                prop_map[key] = prop_id
+                summary["props_created"] += 1
 
         # ── Now walk the raw text line-by-line and classify ──
         text = fountain_text.replace('\r\n', '\n').replace('\r', '\n')
@@ -1084,8 +1138,50 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
             prev_blank = False
             in_dialogue = False
 
-        # ── Rebuild junctions ──
+        # ── Rebuild scene_character junctions ──
         summary["junctions_rebuilt"] = _rebuild_junctions(conn)
+
+        # ═════════════════════════════════════════════════════════════
+        # PHASE 1: Create scene_prop junctions from parsed prop data
+        # ═════════════════════════════════════════════════════════════
+        # Each parsed prop has a first_scene (0-based index) and optionally
+        # appears in multiple scenes via the mention data. For now we link
+        # each prop to its first scene — the whitelist scanner already
+        # tracked where each prop was found.
+        #
+        # We also check for existing junctions to avoid duplicates.
+
+        existing_sp = set()
+        for row in conn.execute(
+            "SELECT scene_id, prop_id FROM scene_prop"
+        ).fetchall():
+            existing_sp.add((row["scene_id"], row["prop_id"]))
+
+        for prop in parsed.props:
+            prop_key = prop.name.lower()
+            prop_id = prop_id_map.get(prop_key)
+            if not prop_id:
+                continue
+
+            scene_id = scene_map.get(prop.first_scene)
+            if not scene_id:
+                continue
+
+            if (scene_id, prop_id) in existing_sp:
+                continue
+
+            significance = _CONFIDENCE_TO_SIGNIFICANCE.get(
+                prop.confidence, "Present"
+            )
+
+            conn.execute(
+                """INSERT INTO scene_prop
+                   (scene_id, prop_id, name, significance)
+                   VALUES (?, ?, '', ?)""",
+                (scene_id, prop_id, significance)
+            )
+            existing_sp.add((scene_id, prop_id))
+            summary["scene_props_created"] += 1
 
         # ── Update meta ──
         _update_meta(conn, len(parsed.scenes), line_order)
