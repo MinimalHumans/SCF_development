@@ -98,15 +98,151 @@ function refreshTree() {
     const type = params.get('entity_type');
     const id = params.get('entity_id');
 
+    const scroll = document.querySelector('.tree-scroll');
+    const savedScroll = scroll ? scroll.scrollTop : 0;
+
     fetch(`/htmx/tree?selected_type=${type || ''}&selected_id=${id || ''}`)
         .then(r => r.text())
         .then(html => {
-            const scroll = document.querySelector('.tree-scroll');
             if (scroll) {
                 scroll.innerHTML = html;
                 applyTreeState();
+                initTreeSortToggles();
+                scroll.scrollTop = savedScroll;
             }
         });
+}
+
+// =============================================================================
+// Tree Scroll Position Preservation
+// =============================================================================
+
+const TREE_SCROLL_KEY = 'scf-tree-scroll-top';
+
+function initTreeScrollPreservation() {
+    const scroll = document.querySelector('.tree-scroll');
+    if (!scroll) return;
+
+    // Restore saved scroll position from before page navigation
+    const saved = sessionStorage.getItem(TREE_SCROLL_KEY);
+    if (saved !== null) {
+        // Use requestAnimationFrame to ensure DOM is laid out
+        requestAnimationFrame(() => {
+            scroll.scrollTop = parseInt(saved, 10);
+        });
+        sessionStorage.removeItem(TREE_SCROLL_KEY);
+    }
+
+    // Save scroll position when clicking any tree item link (before navigation)
+    scroll.addEventListener('click', (e) => {
+        const link = e.target.closest('a.tree-item');
+        if (link) {
+            sessionStorage.setItem(TREE_SCROLL_KEY, scroll.scrollTop);
+        }
+    });
+}
+
+// =============================================================================
+// Tree Sort Toggles (alphabetical vs creation/screenplay order)
+// =============================================================================
+
+const TREE_SORT_KEY = 'scf-tree-sort-state';
+
+function getTreeSortState() {
+    try { return JSON.parse(localStorage.getItem(TREE_SORT_KEY)) || {}; } catch { return {}; }
+}
+function saveTreeSortState(s) { localStorage.setItem(TREE_SORT_KEY, JSON.stringify(s)); }
+
+function sortTreeItems(container, mode) {
+    const items = Array.from(container.querySelectorAll('a.tree-item'));
+    if (items.length < 2) return;
+
+    if (mode === 'alpha') {
+        items.sort((a, b) => {
+            const nameA = a.textContent.trim().toLowerCase();
+            const nameB = b.textContent.trim().toLowerCase();
+            return nameA.localeCompare(nameB);
+        });
+    } else {
+        // Sort by entity ID (creation order — matches screenplay order for imports)
+        items.sort((a, b) => {
+            return parseInt(a.dataset.entityId || 0) - parseInt(b.dataset.entityId || 0);
+        });
+    }
+
+    // Re-append in sorted order (moves existing DOM nodes)
+    for (const item of items) {
+        container.appendChild(item);
+    }
+}
+
+function initTreeSortToggles() {
+    // Inject styles once
+    if (!document.getElementById('tree-sort-styles')) {
+        const style = document.createElement('style');
+        style.id = 'tree-sort-styles';
+        style.textContent = `
+            .tree-sort-toggle {
+                font-family: var(--font-mono);
+                font-size: 9px;
+                font-weight: 600;
+                color: var(--text-muted);
+                background: var(--bg-base);
+                border: 1px solid var(--border-subtle);
+                border-radius: 3px;
+                padding: 1px 5px;
+                margin-left: 4px;
+                cursor: pointer;
+                user-select: none;
+                letter-spacing: 0.03em;
+                transition: all 0.15s;
+            }
+            .tree-sort-toggle:hover {
+                color: var(--text-accent);
+                border-color: var(--accent);
+                background: var(--accent-subtle);
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    document.querySelectorAll('.tree-entity-group').forEach(group => {
+        const header = group.querySelector('.tree-group-header');
+        const itemsContainer = group.querySelector('.tree-items');
+        if (!header || !itemsContainer) return;
+
+        // Don't double-init
+        if (header.querySelector('.tree-sort-toggle')) return;
+
+        const type = group.dataset.entityType;
+        const state = getTreeSortState();
+        const mode = state[type] || 'alpha';
+
+        const btn = document.createElement('span');
+        btn.className = 'tree-sort-toggle';
+        btn.title = 'Toggle sort: alphabetical / screenplay order';
+        btn.textContent = mode === 'alpha' ? 'A-Z' : '1st';
+
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const st = getTreeSortState();
+            st[type] = st[type] === 'alpha' ? 'id' : 'alpha';
+            saveTreeSortState(st);
+            btn.textContent = st[type] === 'alpha' ? 'A-Z' : '1st';
+            sortTreeItems(itemsContainer, st[type]);
+        });
+
+        // Insert before the add button form
+        const addForm = header.querySelector('form');
+        if (addForm) {
+            header.insertBefore(btn, addForm);
+        } else {
+            header.appendChild(btn);
+        }
+
+        // Apply initial sort
+        sortTreeItems(itemsContainer, mode);
+    });
 }
 
 // =============================================================================
@@ -481,6 +617,7 @@ document.body.addEventListener('htmx:afterSwap', (e) => {
     }
     // Re-apply tree state after any tree refresh
     applyTreeState();
+    initTreeSortToggles();
 });
 
 function showToast(message) {
@@ -496,7 +633,9 @@ function showToast(message) {
 // =============================================================================
 
 applyTreeState();
+initTreeSortToggles();
 initPanelResize();
 initSearch();
 initKeyboardShortcuts();
 initLinkPanels();
+initTreeScrollPreservation();

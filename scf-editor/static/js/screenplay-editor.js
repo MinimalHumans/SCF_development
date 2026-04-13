@@ -1014,6 +1014,46 @@ function initCollapseHandlers() {
     });
 }
 
+// ── Sort state for navigator lists ──
+const SORT_KEY = 'scf-navigator-sort-state';
+function loadSortState() { try { return JSON.parse(localStorage.getItem(SORT_KEY)) || {}; } catch { return {}; } }
+function saveSortState(s) { localStorage.setItem(SORT_KEY, JSON.stringify(s)); }
+function getSortMode(section) { return loadSortState()[section] || 'screenplay'; }
+
+function sortItems(items, section) {
+    const mode = getSortMode(section);
+    const sorted = [...items];
+    if (mode === 'alpha') {
+        const nameKey = section === 'characters' ? 'display_name' : 'name';
+        sorted.sort((a, b) => (a[nameKey] || '').localeCompare(b[nameKey] || ''));
+    } else {
+        sorted.sort((a, b) => (a.first_appearance || 9999999) - (b.first_appearance || 9999999));
+    }
+    return sorted;
+}
+
+function initSortToggles() {
+    ['characters', 'locations', 'props'].forEach(section => {
+        const hdr = document.querySelector(`#nav-${section}-section .nav-section-header`);
+        if (!hdr || hdr.querySelector('.nav-sort-toggle')) return;
+        const btn = document.createElement('span');
+        btn.className = 'nav-sort-toggle';
+        btn.title = 'Toggle sort: screenplay order / alphabetical';
+        btn.textContent = getSortMode(section) === 'alpha' ? 'A-Z' : '1st';
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const st = loadSortState();
+            st[section] = st[section] === 'alpha' ? 'screenplay' : 'alpha';
+            saveSortState(st);
+            btn.textContent = st[section] === 'alpha' ? 'A-Z' : '1st';
+            if (section === 'characters') renderCharacters();
+            else if (section === 'locations') renderLocations();
+            else if (section === 'props') renderProps();
+        });
+        hdr.appendChild(btn);
+    });
+}
+
 async function fetchNavigatorData() {
     try {
         const [sr, cr, lr, pr] = await Promise.all([
@@ -1086,8 +1126,9 @@ function renderCharacters() {
     if (!c) return;
     if (!navCharacters.length) { c.innerHTML = '<span class="nav-empty-msg">No characters found</span>'; if (b) b.textContent = ''; return; }
     if (b) b.textContent = navCharacters.length;
+    const sorted = sortItems(navCharacters, 'characters');
     const f = document.createDocumentFragment();
-    for (const ch of navCharacters) {
+    for (const ch of sorted) {
         const item = document.createElement('div');
         item.className = 'nav-item nav-char-item';
         item.dataset.charName = ch.name;
@@ -1114,8 +1155,9 @@ function renderLocations() {
     if (!c) return;
     if (!navLocations.length) { c.innerHTML = '<span class="nav-empty-msg">No locations found</span>'; if (b) b.textContent = ''; return; }
     if (b) b.textContent = navLocations.length;
+    const sorted = sortItems(navLocations, 'locations');
     const f = document.createDocumentFragment();
-    for (const loc of navLocations) {
+    for (const loc of sorted) {
         const item = document.createElement('div');
         item.className = 'nav-item nav-loc-item';
         item.dataset.locName = loc.name.toUpperCase();
@@ -1148,8 +1190,9 @@ function renderProps() {
         return;
     }
     if (b) b.textContent = tagged.length;
+    const sorted = sortItems(tagged, 'props');
     const f = document.createDocumentFragment();
-    for (const prop of tagged) {
+    for (const prop of sorted) {
         const item = document.createElement('div');
         item.className = 'nav-item nav-prop-item';
         item.dataset.propName = prop.name;
@@ -1352,6 +1395,7 @@ if (container) {
     editorView = createEditor(container);
     initNavigatorResize();
     initCollapseHandlers();
+    initSortToggles();
     loadScreenplay();
     document.getElementById('btn-save-screenplay')?.addEventListener('click', saveScreenplay);
     document.getElementById('btn-export-screenplay')?.addEventListener('click', exportScreenplay);

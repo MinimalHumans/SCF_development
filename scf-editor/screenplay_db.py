@@ -500,12 +500,13 @@ def get_characters(db_path: Path) -> list[dict]:
             SELECT
                 c.id AS character_id,
                 c.name AS display_name,
-                COUNT(DISTINCT sl.scene_id) AS scene_count
+                COUNT(DISTINCT sl.scene_id) AS scene_count,
+                MIN(sl.line_order) AS first_appearance
             FROM screenplay_lines sl
             JOIN character c ON c.id = sl.character_id
             WHERE sl.character_id IS NOT NULL AND sl.scene_id IS NOT NULL
             GROUP BY c.id, c.name
-            ORDER BY scene_count DESC, c.name ASC
+            ORDER BY first_appearance ASC, c.name ASC
         """).fetchall()
 
         return [
@@ -514,6 +515,7 @@ def get_characters(db_path: Path) -> list[dict]:
                 "display_name": r["display_name"],
                 "name": r["display_name"].upper(),
                 "scene_count": r["scene_count"],
+                "first_appearance": r["first_appearance"] or 9999999,
                 "is_mapped": True,
             }
             for r in rows
@@ -530,12 +532,13 @@ def get_locations(db_path: Path) -> list[dict]:
             SELECT
                 l.id AS location_id,
                 l.name,
-                COUNT(DISTINCT sl.scene_id) AS scene_count
+                COUNT(DISTINCT sl.scene_id) AS scene_count,
+                MIN(sl.line_order) AS first_appearance
             FROM screenplay_lines sl
             JOIN location l ON l.id = sl.location_id
             WHERE sl.location_id IS NOT NULL AND sl.line_type = 'heading'
             GROUP BY l.id, l.name
-            ORDER BY scene_count DESC, l.name ASC
+            ORDER BY first_appearance ASC, l.name ASC
         """).fetchall()
 
         return [
@@ -543,6 +546,7 @@ def get_locations(db_path: Path) -> list[dict]:
                 "location_id": r["location_id"],
                 "name": r["name"],
                 "scene_count": r["scene_count"],
+                "first_appearance": r["first_appearance"] or 9999999,
                 "is_mapped": True,
             }
             for r in rows
@@ -563,11 +567,15 @@ def get_props(db_path: Path) -> list[dict]:
             SELECT
                 p.id AS prop_id,
                 p.name,
-                COUNT(DISTINCT sp.scene_id) AS scene_count
+                COUNT(DISTINCT sp.scene_id) AS scene_count,
+                MIN(sl_head.line_order) AS first_appearance
             FROM prop p
             LEFT JOIN scene_prop sp ON sp.prop_id = p.id
+            LEFT JOIN screenplay_lines sl_head
+                ON sl_head.scene_id = sp.scene_id
+                AND sl_head.line_type = 'heading'
             GROUP BY p.id, p.name
-            ORDER BY scene_count DESC, p.name ASC
+            ORDER BY first_appearance ASC, p.name ASC
         """).fetchall()
 
         # Also get tagged_text for each prop
@@ -582,6 +590,7 @@ def get_props(db_path: Path) -> list[dict]:
                 "prop_id": r["prop_id"],
                 "name": r["name"],
                 "scene_count": r["scene_count"],
+                "first_appearance": r["first_appearance"] or 9999999,
                 "tagged_texts": tag_map.get(r["prop_id"], []),
             }
             for r in rows
