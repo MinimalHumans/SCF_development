@@ -165,6 +165,20 @@ def init_screenplay_tables(conn) -> None:
         )
     """)
 
+    # ── Prop tag table (Phase 3: inline prop annotations) ──
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS screenplay_prop_tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prop_id INTEGER NOT NULL REFERENCES prop(id) ON DELETE CASCADE,
+            tagged_text TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prop_tags_unique
+        ON screenplay_prop_tags(prop_id, tagged_text)
+    """)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Load — Read screenplay for editor
@@ -240,9 +254,28 @@ def load_screenplay(db_path: Path) -> dict:
                 "location_name": r["location_name"],
             })
 
+        # Prop tags (inline prop annotations)
+        prop_tag_rows = conn.execute("""
+            SELECT spt.id, spt.prop_id, spt.tagged_text,
+                   p.name AS display_name
+            FROM screenplay_prop_tags spt
+            JOIN prop p ON p.id = spt.prop_id
+            ORDER BY p.name
+        """).fetchall()
+        prop_tags = [
+            {
+                "id": r["id"],
+                "prop_id": r["prop_id"],
+                "tagged_text": r["tagged_text"],
+                "display_name": r["display_name"],
+            }
+            for r in prop_tag_rows
+        ]
+
         return {
             "title_page": title_page,
             "lines": lines,
+            "prop_tags": prop_tags,
             "has_content": len(lines) > 0 or len(title_page) > 0,
         }
     finally:
@@ -287,6 +320,7 @@ def save_screenplay(db_path: Path, title_page: list[dict], lines: list[dict]) ->
         "characters_created": 0,
         "locations_created": 0,
         "junctions_rebuilt": 0,
+        "prop_junctions_rebuilt": 0,
         "errors": [],
     }
 
@@ -383,6 +417,9 @@ def save_screenplay(db_path: Path, title_page: list[dict], lines: list[dict]) ->
 
         # ── 3. Rebuild scene_character junctions ──
         summary["junctions_rebuilt"] = _rebuild_junctions(conn)
+
+        # ── 3b. Rebuild scene_prop junctions from prop tags ──
+        summary["prop_junctions_rebuilt"] = _rebuild_prop_junctions(conn)
 
         # ── 4. Update screenplay_meta ──
         _update_meta(conn, scene_number, len(lines))
@@ -510,6 +547,133 @@ def get_locations(db_path: Path) -> list[dict]:
             }
             for r in rows
         ]
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Prop Tags — CRUD + navigator query
+# ═══════════════════════════════════════════════════════════════════════════
+
+def get_props(db_path: Path) -> list[dict]:
+    """Get props with scene counts for the navigator (via scene_prop junctions)."""
+    conn = db.get_connection(db_path)
+    try:
+        rows = conn.execute("""
+            SELECT
+                p.id AS prop_id,
+                p.name,
+                COUNT(DISTINCT sp.scene_id) AS scene_count
+            FROM prop p
+            LEFT JOIN scene_prop sp ON sp.prop_id = p.id
+            GROUP BY p.id, p.name
+            ORDER BY scene_count DESC, p.name ASC
+        """).fetchall()
+
+        # Also get tagged_text for each prop
+        tag_map = {}
+        for row in conn.execute(
+            "SELECT prop_id, tagged_text FROM screenplay_prop_tags"
+        ).fetchall():
+            tag_map.setdefault(row["prop_id"], []).append(row["tagged_text"])
+
+        return [
+            {
+                "prop_id": r["prop_id"],
+                "name": r["name"],
+                "scene_count": r["scene_count"],
+                "tagged_texts": tag_map.get(r["prop_id"], []),
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def create_prop_tag(db_path: Path, tagged_text: str,
+                    prop_id: int | None = None,
+                    new_name: str | None = None) -> dict:
+    """
+    Create a prop tag (marks a text string as a prop in the screenplay).
+
+    If prop_id is given, links to an existing prop entity.
+    If new_name is given instead, creates a new prop entity first.
+
+    Returns {"tag_id", "prop_id", "tagged_text", "display_name", "is_new"}.
+    """
+    conn = db.get_connection(db_path)
+    try:
+        is_new = False
+
+        if not prop_id and new_name:
+            # Check if prop already exists by name
+            row = conn.execute(
+                "SELECT id FROM prop WHERE LOWER(name) = LOWER(?)",
+                (new_name,)
+            ).fetchone()
+            if row:
+                prop_id = row["id"]
+            else:
+                tc_name = _title_case_name(new_name)
+                cursor = conn.execute(
+                    "INSERT INTO prop (name) VALUES (?)", (tc_name,)
+                )
+                prop_id = cursor.lastrowid
+                is_new = True
+
+        if not prop_id:
+            raise ValueError("prop_id or new_name required")
+
+        # Normalize tagged text (lowercase for matching)
+        clean_text = tagged_text.strip().lower()
+        if not clean_text:
+            raise ValueError("tagged_text cannot be empty")
+
+        # Insert tag (UNIQUE index handles duplicates)
+        try:
+            cursor = conn.execute(
+                """INSERT INTO screenplay_prop_tags (prop_id, tagged_text)
+                   VALUES (?, ?)""",
+                (prop_id, clean_text)
+            )
+            tag_id = cursor.lastrowid
+        except Exception:
+            # Duplicate — find existing
+            row = conn.execute(
+                """SELECT id FROM screenplay_prop_tags
+                   WHERE prop_id = ? AND tagged_text = ?""",
+                (prop_id, clean_text)
+            ).fetchone()
+            tag_id = row["id"] if row else -1
+
+        # Get display name
+        prop_row = conn.execute(
+            "SELECT name FROM prop WHERE id = ?", (prop_id,)
+        ).fetchone()
+        display_name = prop_row["name"] if prop_row else tagged_text
+
+        conn.commit()
+
+        return {
+            "tag_id": tag_id,
+            "prop_id": prop_id,
+            "tagged_text": clean_text,
+            "display_name": display_name,
+            "is_new": is_new,
+        }
+    finally:
+        conn.close()
+
+
+def delete_prop_tag(db_path: Path, tag_id: int) -> bool:
+    """Delete a prop tag. Returns True if deleted."""
+    conn = db.get_connection(db_path)
+    try:
+        cursor = conn.execute(
+            "DELETE FROM screenplay_prop_tags WHERE id = ?", (tag_id,)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
     finally:
         conn.close()
 
@@ -708,6 +872,62 @@ def _rebuild_junctions(conn) -> int:
             """INSERT INTO scene_character (scene_id, character_id, role_in_scene, name)
                VALUES (?, ?, ?, '')""",
             (scene_id, character_id, role)
+        )
+        count += 1
+
+    return count
+
+
+def _rebuild_prop_junctions(conn) -> int:
+    """
+    Rebuild scene_prop junctions from screenplay_prop_tags + line content.
+
+    Scans all screenplay lines for tagged prop text matches and creates
+    scene_prop junctions linking each prop to every scene where its
+    tagged text appears.
+
+    Deletes existing scene_prop junctions for screenplay scenes first
+    so the result is always consistent with the current content + tags.
+    """
+    # Load all prop tags
+    tags = conn.execute(
+        "SELECT prop_id, tagged_text FROM screenplay_prop_tags"
+    ).fetchall()
+    if not tags:
+        return 0
+
+    # Get all scene_ids in the screenplay
+    scene_ids = [r["scene_id"] for r in conn.execute(
+        "SELECT DISTINCT scene_id FROM screenplay_lines WHERE scene_id IS NOT NULL"
+    ).fetchall()]
+    if not scene_ids:
+        return 0
+
+    # Delete existing scene_prop junctions for screenplay scenes
+    placeholders = ", ".join(["?"] * len(scene_ids))
+    conn.execute(
+        f"DELETE FROM scene_prop WHERE scene_id IN ({placeholders})",
+        scene_ids
+    )
+
+    # Scan lines for prop text matches → build (scene_id, prop_id) pairs
+    scene_props = set()
+    for row in conn.execute(
+        """SELECT scene_id, content FROM screenplay_lines
+           WHERE scene_id IS NOT NULL AND content != ''"""
+    ).fetchall():
+        content_lower = row["content"].lower()
+        for tag in tags:
+            if tag["tagged_text"].lower() in content_lower:
+                scene_props.add((row["scene_id"], tag["prop_id"]))
+
+    # Insert junctions
+    count = 0
+    for scene_id, prop_id in scene_props:
+        conn.execute(
+            """INSERT INTO scene_prop (scene_id, prop_id, name, significance)
+               VALUES (?, ?, '', 'Present')""",
+            (scene_id, prop_id)
         )
         count += 1
 
@@ -991,6 +1211,23 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
                 prop_id_map[key] = prop_id
                 prop_map[key] = prop_id
                 summary["props_created"] += 1
+
+        # ── Create prop tags for each extracted prop (Phase 3) ──
+        # This enables the prop highlight/junction system in the editor.
+        # tagged_text is the lowercase word the whitelist scanner matched on.
+        for prop in parsed.props:
+            key = prop.name.lower()
+            pid = prop_id_map.get(key)
+            if not pid:
+                continue
+            try:
+                conn.execute(
+                    """INSERT OR IGNORE INTO screenplay_prop_tags
+                       (prop_id, tagged_text) VALUES (?, ?)""",
+                    (pid, key)
+                )
+            except Exception:
+                pass  # duplicate — already tagged
 
         # ── Now walk the raw text line-by-line and classify ──
         text = fountain_text.replace('\r\n', '\n').replace('\r', '\n')
@@ -1379,6 +1616,9 @@ def restore_version(db_path: Path, version_id: int) -> dict:
 
         # Rebuild junctions from restored line data
         summary["junctions_rebuilt"] = _rebuild_junctions(conn)
+
+        # Rebuild prop junctions from tags + restored content
+        _rebuild_prop_junctions(conn)
 
         # Update meta
         scene_count = conn.execute(

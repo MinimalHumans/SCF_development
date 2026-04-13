@@ -99,6 +99,13 @@ async def locations(request: Request):
     return JSONResponse(screenplay_db.get_locations(db_path))
 
 
+@screenplay_router.get("/props")
+async def props(request: Request):
+    """Prop list with scene counts for the navigator."""
+    db_path = _require_project(request)
+    return JSONResponse(screenplay_db.get_props(db_path))
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Entity Autocomplete
 # ═══════════════════════════════════════════════════════════════════════════
@@ -156,6 +163,83 @@ async def autocomplete_locations(request: Request, q: str = Query("")):
         ])
     finally:
         conn.close()
+
+
+@screenplay_router.get("/autocomplete-props")
+async def autocomplete_props(request: Request, q: str = Query("")):
+    """Autocomplete prop names from the prop entity table."""
+    if not q or len(q) < 1:
+        return JSONResponse([])
+    db_path = _require_project(request)
+
+    conn = db.get_connection(db_path)
+    try:
+        rows = conn.execute(
+            """SELECT id, name FROM prop
+               WHERE name LIKE ? COLLATE NOCASE
+               ORDER BY name LIMIT 8""",
+            (f"%{q}%",)
+        ).fetchall()
+
+        return JSONResponse([
+            {
+                "prop_id": r["id"],
+                "name": r["name"],
+            }
+            for r in rows
+        ])
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Prop Tags — Create / Delete
+# ═══════════════════════════════════════════════════════════════════════════
+
+@screenplay_router.post("/tag-prop")
+async def tag_prop(request: Request):
+    """
+    Tag a text string as a prop in the screenplay.
+
+    Body: {"tagged_text": "revolver", "prop_id": 5}
+      or: {"tagged_text": "revolver", "new_name": "Revolver"}
+
+    Creates the prop entity if new_name is given and it doesn't exist.
+    Creates a screenplay_prop_tags row linking the text to the prop.
+
+    Returns tag info dict.
+    """
+    db_path = _require_project(request)
+    body = await request.json()
+
+    tagged_text = body.get("tagged_text", "").strip()
+    if not tagged_text:
+        raise HTTPException(status_code=400, detail="tagged_text required")
+
+    prop_id = body.get("prop_id")
+    new_name = body.get("new_name")
+
+    if not prop_id and not new_name:
+        raise HTTPException(status_code=400, detail="prop_id or new_name required")
+
+    try:
+        result = screenplay_db.create_prop_tag(
+            db_path, tagged_text,
+            prop_id=prop_id, new_name=new_name
+        )
+        return JSONResponse(result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@screenplay_router.delete("/tag-prop/{tag_id}")
+async def untag_prop(request: Request, tag_id: int):
+    """Remove a prop tag."""
+    db_path = _require_project(request)
+    success = screenplay_db.delete_prop_tag(db_path, tag_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    return JSONResponse({"success": True})
 
 
 # ═══════════════════════════════════════════════════════════════════════════

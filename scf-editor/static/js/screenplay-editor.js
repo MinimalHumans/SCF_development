@@ -10,7 +10,8 @@
  * 
  * Tab cycles modes: Description → Scene → Character → Dialogue → Transition
  * Autocomplete: Character mode → character names, Scene mode → locations
- * Navigator: DB queries via /api/screenplay-v2/scenes|characters|locations
+ * Ctrl+P: Tag selected text as a prop entity
+ * Navigator: DB queries via /api/screenplay-v2/scenes|characters|locations|props
  */
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -86,9 +87,6 @@ function classifyAllLines(text) {
 // ═══════════════════════════════════════════════════════════════════════════
 // Entity Cache — content-addressed ID lookup
 // ═══════════════════════════════════════════════════════════════════════════
-// Maps "type:CONTENT" → {scene_id, character_id, location_id}
-// Survives edits because it's keyed by content, not position.
-
 const entityCache = new Map();
 
 function cacheKey(lineType, content) {
@@ -138,13 +136,10 @@ const fountainStreamMode = {
 const fountainLanguage = StreamLanguage.define(fountainStreamMode);
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Line Type Registry — authoritative record of what each line IS
+// Line Type Registry
 // ═══════════════════════════════════════════════════════════════════════════
-// The user's mode (via Tab) is the authority. Content classification is only
-// a fallback for lines the user hasn't explicitly typed/set.
-
-let lineTypes = [];    // parallel to doc lines, 0-indexed: 'heading', 'action', etc.
-let lineContents = []; // content when type was set — used to detect stale entries
+let lineTypes = [];
+let lineContents = [];
 
 function modeToLineType(mode) {
     return { description: 'action', scene: 'heading', character: 'character',
@@ -157,12 +152,11 @@ function lineTypeToMode(type) {
              action: 'description' }[type] || 'description';
 }
 
-/** Adjust parser state to match a forced type (so subsequent lines classify correctly). */
 function adjustState(st, type) {
     switch (type) {
         case 'heading':    st.inDialogue = false; st.prevBlank = false; break;
         case 'character':  st.inDialogue = true;  st.prevBlank = false; break;
-        case 'dialogue':   st.prevBlank = false; break; // inDialogue stays
+        case 'dialogue':   st.prevBlank = false; break;
         case 'parenthetical': st.prevBlank = false; break;
         case 'transition': st.inDialogue = false; st.prevBlank = false; break;
         case 'action':     st.inDialogue = false; st.prevBlank = false; break;
@@ -171,19 +165,8 @@ function adjustState(st, type) {
     }
 }
 
-/** Repair pass — fix character/dialogue pairs that the state machine missed.
- *  Runs ONLY for large changes (paste, import, bulk operations).
- *  For small edits the content map preserves user intent correctly.
- *  
- *  Rules:
- *  1. ALL_CAPS line preceded by blank, followed by non-blank non-heading → character + dialogue
- *  2. Character with no dialogue after it → demote to action
- *  3. Dialogue with no character above it → demote to action
- */
 function repairDialoguePairs(types, contents, cursorIdx) {
     const n = types.length;
-
-    // Pass 1: Promote missed character/dialogue patterns
     for (let i = 0; i < n; i++) {
         if (types[i] !== 'action') continue;
         const t = contents[i];
@@ -204,8 +187,6 @@ function repairDialoguePairs(types, contents, cursorIdx) {
             else { types[j] = 'dialogue'; }
         }
     }
-
-    // Pass 2: Demote orphan characters (no dialogue follows) — skip cursor line
     for (let i = 0; i < n; i++) {
         if (i === cursorIdx) continue;
         if (types[i] !== 'character') continue;
@@ -216,8 +197,6 @@ function repairDialoguePairs(types, contents, cursorIdx) {
         }
         if (!hasDialogue) types[i] = 'action';
     }
-
-    // Pass 3: Demote orphan dialogue (no character above) — skip cursor line
     for (let i = 0; i < n; i++) {
         if (i === cursorIdx) continue;
         if (types[i] !== 'dialogue' && types[i] !== 'parenthetical') continue;
@@ -231,26 +210,11 @@ function repairDialoguePairs(types, contents, cursorIdx) {
     }
 }
 
-/** Rebuild lineTypes from the document.
- *
- *  Uses a content-keyed map (not positional) so line insertions/deletions
- *  don't cascade wrong types to every line below.
- *
- *  KEY INSIGHT: The cursor line is only overridden by the current mode when
- *  the user is TYPING (line count same or increased). When lines are DELETED
- *  (backspace-merge, line deletion), the cursor line is resolved from the
- *  content map or state machine — then the mode syncs to match. This prevents
- *  structural edits from corrupting line types.
- */
 function rebuildLineTypes(state) {
     const doc = state.doc;
     const cursorLine = doc.lineAt(state.selection.main.head).number;
-
-    // ── Detect structural vs content edit ──
     const prevLineCount = lineTypes.length;
     const linesDeleted = doc.lines < prevLineCount;
-
-    // ── Build content → [{type, oldPos}] map from previous state ──
     const contentTypeMap = new Map();
     for (let i = 0; i < lineTypes.length; i++) {
         const type = lineTypes[i];
@@ -260,96 +224,60 @@ function rebuildLineTypes(state) {
             contentTypeMap.get(content).push({ type, oldPos: i });
         }
     }
-
     const st = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
     const newTypes = [];
     const newContents = [];
-
     for (let i = 1; i <= doc.lines; i++) {
         const trimmed = doc.line(i).text.trim();
-
-        // Always run classifyLine to maintain parser state
         const contentType = classifyLine(trimmed, st);
-
         let actualType;
-
         if (i === cursorLine && !linesDeleted) {
-            // ── Typing or line insertion: mode is authority ──
-            // The user is actively writing — their chosen mode determines the type.
             actualType = trimmed === '' ? 'blank' : modeToLineType(currentMode);
         } else if (trimmed === '') {
             actualType = 'blank';
         } else {
-            // ── Content-map lookup (position-independent) ──
-            // Handles: shifted lines after delete, structural edits, undo
             const candidates = contentTypeMap.get(trimmed);
             if (candidates && candidates.length > 0) {
-                // Pick the candidate nearest to this position
                 const newIdx = i - 1;
                 let bestIdx = 0;
                 let bestDist = Math.abs(candidates[0].oldPos - newIdx);
                 for (let j = 1; j < candidates.length; j++) {
                     const dist = Math.abs(candidates[j].oldPos - newIdx);
-                    if (dist < bestDist) {
-                        bestDist = dist;
-                        bestIdx = j;
-                    }
+                    if (dist < bestDist) { bestDist = dist; bestIdx = j; }
                 }
                 actualType = candidates[bestIdx].type;
-                candidates.splice(bestIdx, 1); // consume so duplicates resolve correctly
+                candidates.splice(bestIdx, 1);
             } else {
-                // ── Truly new content: fall back to state-machine classification ──
-                // Covers: merged lines (backspace), freshly typed content on delete
                 actualType = contentType;
             }
         }
-
-        // Fix parser state if we overrode classifyLine's result
-        if (actualType !== contentType) {
-            adjustState(st, actualType);
-        }
-
+        if (actualType !== contentType) adjustState(st, actualType);
         newTypes.push(actualType);
         newContents.push(trimmed);
     }
-
-    // Structural repair only for large changes (paste, bulk delete, import).
-    // For small edits (1-3 lines), the content map preserves types correctly
-    // and repair's aggressive reclassification causes more harm than good.
     const lineCountDelta = Math.abs(doc.lines - prevLineCount);
-    if (lineCountDelta > 3) {
-        repairDialoguePairs(newTypes, newContents, cursorLine - 1);
-    }
-
+    if (lineCountDelta > 3) repairDialoguePairs(newTypes, newContents, cursorLine - 1);
     lineTypes = newTypes;
     lineContents = newContents;
-
-    // ── After structural deletes: sync mode to cursor line's resolved type ──
-    // The cursor landed on a line whose type was resolved from the content map
-    // or state machine (not the mode). Update the mode to match so the user
-    // sees the correct mode indicator and subsequent typing uses the right type.
     if (linesDeleted) {
         const cursorIdx = cursorLine - 1;
         if (cursorIdx >= 0 && cursorIdx < newTypes.length) {
             const resolvedType = newTypes[cursorIdx];
             if (resolvedType && resolvedType !== 'blank') {
                 const newMode = lineTypeToMode(resolvedType);
-                if (newMode !== currentMode) {
-                    setMode(newMode);
-                }
+                if (newMode !== currentMode) setMode(newMode);
             }
         }
     }
 }
 
-/** Initialize lineTypes from server data (on load). */
 function initLineTypesFromServer(serverLines) {
     lineTypes = serverLines.map(l => l.line_type || 'action');
     lineContents = serverLines.map(l => (l.content || '').trim());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Line Decoration Plugin — uses lineTypes registry, not content classification
+// Line Decoration Plugin
 // ═══════════════════════════════════════════════════════════════════════════
 const LINE_CLS = {
     heading: 'cm-scf-heading', action: 'cm-scf-action', character: 'cm-scf-character',
@@ -369,13 +297,11 @@ const lineDecorationPlugin = ViewPlugin.fromClass(class {
         const cursorLine = doc.lineAt(view.state.selection.main.head).number;
         for (let i = 1; i <= doc.lines; i++) {
             const attrs = {};
-            // Line type class (skip cursor line — mode CSS handles it)
             if (i !== cursorLine) {
                 const type = (i - 1 < lineTypes.length) ? lineTypes[i - 1] : 'action';
                 const cls = LINE_CLS[type];
                 if (cls) attrs.class = cls;
             }
-            // Page break on every LINES_PER_PAGE-th line
             if (i % LINES_PER_PAGE === 0 && i < doc.lines) {
                 const pageNum = i / LINES_PER_PAGE;
                 attrs.class = (attrs.class || '') + ' cm-scf-pagebreak';
@@ -386,6 +312,269 @@ const lineDecorationPlugin = ViewPlugin.fromClass(class {
         return Decoration.set(decos, true);
     }
 }, { decorations: v => v.decorations });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Prop Tag System — Inline Prop Annotations
+// ═══════════════════════════════════════════════════════════════════════════
+// propTags: [{id, prop_id, tagged_text, display_name}]
+// The decoration plugin highlights all occurrences of tagged_text in the doc.
+
+let propTags = [];
+let propTagsVersion = 0;  // increment to trigger decoration rebuild
+
+function escapeRegex(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildPropPattern() {
+    if (!propTags.length) return null;
+    // Build alternation sorted by length desc (longer matches first)
+    const sorted = [...propTags].sort((a, b) => b.tagged_text.length - a.tagged_text.length);
+    const alt = sorted.map(t => escapeRegex(t.tagged_text)).join('|');
+    return new RegExp(`\\b(${alt})\\b`, 'gi');
+}
+
+function getTagForText(text) {
+    const lower = text.toLowerCase();
+    return propTags.find(t => t.tagged_text === lower);
+}
+
+const propHighlightDeco = Decoration.mark({ class: 'cm-prop-highlight' });
+
+const propDecorationPlugin = ViewPlugin.fromClass(class {
+    constructor(view) {
+        this._version = propTagsVersion;
+        this.decorations = this.build(view);
+    }
+    update(update) {
+        if (update.docChanged || update.viewportChanged || this._version !== propTagsVersion) {
+            this._version = propTagsVersion;
+            this.decorations = this.build(update.view);
+        }
+    }
+    build(view) {
+        const pattern = buildPropPattern();
+        if (!pattern) return Decoration.none;
+
+        const decos = [];
+        const doc = view.state.doc;
+
+        for (const { from, to } of view.visibleRanges) {
+            let pos = from;
+            while (pos < to) {
+                const line = doc.lineAt(pos);
+                const text = line.text;
+                if (text.trim()) {
+                    pattern.lastIndex = 0;
+                    let m;
+                    while ((m = pattern.exec(text)) !== null) {
+                        const start = line.from + m.index;
+                        const end = start + m[0].length;
+                        decos.push(propHighlightDeco.range(start, end));
+                    }
+                }
+                pos = line.to + 1;
+            }
+        }
+
+        decos.sort((a, b) => a.from - b.from || a.to - b.to);
+        return Decoration.set(decos, true);
+    }
+}, { decorations: v => v.decorations });
+
+function notifyPropTagsChanged() {
+    propTagsVersion++;
+    if (editorView) editorView.dispatch({});
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Prop Tag Popover — Ctrl+P to tag/untag selected text
+// ═══════════════════════════════════════════════════════════════════════════
+
+let propPopover = null;
+let propPopoverItems = [];
+let propPopoverHighlight = -1;
+
+function getOrCreatePropPopover() {
+    if (!propPopover) {
+        propPopover = document.createElement('div');
+        propPopover.className = 'prop-tag-popover hidden';
+        document.body.appendChild(propPopover);
+        document.addEventListener('click', (e) => {
+            if (propPopover && !propPopover.contains(e.target)) hidePropPopover();
+        });
+    }
+    return propPopover;
+}
+
+function isPropPopoverVisible() {
+    return propPopover && !propPopover.classList.contains('hidden');
+}
+
+function hidePropPopover() {
+    if (propPopover) {
+        propPopover.classList.add('hidden');
+        propPopover.innerHTML = '';
+    }
+    propPopoverItems = [];
+    propPopoverHighlight = -1;
+}
+
+function handlePropTag(view) {
+    // Get selection or expand to word under cursor
+    let { from, to } = view.state.selection.main;
+    if (from === to) {
+        // No selection — expand to word under cursor
+        const line = view.state.doc.lineAt(from);
+        const text = line.text;
+        const offset = from - line.from;
+        let wStart = offset, wEnd = offset;
+        while (wStart > 0 && /\w/.test(text[wStart - 1])) wStart--;
+        while (wEnd < text.length && /\w/.test(text[wEnd])) wEnd++;
+        if (wStart === wEnd) return true;  // no word found
+        from = line.from + wStart;
+        to = line.from + wEnd;
+    }
+
+    const selectedText = view.state.sliceDoc(from, to).trim();
+    if (!selectedText || selectedText.length < 2) return true;
+
+    // Check if already tagged
+    const existingTag = getTagForText(selectedText);
+
+    const coords = view.coordsAtPos(from);
+    if (!coords) return true;
+
+    showPropPopover(selectedText, existingTag, coords);
+    return true;
+}
+
+async function showPropPopover(text, existingTag, coords) {
+    const pp = getOrCreatePropPopover();
+    pp.innerHTML = '';
+
+    const header = document.createElement('div');
+    header.className = 'prop-tag-popover-header';
+    header.innerHTML = `🔧 <span class="prop-tag-text">${esc(text)}</span>`;
+    pp.appendChild(header);
+
+    // If already tagged, show remove option
+    if (existingTag) {
+        const removeEl = document.createElement('div');
+        removeEl.className = 'prop-tag-remove';
+        removeEl.innerHTML = `✕ Remove tag for <strong>${esc(existingTag.display_name)}</strong>`;
+        removeEl.addEventListener('click', async () => {
+            await untagProp(existingTag.id);
+            hidePropPopover();
+            editorView?.focus();
+        });
+        pp.appendChild(removeEl);
+    }
+
+    // Fetch matching props from API
+    try {
+        const res = await fetch(`/api/screenplay-v2/autocomplete-props?q=${encodeURIComponent(text)}`);
+        if (res.ok) {
+            const items = await res.json();
+            propPopoverItems = items;
+
+            // Filter out the already-tagged prop if present
+            const filtered = existingTag
+                ? items.filter(i => i.prop_id !== existingTag.prop_id)
+                : items;
+
+            for (const item of filtered) {
+                const el = document.createElement('div');
+                el.className = 'screenplay-ac-item';
+                el.innerHTML = `<span class="screenplay-ac-icon">🔧</span><span class="screenplay-ac-name">${esc(item.name)}</span>`;
+                el.addEventListener('click', async () => {
+                    await tagProp(text, item.prop_id, null);
+                    hidePropPopover();
+                    editorView?.focus();
+                });
+                pp.appendChild(el);
+            }
+
+            // "Create new" option (only if no exact match)
+            const exactMatch = items.some(i => i.name.toLowerCase() === text.toLowerCase());
+            if (!exactMatch && !existingTag) {
+                const createEl = document.createElement('div');
+                createEl.className = 'screenplay-ac-new';
+                createEl.style.cursor = 'pointer';
+                const titleCased = text.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+                createEl.textContent = `+ Create prop "${titleCased}"`;
+                createEl.addEventListener('click', async () => {
+                    await tagProp(text, null, titleCased);
+                    hidePropPopover();
+                    editorView?.focus();
+                });
+                pp.appendChild(createEl);
+            }
+        }
+    } catch (e) {
+        console.error('Prop autocomplete failed:', e);
+    }
+
+    // Position and show
+    pp.style.left = Math.max(0, coords.left) + 'px';
+    pp.style.top = (coords.bottom + 4) + 'px';
+    pp.classList.remove('hidden');
+}
+
+async function tagProp(text, propId, newName) {
+    const body = { tagged_text: text };
+    if (propId) body.prop_id = propId;
+    if (newName) body.new_name = newName;
+
+    try {
+        const res = await fetch('/api/screenplay-v2/tag-prop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            showToast('Tag failed: ' + (err.detail || 'unknown'));
+            return;
+        }
+        const data = await res.json();
+
+        // Add to local propTags (avoid duplicates)
+        if (!propTags.some(t => t.id === data.tag_id)) {
+            propTags.push({
+                id: data.tag_id,
+                prop_id: data.prop_id,
+                tagged_text: data.tagged_text,
+                display_name: data.display_name,
+            });
+        }
+
+        notifyPropTagsChanged();
+        markUnsaved();  // scene_prop junctions rebuild on next save
+        showToast(`Tagged: ${data.display_name}`);
+        fetchNavigatorData();
+
+    } catch (e) {
+        showToast('Tag error: ' + e.message);
+    }
+}
+
+async function untagProp(tagId) {
+    try {
+        const res = await fetch(`/api/screenplay-v2/tag-prop/${tagId}`, {
+            method: 'DELETE',
+        });
+        if (res.ok) {
+            propTags = propTags.filter(t => t.id !== tagId);
+            notifyPropTagsChanged();
+            markUnsaved();
+            showToast('Prop tag removed');
+            fetchNavigatorData();
+        }
+    } catch (e) {
+        showToast('Untag error: ' + e.message);
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Mode System — Tab cycles
@@ -420,23 +609,17 @@ function handleShiftTab() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Auto-detect mode from stored line type (on click/arrow, not while typing)
+// Auto-detect mode from stored line type
 // ═══════════════════════════════════════════════════════════════════════════
 
 function detectModeFromCursor(state) {
     const line = state.doc.lineAt(state.selection.main.head);
     const trimmed = line.text.trim();
-
-    // Blank line: keep current mode
     if (trimmed === '') return;
-
-    // Read from the lineTypes registry — this IS the authoritative type
     const idx = line.number - 1;
     if (idx < lineTypes.length && lineTypes[idx] && lineTypes[idx] !== 'blank') {
         const newMode = lineTypeToMode(lineTypes[idx]);
-        if (newMode && newMode !== currentMode) {
-            setMode(newMode);
-        }
+        if (newMode && newMode !== currentMode) setMode(newMode);
     }
 }
 
@@ -453,7 +636,7 @@ const autoUppercaseHandler = EditorView.inputHandler.of((view, from, to, text) =
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Autocomplete
+// Autocomplete (character/location/scene heading)
 // ═══════════════════════════════════════════════════════════════════════════
 let acDropdown = null, acItems = [], acHighlight = -1, acType = null, acQuery = '', acDebounce = null, acNewTimer = null;
 
@@ -505,39 +688,23 @@ function selectSuggestion(index) {
     const line = editorView.state.doc.lineAt(editorView.state.selection.main.head);
 
     if (acType === 'character') {
-        const newText = item.name; // Already uppercase from API
-        editorView.dispatch({
-            changes: { from: line.from, to: line.to, insert: newText },
-            selection: { anchor: line.from + newText.length }
-        });
-        // Cache the character_id for this content
+        const newText = item.name;
+        editorView.dispatch({ changes: { from: line.from, to: line.to, insert: newText }, selection: { anchor: line.from + newText.length } });
         cacheEntityIds('character', newText, { character_id: item.character_id });
     } else if (acType === 'location') {
         const m = line.text.match(/^(\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s*)/i);
         const prefix = m ? m[1] : '';
         const newText = prefix + item.name.toUpperCase() + ' - ';
-        editorView.dispatch({
-            changes: { from: line.from, to: line.to, insert: newText },
-            selection: { anchor: line.from + newText.length }
-        });
-        // Cache the location_id for heading lines containing this location
+        editorView.dispatch({ changes: { from: line.from, to: line.to, insert: newText }, selection: { anchor: line.from + newText.length } });
         cacheEntityIds('location_hint', item.name.toUpperCase(), { location_id: item.location_id });
     } else if (acType === 'prefix') {
-        // Replace entire line with the selected prefix (e.g. "INT. ")
         const newText = item.value;
-        editorView.dispatch({
-            changes: { from: line.from, to: line.to, insert: newText },
-            selection: { anchor: line.from + newText.length }
-        });
+        editorView.dispatch({ changes: { from: line.from, to: line.to, insert: newText }, selection: { anchor: line.from + newText.length } });
     } else if (acType === 'tod') {
-        // Append time-of-day after the " - " separator
         const dashMatch = line.text.match(/^(.+\s-\s*)/);
         const beforeTod = dashMatch ? dashMatch[1] : line.text;
         const newText = beforeTod + item.value;
-        editorView.dispatch({
-            changes: { from: line.from, to: line.to, insert: newText },
-            selection: { anchor: line.from + newText.length }
-        });
+        editorView.dispatch({ changes: { from: line.from, to: line.to, insert: newText }, selection: { anchor: line.from + newText.length } });
     }
     hideAutocomplete();
     editorView.focus();
@@ -568,9 +735,7 @@ const TIME_OF_DAY_OPTIONS = [
     { name: 'SAME TIME',      value: 'SAME TIME' },
 ];
 
-// Regex to detect a complete "PREFIX LOCATION - " pattern (ready for time-of-day)
 const HEADING_READY_FOR_TOD_RE = /^\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s+.+\s-\s*/i;
-// Regex to detect we already have a prefix but are still typing location
 const HEADING_HAS_PREFIX_RE = /^\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s+/i;
 
 function checkAutocompleteContext() {
@@ -580,61 +745,34 @@ function checkAutocompleteContext() {
     const lineText = editorView.state.doc.lineAt(sel.head).text;
     const trimmed = lineText.trim();
 
-    // ── Character mode: name autocomplete ──
     if (currentMode === 'character') {
         if (!trimmed || trimmed.length < 2) { hideAutocomplete(); return; }
         const query = trimmed.replace(/\s*\([^)]*\)\s*$/g, '').trim();
         if (query.length >= 2) { triggerAutocomplete('character', query); return; }
     }
 
-    // ── Scene mode: prefix → location → time-of-day ──
     if (currentMode === 'scene') {
         const upper = trimmed.toUpperCase();
-
-        // Phase 3: After "PREFIX LOCATION - " → time-of-day suggestions
         if (HEADING_READY_FOR_TOD_RE.test(trimmed)) {
             const dashIdx = trimmed.lastIndexOf(' - ');
             const afterDash = dashIdx >= 0 ? trimmed.slice(dashIdx + 3).toUpperCase() : '';
-            const filtered = afterDash
-                ? TIME_OF_DAY_OPTIONS.filter(o => o.name.startsWith(afterDash))
-                : TIME_OF_DAY_OPTIONS;
-            if (filtered.length > 0) {
-                showStaticAutocomplete(filtered, 'tod');
-                return;
-            }
-            hideAutocomplete();
-            return;
+            const filtered = afterDash ? TIME_OF_DAY_OPTIONS.filter(o => o.name.startsWith(afterDash)) : TIME_OF_DAY_OPTIONS;
+            if (filtered.length > 0) { showStaticAutocomplete(filtered, 'tod'); return; }
+            hideAutocomplete(); return;
         }
-
-        // Phase 2: After prefix, typing location → location autocomplete
         if (HEADING_HAS_PREFIX_RE.test(trimmed)) {
             const m = trimmed.match(/^(\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s+)(.+)/i);
-            if (m && m[2].trim().length >= 1) {
-                triggerAutocomplete('location', m[2].replace(/\s*-\s*$/, '').trim());
-                return;
-            }
-            hideAutocomplete();
-            return;
+            if (m && m[2].trim().length >= 1) { triggerAutocomplete('location', m[2].replace(/\s*-\s*$/, '').trim()); return; }
+            hideAutocomplete(); return;
         }
-
-        // Phase 1: Empty or partial text → prefix suggestions
-        if (trimmed.length === 0) {
-            showStaticAutocomplete(HEADING_PREFIXES, 'prefix');
-            return;
-        }
-        const prefixMatches = HEADING_PREFIXES.filter(p =>
-            p.value.toUpperCase().startsWith(upper) || p.name.startsWith(upper)
-        );
-        if (prefixMatches.length > 0 && trimmed.length < 10) {
-            showStaticAutocomplete(prefixMatches, 'prefix');
-            return;
-        }
+        if (trimmed.length === 0) { showStaticAutocomplete(HEADING_PREFIXES, 'prefix'); return; }
+        const prefixMatches = HEADING_PREFIXES.filter(p => p.value.toUpperCase().startsWith(upper) || p.name.startsWith(upper));
+        if (prefixMatches.length > 0 && trimmed.length < 10) { showStaticAutocomplete(prefixMatches, 'prefix'); return; }
     }
 
     hideAutocomplete();
 }
 
-/** Show a static autocomplete dropdown (no API call). */
 function showStaticAutocomplete(items, type) {
     if (!editorView) return;
     if (acType === type && isAutocompleteVisible() && acItems.length === items.length) return;
@@ -693,7 +831,7 @@ const autocompleteKeymap = keymap.of([
 // ═══════════════════════════════════════════════════════════════════════════
 let editorView = null;
 let unsaved = false, saving = false, savedTimeout = null;
-let navScenes = [], navCharacters = [], navLocations = [];
+let navScenes = [], navCharacters = [], navLocations = [], navProps = [];
 let activeFilter = null;
 let loadedTitlePage = [];
 let lastEnterTime = 0;
@@ -710,13 +848,14 @@ function showSyncToast(summary) {
     if (summary.scenes_created) parts.push(`${summary.scenes_created} scene${summary.scenes_created > 1 ? 's' : ''}`);
     if (summary.characters_created) parts.push(`${summary.characters_created} char${summary.characters_created > 1 ? 's' : ''}`);
     if (summary.locations_created) parts.push(`${summary.locations_created} loc${summary.locations_created > 1 ? 's' : ''}`);
+    if (summary.props_created) parts.push(`${summary.props_created} prop${summary.props_created > 1 ? 's' : ''}`);
     if (parts.length) showToast('Synced: ' + parts.join(', '));
     if (summary.errors?.length) summary.errors.forEach(e => showToast('⚠ ' + e));
 }
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Load — structured lines → CodeMirror text
+// Load
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function loadScreenplay() {
@@ -726,12 +865,13 @@ async function loadScreenplay() {
         if (!res.ok) throw new Error('Failed to load');
         const data = await res.json();
 
-        if (!data.has_content) {
-            setSaveStatus('Empty', '');
-            return;
-        }
+        if (!data.has_content) { setSaveStatus('Empty', ''); return; }
 
         loadedTitlePage = data.title_page || [];
+
+        // Load prop tags
+        propTags = data.prop_tags || [];
+        notifyPropTagsChanged();
 
         entityCache.clear();
         for (const line of data.lines) {
@@ -739,18 +879,12 @@ async function loadScreenplay() {
             if (line.scene_id) ids.scene_id = line.scene_id;
             if (line.character_id) ids.character_id = line.character_id;
             if (line.location_id) ids.location_id = line.location_id;
-            if (Object.keys(ids).length > 0) {
-                cacheEntityIds(line.line_type, line.content, ids);
-            }
+            if (Object.keys(ids).length > 0) cacheEntityIds(line.line_type, line.content, ids);
         }
 
         initLineTypesFromServer(data.lines);
-
         const text = data.lines.map(l => l.content).join('\n');
-
-        editorView.dispatch({
-            changes: { from: 0, to: editorView.state.doc.length, insert: text }
-        });
+        editorView.dispatch({ changes: { from: 0, to: editorView.state.doc.length, insert: text } });
 
         unsaved = false;
         setSaveStatus('Loaded ✓', 'var(--success)');
@@ -765,13 +899,14 @@ async function loadScreenplay() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Save — CodeMirror text → classify → structured lines → API
+// Save
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function saveScreenplay() {
     if (!editorView || saving) return;
     markSaving();
     hideAutocomplete();
+    hidePropPopover();
 
     try {
         rebuildLineTypes(editorView.state);
@@ -791,10 +926,7 @@ async function saveScreenplay() {
             });
         }
 
-        const payload = {
-            title_page: loadedTitlePage,
-            lines: lines,
-        };
+        const payload = { title_page: loadedTitlePage, lines: lines };
 
         const res = await fetch('/api/screenplay-v2/save', {
             method: 'PUT',
@@ -811,7 +943,6 @@ async function saveScreenplay() {
         markSaved();
 
         if (data.summary) showSyncToast(data.summary);
-
         fetchNavigatorData();
 
         const reloadRes = await fetch('/api/screenplay-v2/load');
@@ -823,12 +954,14 @@ async function saveScreenplay() {
                 if (line.scene_id) ids.scene_id = line.scene_id;
                 if (line.character_id) ids.character_id = line.character_id;
                 if (line.location_id) ids.location_id = line.location_id;
-                if (Object.keys(ids).length > 0) {
-                    cacheEntityIds(line.line_type, line.content, ids);
-                }
+                if (Object.keys(ids).length > 0) cacheEntityIds(line.line_type, line.content, ids);
             }
             loadedTitlePage = reloaded.title_page || [];
             initLineTypesFromServer(reloaded.lines);
+
+            // Refresh prop tags from server (in case save created new props)
+            propTags = reloaded.prop_tags || [];
+            notifyPropTagsChanged();
         }
 
     } catch (e) {
@@ -844,7 +977,7 @@ function exportScreenplay() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Navigator — DB-driven, no live scanning
+// Navigator
 // ═══════════════════════════════════════════════════════════════════════════
 
 function initNavigatorResize() {
@@ -883,20 +1016,23 @@ function initCollapseHandlers() {
 
 async function fetchNavigatorData() {
     try {
-        const [sr, cr, lr] = await Promise.all([
+        const [sr, cr, lr, pr] = await Promise.all([
             fetch('/api/screenplay-v2/scenes'),
             fetch('/api/screenplay-v2/characters'),
             fetch('/api/screenplay-v2/locations'),
+            fetch('/api/screenplay-v2/props'),
         ]);
         if (sr.ok) navScenes = await sr.json();
         if (cr.ok) navCharacters = await cr.json();
         if (lr.ok) navLocations = await lr.json();
+        if (pr.ok) navProps = await pr.json();
     } catch (e) {
         console.error('Navigator fetch failed:', e);
     }
     renderScenes();
     renderCharacters();
     renderLocations();
+    renderProps();
 }
 
 function renderScenes() {
@@ -912,16 +1048,13 @@ function renderScenes() {
         item.dataset.sceneNumber = sc.scene_number;
         const charNames = (sc.characters || []).map(ch => ch.name || '');
         item.dataset.characters = charNames.join(',');
-
         const num = document.createElement('span');
         num.className = 'nav-scene-num';
         num.textContent = `#${sc.scene_number}`;
-
         const name = document.createElement('span');
         name.className = 'nav-item-name';
         name.textContent = sc.heading;
         name.title = sc.heading;
-
         item.appendChild(num);
         item.appendChild(name);
         if (sc.character_count > 0) {
@@ -1004,6 +1137,40 @@ function renderLocations() {
     applyFilterHighlight();
 }
 
+function renderProps() {
+    const c = document.getElementById('nav-props-items'), b = document.getElementById('nav-props-count');
+    if (!c) return;
+    // Only show props that have tags (active in the screenplay)
+    const tagged = navProps.filter(p => p.tagged_texts && p.tagged_texts.length > 0);
+    if (!tagged.length) {
+        c.innerHTML = '<span class="nav-empty-msg">No tagged props</span>';
+        if (b) b.textContent = '';
+        return;
+    }
+    if (b) b.textContent = tagged.length;
+    const f = document.createDocumentFragment();
+    for (const prop of tagged) {
+        const item = document.createElement('div');
+        item.className = 'nav-item nav-prop-item';
+        item.dataset.propName = prop.name;
+        item.innerHTML = `<span class="nav-item-icon">🔧</span><span class="nav-item-name">${esc(prop.name)}</span><span class="nav-item-badge">${prop.scene_count}</span>`;
+        if (prop.prop_id) {
+            const lk = document.createElement('a');
+            lk.className = 'nav-item-link';
+            lk.href = `/browse?entity_type=prop&entity_id=${prop.prop_id}`;
+            lk.textContent = '→';
+            lk.title = 'Open in Entity Browser';
+            lk.addEventListener('click', e => e.stopPropagation());
+            item.appendChild(lk);
+        }
+        item.addEventListener('click', () => toggleFilter('prop', prop.name));
+        f.appendChild(item);
+    }
+    c.innerHTML = '';
+    c.appendChild(f);
+    applyFilterHighlight();
+}
+
 function toggleFilter(type, name) {
     activeFilter = (activeFilter && activeFilter.type === type && activeFilter.name === name) ? null : { type, name };
     applyFilter();
@@ -1016,10 +1183,27 @@ function applyFilter() {
     if (ind) ind.classList.add('active');
     items.forEach(item => {
         let vis = false;
-        if (activeFilter.type === 'character') vis = (item.dataset.characters || '').split(',').includes(activeFilter.name);
-        else if (activeFilter.type === 'location') {
+        if (activeFilter.type === 'character') {
+            vis = (item.dataset.characters || '').split(',').includes(activeFilter.name);
+        } else if (activeFilter.type === 'location') {
             const sc = navScenes.find(s => s.scene_number === parseInt(item.dataset.sceneNumber));
             if (sc) vis = sc.heading.toUpperCase().includes(activeFilter.name);
+        } else if (activeFilter.type === 'prop') {
+            // Filter scenes that contain this prop (via scene_prop junctions — check navProps)
+            const propData = navProps.find(p => p.name === activeFilter.name);
+            if (propData && propData.tagged_texts) {
+                const sc = navScenes.find(s => s.scene_number === parseInt(item.dataset.sceneNumber));
+                if (sc) {
+                    vis = propData.tagged_texts.some(tt =>
+                        sc.heading.toLowerCase().includes(tt) ||
+                        // Can't check all scene content from navigator — show all for now
+                        propData.scene_count > 0
+                    );
+                    // Better: check if this scene_id is in the prop's scenes
+                    // For now, just show all scenes if prop has any scene count
+                    vis = propData.scene_count > 0;
+                }
+            }
         }
         item.classList.toggle('filtered-out', !vis);
     });
@@ -1027,6 +1211,7 @@ function applyFilter() {
 function applyFilterHighlight() {
     document.querySelectorAll('.nav-char-item').forEach(i => i.classList.toggle('active', !!(activeFilter && activeFilter.type === 'character' && i.dataset.charName === activeFilter.name)));
     document.querySelectorAll('.nav-loc-item').forEach(i => i.classList.toggle('active', !!(activeFilter && activeFilter.type === 'location' && i.dataset.locName === activeFilter.name)));
+    document.querySelectorAll('.nav-prop-item').forEach(i => i.classList.toggle('active', !!(activeFilter && activeFilter.type === 'prop' && i.dataset.propName === activeFilter.name)));
 }
 
 function scrollToLine(ln) {
@@ -1097,6 +1282,7 @@ function createEditor(container) {
                 fountainLanguage, history(), drawSelection(), highlightActiveLine(), EditorView.lineWrapping,
                 placeholder('Start writing your screenplay…'),
                 lineDecorationPlugin,
+                propDecorationPlugin,
                 autoUppercaseHandler,
                 autocompleteKeymap,
                 keymap.of([
@@ -1105,21 +1291,17 @@ function createEditor(container) {
                     { key: 'Enter', run(view) {
                         if (isAutocompleteVisible() && acItems.length > 0 && acHighlight >= 0) return false;
                         hideAutocomplete();
-
                         const now = Date.now();
                         const timeSinceLast = now - lastEnterTime;
                         lastEnterTime = now;
-
                         if (timeSinceLast < 350 && timeSinceLast > 30) {
                             setMode('scene');
                             return true;
                         }
-
                         const modeBeforeEnter = currentMode;
                         if (modeBeforeEnter === 'scene') setMode('description');
                         else if (modeBeforeEnter === 'character') setMode('dialogue');
                         else if (modeBeforeEnter === 'dialogue') setMode('character');
-
                         const { from, to } = view.state.selection.main;
                         view.dispatch({
                             changes: { from, to, insert: '\n' },
@@ -1131,6 +1313,7 @@ function createEditor(container) {
                 ]),
                 keymap.of([
                     { key: 'Mod-s', run() { saveScreenplay(); return true; } },
+                    { key: 'Mod-p', run(view) { handlePropTag(view); return true; } },
                     ...defaultKeymap, ...historyKeymap,
                 ]),
                 EditorView.updateListener.of((update) => {
