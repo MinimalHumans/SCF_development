@@ -1086,7 +1086,8 @@ function renderScenes() {
         item.className = 'nav-item nav-scene-item';
         item.dataset.lineNumber = sc.line_number;
         item.dataset.sceneNumber = sc.scene_number;
-        const charNames = (sc.characters || []).map(ch => ch.name || '');
+        if (sc.scene_id) item.dataset.sceneId = sc.scene_id;
+        const charNames = (sc.characters || []).map(ch => (ch.name || '').toUpperCase());
         item.dataset.characters = charNames.join(',');
         const num = document.createElement('span');
         num.className = 'nav-scene-num';
@@ -1227,25 +1228,15 @@ function applyFilter() {
     items.forEach(item => {
         let vis = false;
         if (activeFilter.type === 'character') {
-            vis = (item.dataset.characters || '').split(',').includes(activeFilter.name);
+            vis = (item.dataset.characters || '').toUpperCase().split(',').includes(activeFilter.name.toUpperCase());
         } else if (activeFilter.type === 'location') {
             const sc = navScenes.find(s => s.scene_number === parseInt(item.dataset.sceneNumber));
             if (sc) vis = sc.heading.toUpperCase().includes(activeFilter.name);
         } else if (activeFilter.type === 'prop') {
-            // Filter scenes that contain this prop (via scene_prop junctions — check navProps)
             const propData = navProps.find(p => p.name === activeFilter.name);
-            if (propData && propData.tagged_texts) {
-                const sc = navScenes.find(s => s.scene_number === parseInt(item.dataset.sceneNumber));
-                if (sc) {
-                    vis = propData.tagged_texts.some(tt =>
-                        sc.heading.toLowerCase().includes(tt) ||
-                        // Can't check all scene content from navigator — show all for now
-                        propData.scene_count > 0
-                    );
-                    // Better: check if this scene_id is in the prop's scenes
-                    // For now, just show all scenes if prop has any scene count
-                    vis = propData.scene_count > 0;
-                }
+            if (propData && propData.scene_ids) {
+                const sceneId = parseInt(item.dataset.sceneId);
+                vis = sceneId && propData.scene_ids.includes(sceneId);
             }
         }
         item.classList.toggle('filtered-out', !vis);
@@ -1261,7 +1252,11 @@ function scrollToLine(ln) {
     if (!editorView) return;
     const n = ln + 1;
     if (n < 1 || n > editorView.state.doc.lines) return;
-    editorView.dispatch({ selection: { anchor: editorView.state.doc.line(n).from }, scrollIntoView: true });
+    const pos = editorView.state.doc.line(n).from;
+    editorView.dispatch({
+        selection: { anchor: pos },
+        effects: EditorView.scrollIntoView(pos, { y: 'center' }),
+    });
     editorView.focus();
 }
 

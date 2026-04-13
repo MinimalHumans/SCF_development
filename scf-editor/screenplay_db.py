@@ -585,6 +585,13 @@ def get_props(db_path: Path) -> list[dict]:
         ).fetchall():
             tag_map.setdefault(row["prop_id"], []).append(row["tagged_text"])
 
+        # Get scene_ids for each prop (for navigator filtering)
+        scene_id_map = {}
+        for row in conn.execute(
+            "SELECT prop_id, scene_id FROM scene_prop WHERE scene_id IS NOT NULL"
+        ).fetchall():
+            scene_id_map.setdefault(row["prop_id"], []).append(row["scene_id"])
+
         return [
             {
                 "prop_id": r["prop_id"],
@@ -592,6 +599,7 @@ def get_props(db_path: Path) -> list[dict]:
                 "scene_count": r["scene_count"],
                 "first_appearance": r["first_appearance"] or 9999999,
                 "tagged_texts": tag_map.get(r["prop_id"], []),
+                "scene_ids": scene_id_map.get(r["prop_id"], []),
             }
             for r in rows
         ]
