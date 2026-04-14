@@ -116,6 +116,10 @@ def init_database(db_path: str | Path) -> None:
         import screenplay_db
         screenplay_db.init_screenplay_tables(conn)
 
+        # Entity images table (Reference tab — visual reference board)
+        import images_api
+        images_api.init_images_table(conn)
+
         conn.commit()
     finally:
         conn.close()

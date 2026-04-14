@@ -22,6 +22,7 @@ import database as db
 import queries
 import screenplay_db
 from screenplay_api import screenplay_router
+from images_api import images_router
 from datetime import date, datetime
 import re
 
@@ -48,6 +49,8 @@ templates = Jinja2Templates(directory="templates")
 
 # Mount v2 screenplay API BEFORE generic CRUD routes
 app.include_router(screenplay_router)
+# Mount entity images API
+app.include_router(images_router)
 
 
 # -- Template globals/helpers --

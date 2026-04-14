@@ -1,5 +1,6 @@
 {% set entity_data = entity if entity else {} %}
 {% set e = entity_def %}
+{% set supports_images = entity_type in ('character', 'location', 'prop') %}
 
 <div class="entity-editor">
 
@@ -27,7 +28,7 @@
 
     <!-- Tab Bar -->
     {% set tabs = e.get_tabs() %}
-    {% if tabs | length > 1 %}
+    {% if tabs | length > 1 or supports_images %}
     <div class="tab-bar" role="tablist">
         {% for tab in tabs %}
         <button class="tab-btn {% if loop.first %}active{% endif %}"
@@ -37,6 +38,14 @@
             {{ tab }}
         </button>
         {% endfor %}
+        {% if supports_images %}
+        <button class="tab-btn"
+                role="tab"
+                data-tab="reference"
+                onclick="switchTab(this, 'reference')">
+            Reference <span class="tab-image-count" id="tab-image-count"></span>
+        </button>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -157,6 +166,38 @@
             </span>
         </div>
     </form>
+
+    {# ================================================================ #}
+    {# Reference Tab — Entity Images (outside the form)                 #}
+    {# ================================================================ #}
+
+    {% if supports_images %}
+    <div class="tab-content" id="tab-reference" role="tabpanel">
+        <div id="image-reference-panel"
+             data-entity-type="{{ entity_type }}"
+             data-entity-id="{{ entity_data.get('id', 0) }}">
+
+            <!-- Upload Zone -->
+            <div class="image-upload-zone">
+                <input type="file"
+                       class="image-upload-input"
+                       accept=".jpg,.jpeg,.png"
+                       multiple>
+                <div class="image-upload-icon">📷</div>
+                <div class="image-upload-text">
+                    <strong>Drop images here</strong> or click to browse
+                </div>
+                <div class="image-upload-hint">JPG, PNG — no size limit</div>
+                <div class="image-upload-progress">Uploading…</div>
+            </div>
+
+            <!-- Image Grid -->
+            <div class="image-grid" id="image-grid">
+                <div class="image-grid-empty">Loading…</div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 
     {# ================================================================ #}
     {# Inline Relationship Panels (outside the form, managed via JS)    #}
