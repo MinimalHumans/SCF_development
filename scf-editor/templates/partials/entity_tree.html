@@ -1,11 +1,41 @@
+{# ── Collapse-All / Expand-All toolbar ── #}
+<div style="display: flex; gap: 4px; padding: 6px 12px 2px; border-bottom: 1px solid var(--border-subtle);">
+    <button class="btn-tree-ctrl" onclick="collapseAllTree()" title="Collapse all">▾ Collapse</button>
+    <button class="btn-tree-ctrl" onclick="expandAllTree()" title="Expand all">▸ Expand</button>
+</div>
+
 {% for cat_name, entities in categories.items() %}
 {% if cat_name != "Project" and cat_name != "Connections" %}
-<div class="tree-category">
-    <div class="tree-category-label">{{ cat_name }}</div>
 
+{# Check if entire category is placeholder (all entities tier > 0) #}
+{% set ns = namespace(cat_all_placeholder=true) %}
+{% for edef in entities %}
+{% if edef.tier == 0 %}
+{% set ns.cat_all_placeholder = false %}
+{% endif %}
+{% endfor %}
+
+<div class="tree-category {% if ns.cat_all_placeholder %}tree-category-placeholder{% endif %}"
+     data-category="{{ cat_name | replace(' ', '-') | lower }}">
+
+    <div class="tree-category-label"
+         onclick="toggleTreeCategory(this)"
+         title="Click to collapse/expand category">
+        <span class="cat-chevron">▼</span>
+        <span>{{ cat_name }}</span>
+        {% if ns.cat_all_placeholder %}
+        <span class="tree-dev-badge">In Development</span>
+        {% endif %}
+    </div>
+
+    <div class="tree-category-body">
     {% for edef in entities %}
     {% set td = tree_data.get(edef.name, {"records": [], "count": 0}) %}
-    <div class="tree-entity-group" data-entity-type="{{ edef.name }}">
+
+    {# Skip empty tier-1+ entities — no need to show empty placeholders #}
+    {% if td.count > 0 or edef.tier == 0 %}
+    <div class="tree-entity-group {% if edef.tier > 0 %}tree-entity-placeholder{% endif %}"
+         data-entity-type="{{ edef.name }}">
 
         <div class="tree-group-header collapsed"
              onclick="toggleTreeGroup(this)">
@@ -13,6 +43,9 @@
             <span class="icon">{{ edef.icon }}</span>
             <span class="label">{{ edef.label_plural }}</span>
             <span class="count">{{ td.count }}</span>
+            {% if edef.tier > 0 and td.count == 0 %}
+            <span class="tree-dev-dot" title="Schema defined — editor support in development">●</span>
+            {% endif %}
             <form hx-post="/api/{{ edef.name }}"
                   hx-swap="none"
                   style="display: contents;"
@@ -41,7 +74,9 @@
         </div>
 
     </div>
+    {% endif %}
     {% endfor %}
+    </div>
 </div>
 {% endif %}
 {% endfor %}

@@ -4,7 +4,7 @@
    ========================================================================== */
 
 // =============================================================================
-// Tree collapse state persistence
+// Tree collapse state persistence (entity groups)
 // =============================================================================
 
 const TREE_STATE_KEY = 'scf-tree-collapse-state';
@@ -50,6 +50,84 @@ function applyTreeState() {
             items.classList.remove('collapsed');
         }
     });
+}
+
+// =============================================================================
+// Category-level collapse
+// =============================================================================
+
+const CAT_COLLAPSE_KEY = 'scf-tree-category-collapse';
+
+function getCategoryState() {
+    try { return JSON.parse(localStorage.getItem(CAT_COLLAPSE_KEY)) || {}; } catch { return {}; }
+}
+
+function saveCategoryState() {
+    const state = {};
+    document.querySelectorAll('.tree-category').forEach(cat => {
+        const key = cat.dataset.category;
+        if (key) {
+            state[key] = cat.classList.contains('cat-collapsed');
+        }
+    });
+    localStorage.setItem(CAT_COLLAPSE_KEY, JSON.stringify(state));
+}
+
+function applyCategoryState() {
+    const state = getCategoryState();
+    document.querySelectorAll('.tree-category').forEach(cat => {
+        const key = cat.dataset.category;
+        if (!key) return;
+
+        // If saved state exists, use it. Default: collapse placeholder categories.
+        const isPlaceholder = cat.classList.contains('tree-category-placeholder');
+        const shouldCollapse = (key in state) ? state[key] : isPlaceholder;
+
+        if (shouldCollapse) {
+            cat.classList.add('cat-collapsed');
+        } else {
+            cat.classList.remove('cat-collapsed');
+        }
+    });
+}
+
+function toggleTreeCategory(labelEl) {
+    const cat = labelEl.closest('.tree-category');
+    if (!cat) return;
+    cat.classList.toggle('cat-collapsed');
+    saveCategoryState();
+}
+
+// =============================================================================
+// Collapse All / Expand All
+// =============================================================================
+
+function collapseAllTree() {
+    document.querySelectorAll('.tree-category').forEach(cat => {
+        cat.classList.add('cat-collapsed');
+    });
+    document.querySelectorAll('.tree-group-header').forEach(h => {
+        h.classList.add('collapsed');
+    });
+    document.querySelectorAll('.tree-items').forEach(items => {
+        items.classList.add('collapsed');
+    });
+    saveCategoryState();
+    saveTreeState();
+}
+
+function expandAllTree() {
+    document.querySelectorAll('.tree-category').forEach(cat => {
+        cat.classList.remove('cat-collapsed');
+    });
+    document.querySelectorAll('.tree-group-header').forEach(h => {
+        h.classList.remove('collapsed');
+    });
+    document.querySelectorAll('.tree-items').forEach(items => {
+        items.classList.remove('collapsed');
+    });
+    saveCategoryState();
+    saveTreeState();
 }
 
 // -- Tree toggling -----------------------------------------------------------
@@ -107,6 +185,7 @@ function refreshTree() {
             if (scroll) {
                 scroll.innerHTML = html;
                 applyTreeState();
+                applyCategoryState();
                 initTreeSortToggles();
                 scroll.scrollTop = savedScroll;
             }
@@ -126,7 +205,6 @@ function initTreeScrollPreservation() {
     // Restore saved scroll position from before page navigation
     const saved = sessionStorage.getItem(TREE_SCROLL_KEY);
     if (saved !== null) {
-        // Use requestAnimationFrame to ensure DOM is laid out
         requestAnimationFrame(() => {
             scroll.scrollTop = parseInt(saved, 10);
         });
@@ -139,6 +217,11 @@ function initTreeScrollPreservation() {
         if (link) {
             sessionStorage.setItem(TREE_SCROLL_KEY, scroll.scrollTop);
         }
+    });
+
+    // Save scroll position on htmx form submissions (the + create buttons)
+    scroll.addEventListener('htmx:beforeRequest', (e) => {
+        sessionStorage.setItem(TREE_SCROLL_KEY, scroll.scrollTop);
     });
 }
 
@@ -164,13 +247,11 @@ function sortTreeItems(container, mode) {
             return nameA.localeCompare(nameB);
         });
     } else {
-        // Sort by entity ID (creation order — matches screenplay order for imports)
         items.sort((a, b) => {
             return parseInt(a.dataset.entityId || 0) - parseInt(b.dataset.entityId || 0);
         });
     }
 
-    // Re-append in sorted order (moves existing DOM nodes)
     for (const item of items) {
         container.appendChild(item);
     }
@@ -232,7 +313,6 @@ function initTreeSortToggles() {
             sortTreeItems(itemsContainer, st[type]);
         });
 
-        // Insert before the add button form
         const addForm = header.querySelector('form');
         if (addForm) {
             header.insertBefore(btn, addForm);
@@ -240,7 +320,6 @@ function initTreeSortToggles() {
             header.appendChild(btn);
         }
 
-        // Apply initial sort
         sortTreeItems(itemsContainer, mode);
     });
 }
@@ -255,15 +334,12 @@ function initPanelResize() {
     const panel = document.querySelector('.panel-tree');
     if (!panel) return;
 
-    // Don't double-init
     if (panel.querySelector('.panel-resize-handle')) return;
 
-    // Create resize handle
     const handle = document.createElement('div');
     handle.className = 'panel-resize-handle';
     panel.appendChild(handle);
 
-    // Restore saved width
     const savedWidth = localStorage.getItem(PANEL_WIDTH_KEY);
     if (savedWidth) {
         panel.style.width = savedWidth + 'px';
@@ -617,6 +693,7 @@ document.body.addEventListener('htmx:afterSwap', (e) => {
     }
     // Re-apply tree state after any tree refresh
     applyTreeState();
+    applyCategoryState();
     initTreeSortToggles();
 });
 
@@ -633,6 +710,7 @@ function showToast(message) {
 // =============================================================================
 
 applyTreeState();
+applyCategoryState();
 initTreeSortToggles();
 initPanelResize();
 initSearch();

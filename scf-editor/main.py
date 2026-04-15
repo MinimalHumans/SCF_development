@@ -139,6 +139,44 @@ def _auto_name_junction(db_path: Path, entity_type: str, entity_id: int):
     db.update_entity(db_path, entity_type, entity_id, {"name": display_name})
 
 
+# -- Optimized tree data loading --
+
+def _build_tree_data(db_path: Path) -> dict:
+    """Build tree data efficiently — batch counts + selective record queries.
+
+    Only fetches full record lists for tier-0 entities and entities that
+    actually have data. Empty tier-1+ entities get count=0, records=[]
+    without any SELECT query, dramatically reducing DB load with the
+    expanded 96-entity schema.
+    """
+    # 1. Get counts for all entities in one connection
+    counts = db.batch_entity_counts(db_path)
+
+    # 2. Determine which entities need full record lists:
+    #    - Tier 0 entities always (active editor entities)
+    #    - Any entity with count > 0 (has data worth showing)
+    entities_to_query = []
+    for name, edef in get_all_entities().items():
+        if name == "project":
+            continue
+        if edef.tier == 0 or counts.get(name, 0) > 0:
+            entities_to_query.append(name)
+
+    # 3. Batch-query only those entities (single connection)
+    records = db.list_entities_batch(db_path, entities_to_query)
+
+    # 4. Build tree_data dict
+    tree_data = {}
+    for name, edef in get_all_entities().items():
+        if name == "project":
+            continue
+        count = counts.get(name, 0)
+        recs = records.get(name, [])
+        tree_data[name] = {"def": edef, "records": recs, "count": count}
+
+    return tree_data
+
+
 # =============================================================================
 # Page routes
 # =============================================================================
@@ -251,15 +289,8 @@ async def browse(request: Request, entity_type: str = None, entity_id: int = Non
     """Main two-panel browser view."""
     db_path = _require_project(request)
 
-    tree_data = {}
-    for name, edef in get_all_entities().items():
-        if name == "project":
-            continue
-        try:
-            items = db.list_entities(db_path, name)
-            tree_data[name] = {"def": edef, "records": items, "count": len(items)}
-        except Exception:
-            tree_data[name] = {"def": edef, "records": [], "count": 0}
+    # Optimized: batch counts + selective queries (was: 96 separate connections)
+    tree_data = _build_tree_data(db_path)
 
     selected = None
     selected_def = None
@@ -378,15 +409,9 @@ async def htmx_entity_form(request: Request, entity_type: str, entity_id: int):
 async def htmx_tree(request: Request):
     """Return just the tree panel (for htmx refresh after create/delete)."""
     db_path = _require_project(request)
-    tree_data = {}
-    for name, edef in get_all_entities().items():
-        if name == "project":
-            continue
-        try:
-            items = db.list_entities(db_path, name)
-            tree_data[name] = {"def": edef, "records": items, "count": len(items)}
-        except Exception:
-            tree_data[name] = {"def": edef, "records": [], "count": 0}
+
+    # Optimized: batch counts + selective queries
+    tree_data = _build_tree_data(db_path)
 
     return templates.TemplateResponse("partials/entity_tree.html", {
         "request": request,

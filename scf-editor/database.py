@@ -311,6 +311,51 @@ def search_all(db_path: str | Path, query: str) -> list[dict]:
 
 
 # =============================================================================
+# Batch queries — performance optimization for tree loading
+# =============================================================================
+
+def batch_entity_counts(db_path: str | Path) -> dict[str, int]:
+    """Get row counts for all entity tables in a single connection.
+    Returns {entity_name: count}. Much faster than calling count_entities N times."""
+    conn = get_connection(db_path)
+    try:
+        counts = {}
+        for name in get_all_entities():
+            try:
+                row = conn.execute(f"SELECT COUNT(*) as cnt FROM {name}").fetchone()
+                counts[name] = row["cnt"]
+            except Exception:
+                counts[name] = 0
+        return counts
+    finally:
+        conn.close()
+
+
+def list_entities_batch(db_path: str | Path, entity_names: list[str],
+                        limit: int = 500) -> dict[str, list[dict]]:
+    """List entities for multiple types in a single connection.
+    Only queries types in the provided list. Returns {entity_name: [records]}."""
+    conn = get_connection(db_path)
+    try:
+        result = {}
+        for name in entity_names:
+            entity_def = get_entity(name)
+            if not entity_def:
+                result[name] = []
+                continue
+            try:
+                rows = conn.execute(
+                    f"SELECT * FROM {name} ORDER BY id ASC LIMIT ?", (limit,)
+                ).fetchall()
+                result[name] = [dict(r) for r in rows]
+            except Exception:
+                result[name] = []
+        return result
+    finally:
+        conn.close()
+
+
+# =============================================================================
 # Project management
 # =============================================================================
 

@@ -73,6 +73,7 @@ class EntityDef:
     category: str = "Entities"
     description: str = ""
     sort_order: int = 0
+    tier: int = 0               # 0=active in editor, 1+=schema-only (grayed out in UI)
 
     def get_tabs(self) -> list[str]:
         tabs = []
@@ -3114,6 +3115,20 @@ register(EntityDef(
         FieldDef("context_notes", "Context Notes", "textarea"),
     ],
 ))
+
+
+# =============================================================================
+# Tier Assignment — entities not yet fully active in the editor
+# =============================================================================
+# Tier 0 = fully active (original entities with editor support)
+# Tier 1 = schema-defined, visible but marked as "in development"
+_TIER_0_ENTITIES = {
+    "project", "character", "location", "prop", "scene", "theme", "sequence",
+    "scene_character", "scene_prop", "scene_sequence",
+}
+for _name, _entity in ENTITY_REGISTRY.items():
+    if _name not in _TIER_0_ENTITIES:
+        _entity.tier = 1
 
 
 # =============================================================================
