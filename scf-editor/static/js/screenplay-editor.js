@@ -10,8 +10,11 @@
  * 
  * Tab cycles modes: Description → Scene → Character → Dialogue → Transition
  * Autocomplete: Character mode → character names, Scene mode → locations
- * Ctrl+P: Tag selected text as a prop entity
- * Navigator: DB queries via /api/screenplay-v2/scenes|characters|locations|props
+ * Navigator: DB queries via /api/screenplay-v2/scenes|characters|locations
+ * 
+ * STRUCTURAL SPACING: Visual gaps between screenplay elements are rendered
+ * via CSS margins, not blank lines. The document contains only content lines
+ * and intentional user-inserted blanks.
  */
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -87,6 +90,7 @@ function classifyAllLines(text) {
 // ═══════════════════════════════════════════════════════════════════════════
 // Entity Cache — content-addressed ID lookup
 // ═══════════════════════════════════════════════════════════════════════════
+
 const entityCache = new Map();
 
 function cacheKey(lineType, content) {
@@ -104,7 +108,7 @@ function getCachedIds(lineType, content) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Fountain StreamLanguage (syntax coloring — unchanged)
+// Fountain StreamLanguage (syntax coloring)
 // ═══════════════════════════════════════════════════════════════════════════
 const fountainStreamMode = {
     name: 'fountain',
@@ -138,6 +142,7 @@ const fountainLanguage = StreamLanguage.define(fountainStreamMode);
 // ═══════════════════════════════════════════════════════════════════════════
 // Line Type Registry
 // ═══════════════════════════════════════════════════════════════════════════
+
 let lineTypes = [];
 let lineContents = [];
 
@@ -165,6 +170,7 @@ function adjustState(st, type) {
     }
 }
 
+/** Repair pass — only for large changes (paste, import). */
 function repairDialoguePairs(types, contents, cursorIdx) {
     const n = types.length;
     for (let i = 0; i < n; i++) {
@@ -210,11 +216,16 @@ function repairDialoguePairs(types, contents, cursorIdx) {
     }
 }
 
+/** Rebuild lineTypes using content-keyed map.
+ *  Cursor line override only when typing (not deleting).
+ *  Mode syncs to resolved type after structural deletes.
+ */
 function rebuildLineTypes(state) {
     const doc = state.doc;
     const cursorLine = doc.lineAt(state.selection.main.head).number;
     const prevLineCount = lineTypes.length;
     const linesDeleted = doc.lines < prevLineCount;
+
     const contentTypeMap = new Map();
     for (let i = 0; i < lineTypes.length; i++) {
         const type = lineTypes[i];
@@ -224,17 +235,28 @@ function rebuildLineTypes(state) {
             contentTypeMap.get(content).push({ type, oldPos: i });
         }
     }
+
     const st = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
     const newTypes = [];
     const newContents = [];
+    let mergeTypeUsed = false;
+
     for (let i = 1; i <= doc.lines; i++) {
         const trimmed = doc.line(i).text.trim();
         const contentType = classifyLine(trimmed, st);
         let actualType;
-        if (i === cursorLine && !linesDeleted) {
-            actualType = trimmed === '' ? 'blank' : modeToLineType(currentMode);
-        } else if (trimmed === '') {
+
+        if (trimmed === '') {
             actualType = 'blank';
+        } else if (i === cursorLine && pendingMergeType) {
+            // Explicit merge via Backspace/Delete at line boundary.
+            // The handler already determined which type wins (upper line).
+            actualType = pendingMergeType;
+            mergeTypeUsed = true;
+        } else if (i === cursorLine && !linesDeleted && !isLoading) {
+            // Typing or line insertion — user's mode is authority
+            // Skipped during load (isLoading) to preserve server-provided types
+            actualType = modeToLineType(currentMode);
         } else {
             const candidates = contentTypeMap.get(trimmed);
             if (candidates && candidates.length > 0) {
@@ -251,15 +273,23 @@ function rebuildLineTypes(state) {
                 actualType = contentType;
             }
         }
+
         if (actualType !== contentType) adjustState(st, actualType);
         newTypes.push(actualType);
         newContents.push(trimmed);
     }
+
     const lineCountDelta = Math.abs(doc.lines - prevLineCount);
-    if (lineCountDelta > 3) repairDialoguePairs(newTypes, newContents, cursorLine - 1);
+    if (lineCountDelta > 3) {
+        repairDialoguePairs(newTypes, newContents, cursorLine - 1);
+    }
+
     lineTypes = newTypes;
     lineContents = newContents;
-    if (linesDeleted) {
+
+    // After structural deletes (not explicit merges), sync mode to cursor line's
+    // resolved type. Skip if pendingMergeType was used — handler already set mode.
+    if (linesDeleted && !mergeTypeUsed) {
         const cursorIdx = cursorLine - 1;
         if (cursorIdx >= 0 && cursorIdx < newTypes.length) {
             const resolvedType = newTypes[cursorIdx];
@@ -269,6 +299,9 @@ function rebuildLineTypes(state) {
             }
         }
     }
+
+    // Always clear — consumed or not
+    pendingMergeType = null;
 }
 
 function initLineTypesFromServer(serverLines) {
@@ -277,7 +310,48 @@ function initLineTypesFromServer(serverLines) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Line Decoration Plugin
+// Structural Spacing — Gap class resolver
+// ═══════════════════════════════════════════════════════════════════════════
+// Determines CSS margin class based on the transition between consecutive
+// line types. Replaces blank lines as visual separators.
+
+const _DIALOGUE_BLOCK_TYPES = new Set(['dialogue', 'parenthetical', 'character']);
+
+function getGapClass(currType, prevType) {
+    if (!prevType) return null;
+
+    // Scene heading: always large gap (scene break)
+    if (currType === 'heading') {
+        return 'cm-scf-gap-scene';
+    }
+
+    // Character cue: new dialogue block — gap unless preceded by nothing meaningful
+    if (currType === 'character') {
+        // Gap before character cue (start of dialogue block)
+        if (prevType !== 'blank') return 'cm-scf-gap-block';
+        return null;
+    }
+
+    // Transition: gap before
+    if (currType === 'transition') {
+        return 'cm-scf-gap-element';
+    }
+
+    // Action after dialogue/parenthetical: end of dialogue block
+    if (currType === 'action' && (prevType === 'dialogue' || prevType === 'parenthetical')) {
+        return 'cm-scf-gap-element';
+    }
+
+    // Action after transition
+    if (currType === 'action' && prevType === 'transition') {
+        return 'cm-scf-gap-element';
+    }
+
+    return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Line Decoration Plugin — applies type classes AND structural gap margins
 // ═══════════════════════════════════════════════════════════════════════════
 const LINE_CLS = {
     heading: 'cm-scf-heading', action: 'cm-scf-action', character: 'cm-scf-character',
@@ -296,284 +370,88 @@ const lineDecorationPlugin = ViewPlugin.fromClass(class {
         const decos = [], doc = view.state.doc;
         const cursorLine = doc.lineAt(view.state.selection.main.head).number;
         for (let i = 1; i <= doc.lines; i++) {
-            const attrs = {};
+            const classes = [];
+
+            // Line type class (skip cursor line — mode CSS handles it)
             if (i !== cursorLine) {
                 const type = (i - 1 < lineTypes.length) ? lineTypes[i - 1] : 'action';
                 const cls = LINE_CLS[type];
-                if (cls) attrs.class = cls;
+                if (cls) classes.push(cls);
             }
+
+            // Structural gap margin — based on type transition from previous line
+            const currType = (i - 1 < lineTypes.length) ? lineTypes[i - 1] : 'action';
+            const prevType = (i > 1 && i - 2 < lineTypes.length) ? lineTypes[i - 2] : null;
+            const gapCls = getGapClass(currType, prevType);
+            if (gapCls) classes.push(gapCls);
+
+            // Page break on every LINES_PER_PAGE-th line
             if (i % LINES_PER_PAGE === 0 && i < doc.lines) {
                 const pageNum = i / LINES_PER_PAGE;
-                attrs.class = (attrs.class || '') + ' cm-scf-pagebreak';
-                attrs['data-page'] = String(pageNum);
+                classes.push('cm-scf-pagebreak');
+                // Build attrs with both class and data-page
+                const combined = classes.join(' ');
+                decos.push(Decoration.line({ attributes: { class: combined, 'data-page': String(pageNum) } }).range(doc.line(i).from));
+                continue;
             }
-            if (attrs.class) decos.push(Decoration.line({ attributes: attrs }).range(doc.line(i).from));
+
+            if (classes.length > 0) {
+                decos.push(Decoration.line({ attributes: { class: classes.join(' ') } }).range(doc.line(i).from));
+            }
         }
         return Decoration.set(decos, true);
     }
 }, { decorations: v => v.decorations });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Prop Tag System — Inline Prop Annotations
+// Structural Blank Stripping — Phase 2
 // ═══════════════════════════════════════════════════════════════════════════
-// propTags: [{id, prop_id, tagged_text, display_name}]
-// The decoration plugin highlights all occurrences of tagged_text in the doc.
+// Removes blank lines that exist only as structural separators (between
+// different element types). Keeps intentional blanks (consecutive blanks,
+// blanks between same-type elements).
 
-let propTags = [];
-let propTagsVersion = 0;  // increment to trigger decoration rebuild
+function stripStructuralBlanks(lines) {
+    const result = [];
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
 
-function escapeRegex(s) {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function buildPropPattern() {
-    if (!propTags.length) return null;
-    // Build alternation sorted by length desc (longer matches first)
-    const sorted = [...propTags].sort((a, b) => b.tagged_text.length - a.tagged_text.length);
-    const alt = sorted.map(t => escapeRegex(t.tagged_text)).join('|');
-    return new RegExp(`\\b(${alt})\\b`, 'gi');
-}
-
-function getTagForText(text) {
-    const lower = text.toLowerCase();
-    return propTags.find(t => t.tagged_text === lower);
-}
-
-const propHighlightDeco = Decoration.mark({ class: 'cm-prop-highlight' });
-
-const propDecorationPlugin = ViewPlugin.fromClass(class {
-    constructor(view) {
-        this._version = propTagsVersion;
-        this.decorations = this.build(view);
-    }
-    update(update) {
-        if (update.docChanged || update.viewportChanged || this._version !== propTagsVersion) {
-            this._version = propTagsVersion;
-            this.decorations = this.build(update.view);
-        }
-    }
-    build(view) {
-        const pattern = buildPropPattern();
-        if (!pattern) return Decoration.none;
-
-        const decos = [];
-        const doc = view.state.doc;
-
-        for (const { from, to } of view.visibleRanges) {
-            let pos = from;
-            while (pos < to) {
-                const line = doc.lineAt(pos);
-                const text = line.text;
-                if (text.trim()) {
-                    pattern.lastIndex = 0;
-                    let m;
-                    while ((m = pattern.exec(text)) !== null) {
-                        const start = line.from + m.index;
-                        const end = start + m[0].length;
-                        decos.push(propHighlightDeco.range(start, end));
-                    }
-                }
-                pos = line.to + 1;
-            }
+        // A line is "blank" if its content is empty, regardless of stored type
+        if (line.content.trim() !== '') {
+            result.push(line);
+            continue;
         }
 
-        decos.sort((a, b) => a.from - b.from || a.to - b.to);
-        return Decoration.set(decos, true);
-    }
-}, { decorations: v => v.decorations });
+        // Empty line — check if it's structural (CSS handles spacing) or intentional
+        const prev = i > 0 ? lines[i - 1] : null;
+        const next = i < lines.length - 1 ? lines[i + 1] : null;
 
-function notifyPropTagsChanged() {
-    propTagsVersion++;
-    if (editorView) editorView.dispatch({});
+        if (isStructuralBlank(prev, next)) {
+            // Skip — CSS padding handles this spacing
+            continue;
+        }
+
+        // Intentional blank — keep it
+        result.push(line);
+    }
+    return result;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Prop Tag Popover — Ctrl+P to tag/untag selected text
-// ═══════════════════════════════════════════════════════════════════════════
+function isStructuralBlank(prev, next) {
+    // No context: keep the blank (edge case — blank at start/end of doc)
+    if (!prev || !next) return false;
 
-let propPopover = null;
-let propPopoverItems = [];
-let propPopoverHighlight = -1;
+    const prevEmpty = prev.content.trim() === '';
+    const nextEmpty = next.content.trim() === '';
 
-function getOrCreatePropPopover() {
-    if (!propPopover) {
-        propPopover = document.createElement('div');
-        propPopover.className = 'prop-tag-popover hidden';
-        document.body.appendChild(propPopover);
-        document.addEventListener('click', (e) => {
-            if (propPopover && !propPopover.contains(e.target)) hidePropPopover();
-        });
-    }
-    return propPopover;
-}
+    // Adjacent to another blank: intentional spacing — keep both
+    if (prevEmpty || nextEmpty) return false;
 
-function isPropPopoverVisible() {
-    return propPopover && !propPopover.classList.contains('hidden');
-}
+    // Between two same-type content lines: intentional paragraph break — keep
+    if (prev.line_type === next.line_type) return false;
 
-function hidePropPopover() {
-    if (propPopover) {
-        propPopover.classList.add('hidden');
-        propPopover.innerHTML = '';
-    }
-    propPopoverItems = [];
-    propPopoverHighlight = -1;
-}
-
-function handlePropTag(view) {
-    // Get selection or expand to word under cursor
-    let { from, to } = view.state.selection.main;
-    if (from === to) {
-        // No selection — expand to word under cursor
-        const line = view.state.doc.lineAt(from);
-        const text = line.text;
-        const offset = from - line.from;
-        let wStart = offset, wEnd = offset;
-        while (wStart > 0 && /\w/.test(text[wStart - 1])) wStart--;
-        while (wEnd < text.length && /\w/.test(text[wEnd])) wEnd++;
-        if (wStart === wEnd) return true;  // no word found
-        from = line.from + wStart;
-        to = line.from + wEnd;
-    }
-
-    const selectedText = view.state.sliceDoc(from, to).trim();
-    if (!selectedText || selectedText.length < 2) return true;
-
-    // Check if already tagged
-    const existingTag = getTagForText(selectedText);
-
-    const coords = view.coordsAtPos(from);
-    if (!coords) return true;
-
-    showPropPopover(selectedText, existingTag, coords);
+    // Single blank between two different content types: structural separator.
+    // CSS gap classes handle this spacing visually.
     return true;
-}
-
-async function showPropPopover(text, existingTag, coords) {
-    const pp = getOrCreatePropPopover();
-    pp.innerHTML = '';
-
-    const header = document.createElement('div');
-    header.className = 'prop-tag-popover-header';
-    header.innerHTML = `🔧 <span class="prop-tag-text">${esc(text)}</span>`;
-    pp.appendChild(header);
-
-    // If already tagged, show remove option
-    if (existingTag) {
-        const removeEl = document.createElement('div');
-        removeEl.className = 'prop-tag-remove';
-        removeEl.innerHTML = `✕ Remove tag for <strong>${esc(existingTag.display_name)}</strong>`;
-        removeEl.addEventListener('click', async () => {
-            await untagProp(existingTag.id);
-            hidePropPopover();
-            editorView?.focus();
-        });
-        pp.appendChild(removeEl);
-    }
-
-    // Fetch matching props from API
-    try {
-        const res = await fetch(`/api/screenplay-v2/autocomplete-props?q=${encodeURIComponent(text)}`);
-        if (res.ok) {
-            const items = await res.json();
-            propPopoverItems = items;
-
-            // Filter out the already-tagged prop if present
-            const filtered = existingTag
-                ? items.filter(i => i.prop_id !== existingTag.prop_id)
-                : items;
-
-            for (const item of filtered) {
-                const el = document.createElement('div');
-                el.className = 'screenplay-ac-item';
-                el.innerHTML = `<span class="screenplay-ac-icon">🔧</span><span class="screenplay-ac-name">${esc(item.name)}</span>`;
-                el.addEventListener('click', async () => {
-                    await tagProp(text, item.prop_id, null);
-                    hidePropPopover();
-                    editorView?.focus();
-                });
-                pp.appendChild(el);
-            }
-
-            // "Create new" option (only if no exact match)
-            const exactMatch = items.some(i => i.name.toLowerCase() === text.toLowerCase());
-            if (!exactMatch && !existingTag) {
-                const createEl = document.createElement('div');
-                createEl.className = 'screenplay-ac-new';
-                createEl.style.cursor = 'pointer';
-                const titleCased = text.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-                createEl.textContent = `+ Create prop "${titleCased}"`;
-                createEl.addEventListener('click', async () => {
-                    await tagProp(text, null, titleCased);
-                    hidePropPopover();
-                    editorView?.focus();
-                });
-                pp.appendChild(createEl);
-            }
-        }
-    } catch (e) {
-        console.error('Prop autocomplete failed:', e);
-    }
-
-    // Position and show
-    pp.style.left = Math.max(0, coords.left) + 'px';
-    pp.style.top = (coords.bottom + 4) + 'px';
-    pp.classList.remove('hidden');
-}
-
-async function tagProp(text, propId, newName) {
-    const body = { tagged_text: text };
-    if (propId) body.prop_id = propId;
-    if (newName) body.new_name = newName;
-
-    try {
-        const res = await fetch('/api/screenplay-v2/tag-prop', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        });
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            showToast('Tag failed: ' + (err.detail || 'unknown'));
-            return;
-        }
-        const data = await res.json();
-
-        // Add to local propTags (avoid duplicates)
-        if (!propTags.some(t => t.id === data.tag_id)) {
-            propTags.push({
-                id: data.tag_id,
-                prop_id: data.prop_id,
-                tagged_text: data.tagged_text,
-                display_name: data.display_name,
-            });
-        }
-
-        notifyPropTagsChanged();
-        markUnsaved();  // scene_prop junctions rebuild on next save
-        showToast(`Tagged: ${data.display_name}`);
-        fetchNavigatorData();
-
-    } catch (e) {
-        showToast('Tag error: ' + e.message);
-    }
-}
-
-async function untagProp(tagId) {
-    try {
-        const res = await fetch(`/api/screenplay-v2/tag-prop/${tagId}`, {
-            method: 'DELETE',
-        });
-        if (res.ok) {
-            propTags = propTags.filter(t => t.id !== tagId);
-            notifyPropTagsChanged();
-            markUnsaved();
-            showToast('Prop tag removed');
-            fetchNavigatorData();
-        }
-    } catch (e) {
-        showToast('Untag error: ' + e.message);
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -636,7 +514,7 @@ const autoUppercaseHandler = EditorView.inputHandler.of((view, from, to, text) =
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Autocomplete (character/location/scene heading)
+// Autocomplete
 // ═══════════════════════════════════════════════════════════════════════════
 let acDropdown = null, acItems = [], acHighlight = -1, acType = null, acQuery = '', acDebounce = null, acNewTimer = null;
 
@@ -689,28 +567,39 @@ function selectSuggestion(index) {
 
     if (acType === 'character') {
         const newText = item.name;
-        editorView.dispatch({ changes: { from: line.from, to: line.to, insert: newText }, selection: { anchor: line.from + newText.length } });
+        editorView.dispatch({
+            changes: { from: line.from, to: line.to, insert: newText },
+            selection: { anchor: line.from + newText.length }
+        });
         cacheEntityIds('character', newText, { character_id: item.character_id });
     } else if (acType === 'location') {
         const m = line.text.match(/^(\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s*)/i);
         const prefix = m ? m[1] : '';
         const newText = prefix + item.name.toUpperCase() + ' - ';
-        editorView.dispatch({ changes: { from: line.from, to: line.to, insert: newText }, selection: { anchor: line.from + newText.length } });
+        editorView.dispatch({
+            changes: { from: line.from, to: line.to, insert: newText },
+            selection: { anchor: line.from + newText.length }
+        });
         cacheEntityIds('location_hint', item.name.toUpperCase(), { location_id: item.location_id });
     } else if (acType === 'prefix') {
         const newText = item.value;
-        editorView.dispatch({ changes: { from: line.from, to: line.to, insert: newText }, selection: { anchor: line.from + newText.length } });
+        editorView.dispatch({
+            changes: { from: line.from, to: line.to, insert: newText },
+            selection: { anchor: line.from + newText.length }
+        });
     } else if (acType === 'tod') {
         const dashMatch = line.text.match(/^(.+\s-\s*)/);
         const beforeTod = dashMatch ? dashMatch[1] : line.text;
         const newText = beforeTod + item.value;
-        editorView.dispatch({ changes: { from: line.from, to: line.to, insert: newText }, selection: { anchor: line.from + newText.length } });
+        editorView.dispatch({
+            changes: { from: line.from, to: line.to, insert: newText },
+            selection: { anchor: line.from + newText.length }
+        });
     }
     hideAutocomplete();
     editorView.focus();
 }
 
-// ── Static autocomplete data for scene headings ──
 const HEADING_PREFIXES = [
     { name: 'INT.',      value: 'INT. ' },
     { name: 'EXT.',      value: 'EXT. ' },
@@ -756,7 +645,9 @@ function checkAutocompleteContext() {
         if (HEADING_READY_FOR_TOD_RE.test(trimmed)) {
             const dashIdx = trimmed.lastIndexOf(' - ');
             const afterDash = dashIdx >= 0 ? trimmed.slice(dashIdx + 3).toUpperCase() : '';
-            const filtered = afterDash ? TIME_OF_DAY_OPTIONS.filter(o => o.name.startsWith(afterDash)) : TIME_OF_DAY_OPTIONS;
+            const filtered = afterDash
+                ? TIME_OF_DAY_OPTIONS.filter(o => o.name.startsWith(afterDash))
+                : TIME_OF_DAY_OPTIONS;
             if (filtered.length > 0) { showStaticAutocomplete(filtered, 'tod'); return; }
             hideAutocomplete(); return;
         }
@@ -831,10 +722,12 @@ const autocompleteKeymap = keymap.of([
 // ═══════════════════════════════════════════════════════════════════════════
 let editorView = null;
 let unsaved = false, saving = false, savedTimeout = null;
-let navScenes = [], navCharacters = [], navLocations = [], navProps = [];
+let navScenes = [], navCharacters = [], navLocations = [];
 let activeFilter = null;
 let loadedTitlePage = [];
 let lastEnterTime = 0;
+let pendingMergeType = null;  // Set by Backspace/Delete handlers — upper line's type wins on merge
+let isLoading = false;        // True during initial load — prevents cursor-line type override
 
 function showToast(msg) {
     const t = document.createElement('div');
@@ -848,14 +741,13 @@ function showSyncToast(summary) {
     if (summary.scenes_created) parts.push(`${summary.scenes_created} scene${summary.scenes_created > 1 ? 's' : ''}`);
     if (summary.characters_created) parts.push(`${summary.characters_created} char${summary.characters_created > 1 ? 's' : ''}`);
     if (summary.locations_created) parts.push(`${summary.locations_created} loc${summary.locations_created > 1 ? 's' : ''}`);
-    if (summary.props_created) parts.push(`${summary.props_created} prop${summary.props_created > 1 ? 's' : ''}`);
     if (parts.length) showToast('Synced: ' + parts.join(', '));
     if (summary.errors?.length) summary.errors.forEach(e => showToast('⚠ ' + e));
 }
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Load
+// Load — strip structural blanks, then build CodeMirror text
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function loadScreenplay() {
@@ -865,26 +757,46 @@ async function loadScreenplay() {
         if (!res.ok) throw new Error('Failed to load');
         const data = await res.json();
 
-        if (!data.has_content) { setSaveStatus('Empty', ''); return; }
+        if (!data.has_content) {
+            setSaveStatus('Empty', '');
+            return;
+        }
 
         loadedTitlePage = data.title_page || [];
 
-        // Load prop tags
-        propTags = data.prop_tags || [];
-        notifyPropTagsChanged();
-
+        // Build entity cache from loaded data (before stripping)
         entityCache.clear();
         for (const line of data.lines) {
             const ids = {};
             if (line.scene_id) ids.scene_id = line.scene_id;
             if (line.character_id) ids.character_id = line.character_id;
             if (line.location_id) ids.location_id = line.location_id;
-            if (Object.keys(ids).length > 0) cacheEntityIds(line.line_type, line.content, ids);
+            if (Object.keys(ids).length > 0) {
+                cacheEntityIds(line.line_type, line.content, ids);
+            }
         }
 
-        initLineTypesFromServer(data.lines);
-        const text = data.lines.map(l => l.content).join('\n');
-        editorView.dispatch({ changes: { from: 0, to: editorView.state.doc.length, insert: text } });
+        // Phase 2: Strip structural blanks — CSS margins handle spacing
+        const contentLines = stripStructuralBlanks(data.lines);
+
+        // Initialize line type registry from stripped content
+        initLineTypesFromServer(contentLines);
+
+        // Build plain text for CodeMirror
+        const text = contentLines.map(l => l.content).join('\n');
+
+        // Load into CodeMirror — isLoading prevents cursor-line type override
+        // so server-provided types are preserved (especially the first heading)
+        isLoading = true;
+        editorView.dispatch({
+            changes: { from: 0, to: editorView.state.doc.length, insert: text }
+        });
+        isLoading = false;
+
+        // Sync mode to whatever line the cursor landed on
+        if (lineTypes.length > 0 && lineTypes[0] && lineTypes[0] !== 'blank') {
+            setMode(lineTypeToMode(lineTypes[0]));
+        }
 
         unsaved = false;
         setSaveStatus('Loaded ✓', 'var(--success)');
@@ -899,14 +811,13 @@ async function loadScreenplay() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Save
+// Save — Phase 3: saves content lines only (no structural blanks)
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function saveScreenplay() {
     if (!editorView || saving) return;
     markSaving();
     hideAutocomplete();
-    hidePropPopover();
 
     try {
         rebuildLineTypes(editorView.state);
@@ -945,6 +856,7 @@ async function saveScreenplay() {
         if (data.summary) showSyncToast(data.summary);
         fetchNavigatorData();
 
+        // Reload to refresh entity cache with server-assigned IDs
         const reloadRes = await fetch('/api/screenplay-v2/load');
         if (reloadRes.ok) {
             const reloaded = await reloadRes.json();
@@ -954,14 +866,16 @@ async function saveScreenplay() {
                 if (line.scene_id) ids.scene_id = line.scene_id;
                 if (line.character_id) ids.character_id = line.character_id;
                 if (line.location_id) ids.location_id = line.location_id;
-                if (Object.keys(ids).length > 0) cacheEntityIds(line.line_type, line.content, ids);
+                if (Object.keys(ids).length > 0) {
+                    cacheEntityIds(line.line_type, line.content, ids);
+                }
             }
             loadedTitlePage = reloaded.title_page || [];
-            initLineTypesFromServer(reloaded.lines);
 
-            // Refresh prop tags from server (in case save created new props)
-            propTags = reloaded.prop_tags || [];
-            notifyPropTagsChanged();
+            // Strip blanks again for line type registry (DB may have stored blanks
+            // from old saves; after this session's save it won't)
+            const contentLines = stripStructuralBlanks(reloaded.lines);
+            initLineTypesFromServer(contentLines);
         }
 
     } catch (e) {
@@ -970,14 +884,8 @@ async function saveScreenplay() {
     }
 }
 
-function exportScreenplay() {
-    const a = document.createElement('a');
-    a.href = '/api/screenplay-v2/export-fountain';
-    a.click();
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
-// Navigator
+// Navigator — DB-driven
 // ═══════════════════════════════════════════════════════════════════════════
 
 function initNavigatorResize() {
@@ -1014,65 +922,22 @@ function initCollapseHandlers() {
     });
 }
 
-// ── Sort state for navigator lists ──
-const SORT_KEY = 'scf-navigator-sort-state';
-function loadSortState() { try { return JSON.parse(localStorage.getItem(SORT_KEY)) || {}; } catch { return {}; } }
-function saveSortState(s) { localStorage.setItem(SORT_KEY, JSON.stringify(s)); }
-function getSortMode(section) { return loadSortState()[section] || 'screenplay'; }
-
-function sortItems(items, section) {
-    const mode = getSortMode(section);
-    const sorted = [...items];
-    if (mode === 'alpha') {
-        const nameKey = section === 'characters' ? 'display_name' : 'name';
-        sorted.sort((a, b) => (a[nameKey] || '').localeCompare(b[nameKey] || ''));
-    } else {
-        sorted.sort((a, b) => (a.first_appearance || 9999999) - (b.first_appearance || 9999999));
-    }
-    return sorted;
-}
-
-function initSortToggles() {
-    ['characters', 'locations', 'props'].forEach(section => {
-        const hdr = document.querySelector(`#nav-${section}-section .nav-section-header`);
-        if (!hdr || hdr.querySelector('.nav-sort-toggle')) return;
-        const btn = document.createElement('span');
-        btn.className = 'nav-sort-toggle';
-        btn.title = 'Toggle sort: screenplay order / alphabetical';
-        btn.textContent = getSortMode(section) === 'alpha' ? 'A-Z' : '1st';
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const st = loadSortState();
-            st[section] = st[section] === 'alpha' ? 'screenplay' : 'alpha';
-            saveSortState(st);
-            btn.textContent = st[section] === 'alpha' ? 'A-Z' : '1st';
-            if (section === 'characters') renderCharacters();
-            else if (section === 'locations') renderLocations();
-            else if (section === 'props') renderProps();
-        });
-        hdr.appendChild(btn);
-    });
-}
-
 async function fetchNavigatorData() {
     try {
-        const [sr, cr, lr, pr] = await Promise.all([
+        const [sr, cr, lr] = await Promise.all([
             fetch('/api/screenplay-v2/scenes'),
             fetch('/api/screenplay-v2/characters'),
             fetch('/api/screenplay-v2/locations'),
-            fetch('/api/screenplay-v2/props'),
         ]);
         if (sr.ok) navScenes = await sr.json();
         if (cr.ok) navCharacters = await cr.json();
         if (lr.ok) navLocations = await lr.json();
-        if (pr.ok) navProps = await pr.json();
     } catch (e) {
         console.error('Navigator fetch failed:', e);
     }
     renderScenes();
     renderCharacters();
     renderLocations();
-    renderProps();
 }
 
 function renderScenes() {
@@ -1086,16 +951,18 @@ function renderScenes() {
         item.className = 'nav-item nav-scene-item';
         item.dataset.lineNumber = sc.line_number;
         item.dataset.sceneNumber = sc.scene_number;
-        if (sc.scene_id) item.dataset.sceneId = sc.scene_id;
-        const charNames = (sc.characters || []).map(ch => (ch.name || '').toUpperCase());
+        const charNames = (sc.characters || []).map(ch => ch.name || '');
         item.dataset.characters = charNames.join(',');
+
         const num = document.createElement('span');
         num.className = 'nav-scene-num';
         num.textContent = `#${sc.scene_number}`;
+
         const name = document.createElement('span');
         name.className = 'nav-item-name';
         name.textContent = sc.heading;
         name.title = sc.heading;
+
         item.appendChild(num);
         item.appendChild(name);
         if (sc.character_count > 0) {
@@ -1127,9 +994,8 @@ function renderCharacters() {
     if (!c) return;
     if (!navCharacters.length) { c.innerHTML = '<span class="nav-empty-msg">No characters found</span>'; if (b) b.textContent = ''; return; }
     if (b) b.textContent = navCharacters.length;
-    const sorted = sortItems(navCharacters, 'characters');
     const f = document.createDocumentFragment();
-    for (const ch of sorted) {
+    for (const ch of navCharacters) {
         const item = document.createElement('div');
         item.className = 'nav-item nav-char-item';
         item.dataset.charName = ch.name;
@@ -1156,9 +1022,8 @@ function renderLocations() {
     if (!c) return;
     if (!navLocations.length) { c.innerHTML = '<span class="nav-empty-msg">No locations found</span>'; if (b) b.textContent = ''; return; }
     if (b) b.textContent = navLocations.length;
-    const sorted = sortItems(navLocations, 'locations');
     const f = document.createDocumentFragment();
-    for (const loc of sorted) {
+    for (const loc of navLocations) {
         const item = document.createElement('div');
         item.className = 'nav-item nav-loc-item';
         item.dataset.locName = loc.name.toUpperCase();
@@ -1180,41 +1045,6 @@ function renderLocations() {
     applyFilterHighlight();
 }
 
-function renderProps() {
-    const c = document.getElementById('nav-props-items'), b = document.getElementById('nav-props-count');
-    if (!c) return;
-    // Only show props that have tags (active in the screenplay)
-    const tagged = navProps.filter(p => p.tagged_texts && p.tagged_texts.length > 0);
-    if (!tagged.length) {
-        c.innerHTML = '<span class="nav-empty-msg">No tagged props</span>';
-        if (b) b.textContent = '';
-        return;
-    }
-    if (b) b.textContent = tagged.length;
-    const sorted = sortItems(tagged, 'props');
-    const f = document.createDocumentFragment();
-    for (const prop of sorted) {
-        const item = document.createElement('div');
-        item.className = 'nav-item nav-prop-item';
-        item.dataset.propName = prop.name;
-        item.innerHTML = `<span class="nav-item-icon">🔧</span><span class="nav-item-name">${esc(prop.name)}</span><span class="nav-item-badge">${prop.scene_count}</span>`;
-        if (prop.prop_id) {
-            const lk = document.createElement('a');
-            lk.className = 'nav-item-link';
-            lk.href = `/browse?entity_type=prop&entity_id=${prop.prop_id}`;
-            lk.textContent = '→';
-            lk.title = 'Open in Entity Browser';
-            lk.addEventListener('click', e => e.stopPropagation());
-            item.appendChild(lk);
-        }
-        item.addEventListener('click', () => toggleFilter('prop', prop.name));
-        f.appendChild(item);
-    }
-    c.innerHTML = '';
-    c.appendChild(f);
-    applyFilterHighlight();
-}
-
 function toggleFilter(type, name) {
     activeFilter = (activeFilter && activeFilter.type === type && activeFilter.name === name) ? null : { type, name };
     applyFilter();
@@ -1227,17 +1057,10 @@ function applyFilter() {
     if (ind) ind.classList.add('active');
     items.forEach(item => {
         let vis = false;
-        if (activeFilter.type === 'character') {
-            vis = (item.dataset.characters || '').toUpperCase().split(',').includes(activeFilter.name.toUpperCase());
-        } else if (activeFilter.type === 'location') {
+        if (activeFilter.type === 'character') vis = (item.dataset.characters || '').split(',').includes(activeFilter.name);
+        else if (activeFilter.type === 'location') {
             const sc = navScenes.find(s => s.scene_number === parseInt(item.dataset.sceneNumber));
             if (sc) vis = sc.heading.toUpperCase().includes(activeFilter.name);
-        } else if (activeFilter.type === 'prop') {
-            const propData = navProps.find(p => p.name === activeFilter.name);
-            if (propData && propData.scene_ids) {
-                const sceneId = parseInt(item.dataset.sceneId);
-                vis = sceneId && propData.scene_ids.includes(sceneId);
-            }
         }
         item.classList.toggle('filtered-out', !vis);
     });
@@ -1245,18 +1068,13 @@ function applyFilter() {
 function applyFilterHighlight() {
     document.querySelectorAll('.nav-char-item').forEach(i => i.classList.toggle('active', !!(activeFilter && activeFilter.type === 'character' && i.dataset.charName === activeFilter.name)));
     document.querySelectorAll('.nav-loc-item').forEach(i => i.classList.toggle('active', !!(activeFilter && activeFilter.type === 'location' && i.dataset.locName === activeFilter.name)));
-    document.querySelectorAll('.nav-prop-item').forEach(i => i.classList.toggle('active', !!(activeFilter && activeFilter.type === 'prop' && i.dataset.propName === activeFilter.name)));
 }
 
 function scrollToLine(ln) {
     if (!editorView) return;
     const n = ln + 1;
     if (n < 1 || n > editorView.state.doc.lines) return;
-    const pos = editorView.state.doc.line(n).from;
-    editorView.dispatch({
-        selection: { anchor: pos },
-        effects: EditorView.scrollIntoView(pos, { y: 'center' }),
-    });
+    editorView.dispatch({ selection: { anchor: editorView.state.doc.line(n).from }, scrollIntoView: true });
     editorView.focus();
 }
 
@@ -1320,26 +1138,91 @@ function createEditor(container) {
                 fountainLanguage, history(), drawSelection(), highlightActiveLine(), EditorView.lineWrapping,
                 placeholder('Start writing your screenplay…'),
                 lineDecorationPlugin,
-                propDecorationPlugin,
                 autoUppercaseHandler,
                 autocompleteKeymap,
                 keymap.of([
                     { key: 'Tab', run: handleTab },
                     { key: 'Shift-Tab', run: handleShiftTab },
+
+                    // ── Backspace at line boundary: merge up, upper type wins ──
+                    // Exception: if upper line is blank, lower (current) line's type wins
+                    // because a blank line has no semantic type.
+                    { key: 'Backspace', run(view) {
+                        const { head, empty } = view.state.selection.main;
+                        if (!empty) return false; // selection — let default handle
+
+                        const line = view.state.doc.lineAt(head);
+                        if (head !== line.from) return false; // mid-line — let default handle
+                        if (line.number === 1) return false; // first line — nothing above
+
+                        const prevLine = view.state.doc.line(line.number - 1);
+                        const prevIdx = prevLine.number - 1;
+                        const prevType = (prevIdx < lineTypes.length) ? lineTypes[prevIdx] : 'action';
+
+                        const currIdx = line.number - 1;
+                        const currType = (currIdx < lineTypes.length) ? lineTypes[currIdx] : 'action';
+
+                        // Determine winning type: upper wins UNLESS upper is blank
+                        const winType = (prevType === 'blank') ? currType : prevType;
+                        pendingMergeType = winType;
+                        setMode(lineTypeToMode(winType));
+
+                        // Delete the newline to merge lines
+                        view.dispatch({
+                            changes: { from: prevLine.to, to: line.from },
+                            selection: { anchor: prevLine.to },
+                        });
+
+                        return true;
+                    }},
+
+                    // ── Delete at line boundary: merge down, current type wins ──
+                    // Exception: if current line is blank, lower line's type wins.
+                    { key: 'Delete', run(view) {
+                        const { head, empty } = view.state.selection.main;
+                        if (!empty) return false; // selection — let default handle
+
+                        const line = view.state.doc.lineAt(head);
+                        if (head !== line.to) return false; // mid-line — let default handle
+                        if (line.number === view.state.doc.lines) return false; // last line
+
+                        const currIdx = line.number - 1;
+                        const currType = (currIdx < lineTypes.length) ? lineTypes[currIdx] : 'action';
+
+                        const nextLine = view.state.doc.line(line.number + 1);
+                        const nextIdx = nextLine.number - 1;
+                        const nextType = (nextIdx < lineTypes.length) ? lineTypes[nextIdx] : 'action';
+
+                        // Current line wins UNLESS current is blank
+                        const winType = (currType === 'blank') ? nextType : currType;
+                        pendingMergeType = winType;
+                        setMode(lineTypeToMode(winType));
+
+                        view.dispatch({
+                            changes: { from: line.to, to: nextLine.from },
+                        });
+
+                        return true;
+                    }},
+
                     { key: 'Enter', run(view) {
                         if (isAutocompleteVisible() && acItems.length > 0 && acHighlight >= 0) return false;
                         hideAutocomplete();
+
                         const now = Date.now();
                         const timeSinceLast = now - lastEnterTime;
                         lastEnterTime = now;
+
                         if (timeSinceLast < 350 && timeSinceLast > 30) {
                             setMode('scene');
                             return true;
                         }
+
                         const modeBeforeEnter = currentMode;
                         if (modeBeforeEnter === 'scene') setMode('description');
                         else if (modeBeforeEnter === 'character') setMode('dialogue');
                         else if (modeBeforeEnter === 'dialogue') setMode('character');
+
                         const { from, to } = view.state.selection.main;
                         view.dispatch({
                             changes: { from, to, insert: '\n' },
@@ -1351,7 +1234,6 @@ function createEditor(container) {
                 ]),
                 keymap.of([
                     { key: 'Mod-s', run() { saveScreenplay(); return true; } },
-                    { key: 'Mod-p', run(view) { handlePropTag(view); return true; } },
                     ...defaultKeymap, ...historyKeymap,
                 ]),
                 EditorView.updateListener.of((update) => {
@@ -1390,12 +1272,10 @@ if (container) {
     editorView = createEditor(container);
     initNavigatorResize();
     initCollapseHandlers();
-    initSortToggles();
     loadScreenplay();
     document.getElementById('btn-save-screenplay')?.addEventListener('click', saveScreenplay);
-    document.getElementById('btn-export-screenplay')?.addEventListener('click', exportScreenplay);
     window.addEventListener('beforeunload', (e) => { if (unsaved) { e.preventDefault(); e.returnValue = ''; } });
     setMode('description');
 }
 
-export { editorView, saveScreenplay, exportScreenplay };
+export { editorView, saveScreenplay };

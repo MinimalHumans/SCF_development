@@ -153,10 +153,40 @@
 .cm-line.cm-scf-boneyard { color: var(--text-muted); opacity: 0.4; }
 
 /* ==========================================================================
+   Structural Spacing — CSS Gap Classes
+   ========================================================================== 
+   These replace blank lines as visual separators between screenplay elements.
+   Applied by lineDecorationPlugin based on type transitions between adjacent
+   lines. The document contains only content lines; spacing is presentation.
+   
+   IMPORTANT: Uses padding-top, NOT margin-top. CodeMirror 6 manages line
+   heights via a heightmap and ignores margins on .cm-line elements.
+   Padding works because CM6 measures actual DOM element height.
+   ========================================================================== */
+
+/* Scene break — largest gap (before every scene heading) */
+.cm-line.cm-scf-gap-scene {
+    padding-top: 28px !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+/* Don't show divider or extra gap on the very first heading in the document */
+.cm-content > .cm-line.cm-scf-gap-scene:first-child {
+    padding-top: 0 !important;
+    border-top: none;
+}
+
+/* New dialogue block — gap before character cue */
+.cm-line.cm-scf-gap-block {
+    padding-top: 18px !important;
+}
+
+/* Element separator — action after dialogue, before/after transition */
+.cm-line.cm-scf-gap-element {
+    padding-top: 14px !important;
+}
+
+/* ==========================================================================
    Active Line Mode Overrides
-   The active line is styled by the current WRITING MODE. Content-based
-   decoration is skipped for the cursor line, so ONLY these mode rules
-   apply. Every property uses !important to guarantee the mode wins.
    ========================================================================== */
 
 .cm-editor.mode-scene .cm-line.cm-activeLine {
@@ -367,7 +397,6 @@
 
 .help-modal-body strong { color: var(--text-primary); }
 
-/* Definition list for mode descriptions */
 .help-dl {
     margin: 8px 0;
     display: grid;
@@ -382,7 +411,6 @@
 }
 .help-dl dd { margin: 0; }
 
-/* Keyboard shortcut table */
 .help-shortcuts {
     width: 100%;
     border-collapse: collapse;
@@ -400,8 +428,6 @@
 /* ==========================================================================
    Version Drawer
    ========================================================================== */
-
-/* --- Version Drawer Panel ------------------------------------------------ */
 
 .version-drawer-overlay {
     display: none;
@@ -465,8 +491,6 @@
     padding: 16px 20px;
 }
 
-/* --- Publish Form -------------------------------------------------------- */
-
 .version-publish-form {
     display: flex;
     gap: 8px;
@@ -482,8 +506,6 @@
 .version-publish-form .btn {
     flex-shrink: 0;
 }
-
-/* --- Version List -------------------------------------------------------- */
 
 .version-list {
     display: flex;
@@ -590,8 +612,6 @@
     border-color: var(--danger);
     color: var(--danger);
 }
-
-/* --- Publish button style ------------------------------------------------ */
 
 .btn-publish {
     background: var(--bg-raised);
