@@ -1,7 +1,7 @@
 {# ── Collapse-All / Expand-All toolbar ── #}
-<div style="display: flex; gap: 4px; padding: 6px 12px 2px; border-bottom: 1px solid var(--border-subtle);">
-    <button class="btn-tree-ctrl" onclick="collapseAllTree()" title="Collapse all">▾ Collapse</button>
-    <button class="btn-tree-ctrl" onclick="expandAllTree()" title="Expand all">▸ Expand</button>
+<div class="tree-toolbar">
+    <button class="btn btn-sm tree-toolbar-btn" onclick="collapseAllTree()" title="Collapse all groups">▾ Collapse</button>
+    <button class="btn btn-sm tree-toolbar-btn" onclick="expandAllTree()" title="Expand all groups">▸ Expand</button>
 </div>
 
 {% for cat_name, entities in categories.items() %}
@@ -20,11 +20,11 @@
 
     <div class="tree-category-label"
          onclick="toggleTreeCategory(this)"
-         title="Click to collapse/expand category">
+         title="Click to collapse/expand this category">
         <span class="cat-chevron">▼</span>
         <span>{{ cat_name }}</span>
         {% if ns.cat_all_placeholder %}
-        <span class="tree-dev-badge">In Development</span>
+        <span class="tree-dev-badge">Schema Only</span>
         {% endif %}
     </div>
 
@@ -32,8 +32,6 @@
     {% for edef in entities %}
     {% set td = tree_data.get(edef.name, {"records": [], "count": 0}) %}
 
-    {# Skip empty tier-1+ entities — no need to show empty placeholders #}
-    {% if td.count > 0 or edef.tier == 0 %}
     <div class="tree-entity-group {% if edef.tier > 0 %}tree-entity-placeholder{% endif %}"
          data-entity-type="{{ edef.name }}">
 
@@ -43,9 +41,6 @@
             <span class="icon">{{ edef.icon }}</span>
             <span class="label">{{ edef.label_plural }}</span>
             <span class="count">{{ td.count }}</span>
-            {% if edef.tier > 0 and td.count == 0 %}
-            <span class="tree-dev-dot" title="Schema defined — editor support in development">●</span>
-            {% endif %}
             <form hx-post="/api/{{ edef.name }}"
                   hx-swap="none"
                   style="display: contents;"
@@ -74,7 +69,6 @@
         </div>
 
     </div>
-    {% endif %}
     {% endfor %}
     </div>
 </div>

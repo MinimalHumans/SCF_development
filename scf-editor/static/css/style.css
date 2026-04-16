@@ -1339,30 +1339,29 @@ select option {
     padding: 8px 0;
 }
 
-
 /* ==========================================================================
    Tree Enhancements — Category collapse, placeholder entities, controls
-   APPEND this to the end of style.css
+   APPEND this to the end of static/css/style.css
    ========================================================================== */
 
-/* -- Collapse/Expand toolbar ----------------------------------------------- */
-.btn-tree-ctrl {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 500;
-    color: var(--text-muted);
-    background: transparent;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    padding: 2px 8px;
-    cursor: pointer;
-    transition: all var(--transition);
-    letter-spacing: 0.03em;
+/* -- Tree toolbar (Collapse / Expand buttons) ------------------------------ */
+.tree-toolbar {
+    display: flex;
+    gap: 4px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border-subtle);
 }
-.btn-tree-ctrl:hover {
-    color: var(--text-accent);
-    border-color: var(--accent);
-    background: var(--accent-subtle);
+.tree-toolbar-btn {
+    font-size: 11px;
+    padding: 3px 10px;
+    background: transparent;
+    border-color: var(--border-subtle);
+    color: var(--text-muted);
+}
+.tree-toolbar-btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--border);
+    color: var(--text-primary);
 }
 
 /* -- Category-level collapse ----------------------------------------------- */
@@ -1392,22 +1391,26 @@ select option {
     display: none;
 }
 
-/* -- Placeholder / in-development indicators ------------------------------- */
+/* -- Placeholder categories (all-tier-1) ----------------------------------- */
 .tree-category-placeholder .tree-category-label {
-    color: var(--text-muted);
-    opacity: 0.6;
+    opacity: 0.55;
 }
 .tree-category-placeholder .tree-category-label:hover {
     opacity: 0.8;
 }
 
+/* -- Placeholder entity groups (tier > 0) ---------------------------------- */
 .tree-entity-placeholder .tree-group-header .label {
     color: var(--text-muted);
 }
 .tree-entity-placeholder .tree-group-header .icon {
+    opacity: 0.45;
+}
+.tree-entity-placeholder .tree-group-header .count {
     opacity: 0.5;
 }
 
+/* -- "Schema Only" badge on placeholder categories ------------------------- */
 .tree-dev-badge {
     font-family: var(--font-mono);
     font-size: 9px;
@@ -1420,11 +1423,5 @@ select option {
     margin-left: auto;
     letter-spacing: 0.03em;
     white-space: nowrap;
-}
-
-.tree-dev-dot {
-    color: var(--text-muted);
-    font-size: 8px;
-    margin-left: 4px;
-    opacity: 0.5;
+    opacity: 0.7;
 }
