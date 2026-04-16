@@ -36,7 +36,8 @@
          data-entity-type="{{ edef.name }}">
 
         <div class="tree-group-header collapsed"
-             onclick="toggleTreeGroup(this)">
+             onclick="toggleTreeGroup(this)"
+             data-tooltip="{{ edef.description }}">
             <span class="chevron">▼</span>
             <span class="icon">{{ edef.icon }}</span>
             <span class="label">{{ edef.label_plural }}</span>

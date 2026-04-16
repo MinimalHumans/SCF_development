@@ -1,0 +1,29 @@
+/* ==========================================================================
+   Entity Tree — Hover Tooltips
+   JS-positioned tooltip (appended to body to escape overflow clipping).
+   See entity-tooltips.js for the behavior.
+   ========================================================================== */
+
+.tree-tooltip {
+    position: fixed;
+    z-index: 200;
+    max-width: 280px;
+    padding: 8px 12px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.45;
+    color: var(--text-secondary);
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    white-space: normal;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.tree-tooltip.visible {
+    opacity: 1;
+}
