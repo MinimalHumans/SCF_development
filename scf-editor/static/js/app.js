@@ -426,6 +426,45 @@ function initKeyboardShortcuts() {
 }
 
 // =============================================================================
+// Entity Editor State Preservation (tab + scroll across htmx saves)
+// =============================================================================
+
+let _savedEditorState = null;
+
+function captureEditorState() {
+    const editorPanel = document.getElementById('editor-panel');
+    const activeTabBtn = document.querySelector('.entity-editor .tab-btn.active');
+
+    _savedEditorState = {
+        tabId: activeTabBtn ? activeTabBtn.dataset.tab : null,
+        scrollTop: editorPanel ? editorPanel.scrollTop : 0,
+    };
+}
+
+function restoreEditorState() {
+    if (!_savedEditorState) return;
+
+    const { tabId, scrollTop } = _savedEditorState;
+    _savedEditorState = null;
+
+    // Restore active tab
+    if (tabId) {
+        const tabBtn = document.querySelector(`.entity-editor .tab-btn[data-tab="${tabId}"]`);
+        if (tabBtn) {
+            switchTab(tabBtn, tabId);
+        }
+    }
+
+    // Restore scroll position (use requestAnimationFrame so the DOM has settled)
+    const editorPanel = document.getElementById('editor-panel');
+    if (editorPanel && scrollTop) {
+        requestAnimationFrame(() => {
+            editorPanel.scrollTop = scrollTop;
+        });
+    }
+}
+
+// =============================================================================
 // Inline Relationship Link Panels
 // =============================================================================
 
@@ -683,8 +722,19 @@ function escapeHtml(str) {
 
 // -- HTMX events -------------------------------------------------------------
 
+// Capture editor state BEFORE the save request replaces the DOM
+document.body.addEventListener('htmx:beforeRequest', (e) => {
+    const elt = e.detail.elt;
+    if (elt && elt.id === 'entity-form') {
+        captureEditorState();
+    }
+});
+
 document.body.addEventListener('htmx:afterSwap', (e) => {
     if (e.detail.target.id === 'editor-panel') {
+        // Restore tab + scroll position after save
+        restoreEditorState();
+
         const ind = document.getElementById('save-indicator');
         if (ind && ind.classList.contains('show')) {
             showToast('Changes saved');

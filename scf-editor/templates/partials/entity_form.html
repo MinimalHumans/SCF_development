@@ -53,7 +53,7 @@
     <form id="entity-form"
           hx-put="/api/{{ entity_type }}/{{ entity_data.get('id', 0) }}"
           hx-target="#editor-panel"
-          hx-swap="innerHTML">
+          hx-swap="innerHTML show:none">
 
         {% for tab in tabs %}
         <div class="tab-content {% if loop.first %}active{% endif %}"
