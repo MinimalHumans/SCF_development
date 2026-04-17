@@ -13,6 +13,7 @@ Tables:
   screenplay_versions          — published version snapshots
   screenplay_version_lines     — snapshot of lines per version
   screenplay_version_title_page — snapshot of title page per version
+  screenplay_prop_tags         — inline prop text annotations
 """
 
 import re
@@ -75,6 +76,13 @@ _BARE_TOD_RE = re.compile(
     r'\s*$',
     re.IGNORECASE
 )
+
+# Confidence → scene_prop significance mapping
+_CONFIDENCE_TO_SIGNIFICANCE = {
+    "high": "Key",
+    "medium": "Present",
+    "low": "Background",
+}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -156,6 +164,20 @@ def init_screenplay_tables(conn) -> None:
             value TEXT NOT NULL DEFAULT '',
             sort_order INTEGER DEFAULT 0
         )
+    """)
+
+    # ── Prop tags table ──
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS screenplay_prop_tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tagged_text TEXT NOT NULL,
+            prop_id INTEGER NOT NULL REFERENCES prop(id) ON DELETE CASCADE,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_prop_tags_prop
+        ON screenplay_prop_tags(prop_id)
     """)
 
 
@@ -461,6 +483,33 @@ def get_locations(db_path: Path) -> list[dict]:
                 "name": r["name"],
                 "scene_count": r["scene_count"],
                 "is_mapped": True,
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def get_props(db_path: Path) -> list[dict]:
+    """Get prop list with scene counts for the navigator."""
+    conn = db.get_connection(db_path)
+    try:
+        rows = conn.execute("""
+            SELECT
+                p.id AS prop_id,
+                p.name,
+                COUNT(DISTINCT sp.scene_id) AS scene_count
+            FROM prop p
+            LEFT JOIN scene_prop sp ON sp.prop_id = p.id
+            GROUP BY p.id, p.name
+            ORDER BY scene_count DESC, p.name ASC
+        """).fetchall()
+
+        return [
+            {
+                "prop_id": r["prop_id"],
+                "name": r["name"],
+                "scene_count": r["scene_count"],
             }
             for r in rows
         ]
@@ -801,7 +850,7 @@ def _is_structural_blank(prev, nxt) -> bool:
 def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
     """
     Parse a Fountain screenplay and write it into screenplay_lines.
-    Also creates/links scene, character, location entities.
+    Also creates/links scene, character, location, and prop entities.
 
     After writing all lines, structural blanks are stripped — CSS margins
     in the editor handle visual spacing between element types.
@@ -817,6 +866,8 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
         "scenes_created": 0,
         "characters_created": 0,
         "locations_created": 0,
+        "props_created": 0,
+        "scene_props_created": 0,
         "junctions_rebuilt": 0,
         "blanks_stripped": 0,
         "errors": [],
@@ -893,6 +944,59 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
             )
             scene_map[scene.scene_number - 1] = cursor.lastrowid
             summary["scenes_created"] += 1
+
+        # ═════════════════════════════════════════════════════════════
+        # Create prop entities and scene_prop junctions
+        # ═════════════════════════════════════════════════════════════
+        prop_map = {}
+        for row in conn.execute("SELECT id, name FROM prop").fetchall():
+            prop_map[row["name"].lower()] = row["id"]
+
+        for prop in parsed.props:
+            key = prop.name.lower()
+            if key not in prop_map:
+                prop_data = {"name": prop.name}
+                if prop.context:
+                    prop_data["narrative_significance"] = prop.context[:500]
+                if prop.first_scene < len(parsed.scenes):
+                    scene_name = parsed.scenes[prop.first_scene].name
+                    prop_data["first_appearance"] = f"Scene {prop.first_scene + 1}: {scene_name}"
+
+                cursor = conn.execute(
+                    """INSERT INTO prop (name, narrative_significance, first_appearance)
+                       VALUES (?, ?, ?)""",
+                    (prop_data["name"],
+                     prop_data.get("narrative_significance"),
+                     prop_data.get("first_appearance"))
+                )
+                prop_map[key] = cursor.lastrowid
+                summary["props_created"] += 1
+
+        # Build existing scene_prop junctions for dedup
+        existing_sp = set()
+        for row in conn.execute("SELECT scene_id, prop_id FROM scene_prop").fetchall():
+            existing_sp.add((row["scene_id"], row["prop_id"]))
+
+        for prop in parsed.props:
+            prop_id = prop_map.get(prop.name.lower())
+            if not prop_id:
+                continue
+
+            scene_id = scene_map.get(prop.first_scene)
+            if not scene_id:
+                continue
+
+            if (scene_id, prop_id) in existing_sp:
+                continue
+
+            significance = _CONFIDENCE_TO_SIGNIFICANCE.get(prop.confidence, "Present")
+            conn.execute(
+                """INSERT INTO scene_prop (scene_id, prop_id, name, significance)
+                   VALUES (?, ?, '', ?)""",
+                (scene_id, prop_id, significance)
+            )
+            existing_sp.add((scene_id, prop_id))
+            summary["scene_props_created"] = summary.get("scene_props_created", 0) + 1
 
         # ── Walk the raw text line-by-line and classify ──
         text = fountain_text.replace('\r\n', '\n').replace('\r', '\n')
@@ -1062,6 +1166,95 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
         conn.close()
 
     return summary
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Prop Tags — Create / Delete
+# ═══════════════════════════════════════════════════════════════════════════
+
+def create_prop_tag(db_path: Path, tagged_text: str,
+                    prop_id: int = None, new_name: str = None) -> dict:
+    """
+    Create a prop tag linking a text string to a prop entity.
+
+    If prop_id is given, uses that prop directly.
+    If new_name is given instead, finds an existing prop by name or creates one.
+
+    Returns dict with tag_id, tagged_text, prop_id, prop_name, is_new.
+    """
+    conn = db.get_connection(db_path)
+    try:
+        is_new = False
+
+        if not prop_id and new_name:
+            # Find existing prop by name
+            row = conn.execute(
+                "SELECT id FROM prop WHERE LOWER(name) = LOWER(?)", (new_name,)
+            ).fetchone()
+            if row:
+                prop_id = row["id"]
+            else:
+                # Create new prop entity
+                cursor = conn.execute(
+                    "INSERT INTO prop (name) VALUES (?)", (new_name,)
+                )
+                prop_id = cursor.lastrowid
+                is_new = True
+
+        if not prop_id:
+            raise ValueError("prop_id or new_name required")
+
+        # Verify prop exists
+        prop_row = conn.execute(
+            "SELECT id, name FROM prop WHERE id = ?", (prop_id,)
+        ).fetchone()
+        if not prop_row:
+            raise ValueError(f"Prop #{prop_id} not found")
+
+        # Check for duplicate tag
+        existing = conn.execute(
+            "SELECT id FROM screenplay_prop_tags WHERE LOWER(tagged_text) = LOWER(?) AND prop_id = ?",
+            (tagged_text, prop_id)
+        ).fetchone()
+        if existing:
+            return {
+                "tag_id": existing["id"],
+                "tagged_text": tagged_text,
+                "prop_id": prop_id,
+                "prop_name": prop_row["name"],
+                "is_new": False,
+                "duplicate": True,
+            }
+
+        cursor = conn.execute(
+            "INSERT INTO screenplay_prop_tags (tagged_text, prop_id) VALUES (?, ?)",
+            (tagged_text, prop_id)
+        )
+        conn.commit()
+
+        return {
+            "tag_id": cursor.lastrowid,
+            "tagged_text": tagged_text,
+            "prop_id": prop_id,
+            "prop_name": prop_row["name"],
+            "is_new": is_new,
+            "duplicate": False,
+        }
+    finally:
+        conn.close()
+
+
+def delete_prop_tag(db_path: Path, tag_id: int) -> bool:
+    """Delete a prop tag. Returns True if deleted."""
+    conn = db.get_connection(db_path)
+    try:
+        cursor = conn.execute(
+            "DELETE FROM screenplay_prop_tags WHERE id = ?", (tag_id,)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
