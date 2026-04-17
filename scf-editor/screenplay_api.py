@@ -193,8 +193,16 @@ async def autocomplete_props(request: Request, q: str = Query("")):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Prop Tags — Create / Delete
+# Prop Tags — List / Create / Delete
 # ═══════════════════════════════════════════════════════════════════════════
+
+@screenplay_router.get("/prop-tags")
+async def list_prop_tags(request: Request):
+    """List all prop tags with prop names. Used by the editor for inline highlights."""
+    db_path = _require_project(request)
+    tags = screenplay_db.list_prop_tags(db_path)
+    return JSONResponse(tags)
+
 
 @screenplay_router.post("/tag-prop")
 async def tag_prop(request: Request):

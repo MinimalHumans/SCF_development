@@ -1169,7 +1169,7 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Prop Tags — Create / Delete
+# Prop Tags — Create / Delete / List
 # ═══════════════════════════════════════════════════════════════════════════
 
 def create_prop_tag(db_path: Path, tagged_text: str,
@@ -1253,6 +1253,22 @@ def delete_prop_tag(db_path: Path, tag_id: int) -> bool:
         )
         conn.commit()
         return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def list_prop_tags(db_path: Path) -> list[dict]:
+    """List all prop tags with prop names. Used by the editor for inline highlights."""
+    conn = db.get_connection(db_path)
+    try:
+        rows = conn.execute("""
+            SELECT pt.id AS tag_id, pt.tagged_text, pt.prop_id,
+                   p.name AS prop_name
+            FROM screenplay_prop_tags pt
+            JOIN prop p ON p.id = pt.prop_id
+            ORDER BY pt.tagged_text ASC
+        """).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 

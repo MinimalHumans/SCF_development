@@ -11,6 +11,7 @@
  * Tab cycles modes: Description → Scene → Character → Dialogue → Transition
  * Autocomplete: Character mode → character names, Scene mode → locations
  * Navigator: DB queries via /api/screenplay-v2/scenes|characters|locations
+ * Ctrl+P: Tag selected text as a prop (inline prop annotations)
  * 
  * STRUCTURAL SPACING: Visual gaps between screenplay elements are rendered
  * via CSS margins, not blank lines. The document contains only content lines
@@ -22,7 +23,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 const CM_STATE_DEP = '@codemirror/state@6.5.2';
-const { EditorState } = await import(`https://esm.sh/@codemirror/state@6.5.2`);
+const { EditorState, StateEffect } = await import(`https://esm.sh/@codemirror/state@6.5.2`);
 const { EditorView, keymap, placeholder, drawSelection, highlightActiveLine, Decoration, ViewPlugin, MatchDecorator } =
     await import(`https://esm.sh/@codemirror/view@6.36.5?deps=${CM_STATE_DEP}`);
 const { defaultKeymap, history, historyKeymap } =
@@ -365,6 +366,261 @@ const lineDecorationPlugin = ViewPlugin.fromClass(class {
         return Decoration.set(decos, true);
     }
 }, { decorations: v => v.decorations });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Prop Tags — Inline Annotations (Ctrl+P)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const propTagsChanged = StateEffect.define();
+let propTags = [];       // [{tag_id, tagged_text, prop_id, prop_name}]
+let propPopoverEl = null;
+
+async function fetchPropTags() {
+    try {
+        const res = await fetch('/api/screenplay-v2/prop-tags');
+        if (!res.ok) return;
+        propTags = await res.json();
+        // Force decoration rebuild via StateEffect
+        if (editorView) {
+            editorView.dispatch({ effects: propTagsChanged.of(null) });
+        }
+    } catch (e) { console.error('Prop tags fetch failed:', e); }
+}
+
+// ── Prop Highlight Plugin ──
+// Highlights all occurrences of tagged prop text with a dotted underline.
+
+const propHighlightPlugin = ViewPlugin.fromClass(class {
+    constructor(view) {
+        this.lastTagCount = -1;
+        this.decorations = this.build(view);
+    }
+    update(update) {
+        const effectFired = update.transactions.some(
+            t => t.effects.some(e => e.is(propTagsChanged))
+        );
+        if (update.docChanged || update.viewportChanged || effectFired) {
+            this.decorations = this.build(update.view);
+        }
+    }
+    build(view) {
+        if (!propTags.length) return Decoration.none;
+
+        // Sort longest first so "machine gun" matches before "gun"
+        const sorted = [...propTags].sort(
+            (a, b) => b.tagged_text.length - a.tagged_text.length
+        );
+        const escaped = sorted.map(
+            t => t.tagged_text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        );
+        if (!escaped.length) return Decoration.none;
+
+        const re = new RegExp('\\b(' + escaped.join('|') + ')\\b', 'gi');
+        const decos = [];
+
+        for (const { from, to } of view.visibleRanges) {
+            const text = view.state.doc.sliceString(from, to);
+            let m;
+            while ((m = re.exec(text)) !== null) {
+                const start = from + m.index;
+                const end = start + m[0].length;
+                decos.push(Decoration.mark({
+                    class: 'cm-prop-highlight',
+                }).range(start, end));
+            }
+        }
+        return Decoration.set(decos, true);
+    }
+}, { decorations: v => v.decorations });
+
+// ── Prop Popover UI ──
+
+function getOrCreatePropPopover() {
+    if (!propPopoverEl) {
+        propPopoverEl = document.createElement('div');
+        propPopoverEl.className = 'prop-tag-popover hidden';
+        document.body.appendChild(propPopoverEl);
+
+        // Close on outside click
+        document.addEventListener('click', (e) => {
+            if (propPopoverEl && !propPopoverEl.contains(e.target)) {
+                hidePropPopover();
+            }
+        });
+
+        // Close on Escape
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && propPopoverEl &&
+                !propPopoverEl.classList.contains('hidden')) {
+                hidePropPopover();
+                e.stopPropagation();
+            }
+        });
+    }
+    return propPopoverEl;
+}
+
+function hidePropPopover() {
+    if (propPopoverEl) {
+        propPopoverEl.classList.add('hidden');
+        propPopoverEl.innerHTML = '';
+    }
+}
+
+function isPropPopoverVisible() {
+    return propPopoverEl && !propPopoverEl.classList.contains('hidden');
+}
+
+async function showPropPopover() {
+    if (!editorView) return;
+
+    const sel = editorView.state.selection.main;
+    if (sel.empty) {
+        showToast('Select text to tag as a prop');
+        return;
+    }
+
+    const selectedText = editorView.state.doc.sliceString(sel.from, sel.to).trim();
+    if (!selectedText || selectedText.includes('\n')) {
+        showToast('Select a single word or phrase');
+        return;
+    }
+
+    const coords = editorView.coordsAtPos(sel.from);
+    if (!coords) return;
+
+    const popover = getOrCreatePropPopover();
+
+    // Check if already tagged
+    const existingTag = propTags.find(
+        t => t.tagged_text.toLowerCase() === selectedText.toLowerCase()
+    );
+
+    // Build popover content
+    let html = `<div class="prop-tag-popover-header">
+        <span>Tag prop:</span>
+        <span class="prop-tag-text">${esc(selectedText)}</span>
+    </div>`;
+
+    if (existingTag) {
+        // Already tagged — show current mapping + remove option
+        html += `<div class="screenplay-ac-item" style="color: var(--text-secondary); cursor: default;">
+            <span class="screenplay-ac-icon">🔧</span>
+            <span class="screenplay-ac-name">Tagged as: ${esc(existingTag.prop_name)}</span>
+        </div>`;
+        html += `<div class="prop-tag-remove" data-tag-id="${existingTag.tag_id}">
+            <span>✕</span> Remove tag
+        </div>`;
+    } else {
+        // Not tagged — fetch matching props
+        try {
+            const res = await fetch(
+                `/api/screenplay-v2/autocomplete-props?q=${encodeURIComponent(selectedText)}`
+            );
+            if (res.ok) {
+                const props = await res.json();
+                for (const p of props) {
+                    html += `<div class="screenplay-ac-item" data-prop-id="${p.prop_id}">
+                        <span class="screenplay-ac-icon">🔧</span>
+                        <span class="screenplay-ac-name">${esc(p.name)}</span>
+                    </div>`;
+                }
+            }
+        } catch (e) { /* silent */ }
+
+        // Always show "create new" option
+        const titleCased = selectedText.split(' ')
+            .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+            .join(' ');
+        html += `<div class="screenplay-ac-new" data-create-name="${esc(titleCased)}">
+            + Create "${esc(titleCased)}" as new prop
+        </div>`;
+    }
+
+    popover.innerHTML = html;
+
+    // Position near selection
+    popover.style.left = Math.max(8, coords.left) + 'px';
+    popover.style.top = (coords.bottom + 6) + 'px';
+    popover.classList.remove('hidden');
+
+    // Bind click handlers
+    popover.querySelectorAll('.screenplay-ac-item[data-prop-id]').forEach(item => {
+        item.addEventListener('click', (e) => {
+            e.stopPropagation();
+            tagProp(selectedText, parseInt(item.dataset.propId));
+        });
+    });
+
+    popover.querySelectorAll('.screenplay-ac-new[data-create-name]').forEach(item => {
+        item.addEventListener('click', (e) => {
+            e.stopPropagation();
+            tagPropNew(selectedText, item.dataset.createName);
+        });
+    });
+
+    popover.querySelectorAll('.prop-tag-remove[data-tag-id]').forEach(item => {
+        item.addEventListener('click', (e) => {
+            e.stopPropagation();
+            untagProp(parseInt(item.dataset.tagId));
+        });
+    });
+}
+
+async function tagProp(taggedText, propId) {
+    try {
+        const res = await fetch('/api/screenplay-v2/tag-prop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tagged_text: taggedText, prop_id: propId }),
+        });
+        if (!res.ok) throw new Error('Tag failed');
+        const data = await res.json();
+        if (data.duplicate) {
+            showToast('Already tagged');
+        } else {
+            showToast(`Tagged "${taggedText}" → ${data.prop_name}`);
+            await fetchPropTags();
+        }
+    } catch (e) {
+        showToast('Tag error: ' + e.message);
+    }
+    hidePropPopover();
+    editorView?.focus();
+}
+
+async function tagPropNew(taggedText, newName) {
+    try {
+        const res = await fetch('/api/screenplay-v2/tag-prop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tagged_text: taggedText, new_name: newName }),
+        });
+        if (!res.ok) throw new Error('Tag failed');
+        const data = await res.json();
+        showToast(`Created prop "${data.prop_name}" and tagged`);
+        await fetchPropTags();
+    } catch (e) {
+        showToast('Tag error: ' + e.message);
+    }
+    hidePropPopover();
+    editorView?.focus();
+}
+
+async function untagProp(tagId) {
+    try {
+        const res = await fetch(`/api/screenplay-v2/tag-prop/${tagId}`, {
+            method: 'DELETE',
+        });
+        if (!res.ok) throw new Error('Untag failed');
+        showToast('Prop tag removed');
+        await fetchPropTags();
+    } catch (e) {
+        showToast('Untag error: ' + e.message);
+    }
+    hidePropPopover();
+    editorView?.focus();
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Structural Blank Stripping
@@ -732,6 +988,7 @@ async function loadScreenplay() {
         savedTimeout = setTimeout(() => setSaveStatus('Ready', ''), 2000);
 
         fetchNavigatorData();
+        fetchPropTags();
 
     } catch (e) {
         console.error('Load failed:', e);
@@ -747,6 +1004,7 @@ async function saveScreenplay() {
     if (!editorView || saving) return;
     markSaving();
     hideAutocomplete();
+    hidePropPopover();
 
     try {
         rebuildLineTypes(editorView.state);
@@ -784,6 +1042,7 @@ async function saveScreenplay() {
 
         if (data.summary) showSyncToast(data.summary);
         fetchNavigatorData();
+        fetchPropTags();
 
         const reloadRes = await fetch('/api/screenplay-v2/load');
         if (reloadRes.ok) {
@@ -878,7 +1137,6 @@ function renderScenes() {
         item.dataset.lineNumber = sc.line_number;
         item.dataset.sceneNumber = sc.scene_number;
 
-        // Store character names uppercased for consistent filtering
         const charNames = (sc.characters || []).map(ch => (ch.name || '').toUpperCase());
         item.dataset.characters = charNames.join(',');
 
@@ -926,7 +1184,6 @@ function renderCharacters() {
     for (const ch of navCharacters) {
         const item = document.createElement('div');
         item.className = 'nav-item nav-char-item';
-        // Store uppercased name for consistent filtering
         item.dataset.charName = ch.name.toUpperCase();
         item.innerHTML = `<span class="nav-item-icon">👤</span><span class="nav-item-name">${esc(ch.display_name)}</span><span class="nav-item-badge">${ch.scene_count}</span>`;
         if (ch.character_id) {
@@ -988,7 +1245,6 @@ function applyFilter() {
     items.forEach(item => {
         let vis = false;
         if (activeFilter.type === 'character') {
-            // Both sides are already uppercased (stored that way in dataset and filter)
             const chars = (item.dataset.characters || '').split(',');
             vis = chars.includes(activeFilter.name);
         } else if (activeFilter.type === 'location') {
@@ -1076,6 +1332,7 @@ function createEditor(container) {
                 fountainLanguage, history(), drawSelection(), highlightActiveLine(), EditorView.lineWrapping,
                 placeholder('Start writing your screenplay…'),
                 lineDecorationPlugin,
+                propHighlightPlugin,
                 autoUppercaseHandler,
                 autocompleteKeymap,
                 keymap.of([
@@ -1152,6 +1409,7 @@ function createEditor(container) {
                 ]),
                 keymap.of([
                     { key: 'Mod-s', run() { saveScreenplay(); return true; } },
+                    { key: 'Mod-p', run() { showPropPopover(); return true; } },
                     ...defaultKeymap, ...historyKeymap,
                 ]),
                 EditorView.updateListener.of((update) => {

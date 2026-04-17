@@ -6,6 +6,7 @@
     <title>Screenplay — {{ project_name }} — SCF Editor</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="stylesheet" href="/static/css/screenplay.css">
+    <link rel="stylesheet" href="/static/css/screenplay_props.css">
 </head>
 <body>
     <div class="app-layout">
@@ -225,6 +226,15 @@
                     <li>New names are created as entities on save.</li>
                 </ul>
 
+                <h3>Prop Tagging</h3>
+                <p>You can tag words or phrases in your screenplay as props. Tagged text gets a <span style="border-bottom: 1.5px dotted rgba(230, 169, 60, 0.7);">dotted underline</span> throughout the screenplay wherever it appears.</p>
+                <ul>
+                    <li>Select a word or phrase in the editor, then press <kbd>Ctrl+P</kbd> (or <kbd>Cmd+P</kbd> on Mac).</li>
+                    <li>A popover appears with matching props from your database. Click one to tag the text.</li>
+                    <li>If no matching prop exists, choose <strong>Create new</strong> to create the prop entity and tag it in one step.</li>
+                    <li>To remove a tag, select the same text and press <kbd>Ctrl+P</kbd> again — the popover will show a <strong>Remove tag</strong> option.</li>
+                </ul>
+
                 <h3>Saving</h3>
                 <p>Press <kbd>Ctrl+S</kbd> (or <kbd>Cmd+S</kbd> on Mac) or click <strong>Save</strong>. The save process creates any new characters, locations, or scenes and rebuilds scene-character relationships.</p>
 
@@ -234,8 +244,9 @@
                         <tr><td><kbd>Tab</kbd></td><td>Next mode</td></tr>
                         <tr><td><kbd>Shift+Tab</kbd></td><td>Previous mode</td></tr>
                         <tr><td><kbd>Ctrl/Cmd+S</kbd></td><td>Save</td></tr>
+                        <tr><td><kbd>Ctrl/Cmd+P</kbd></td><td>Tag selected text as prop</td></tr>
                         <tr><td><kbd>Enter</kbd></td><td>New line + auto mode switch</td></tr>
-                        <tr><td><kbd>Escape</kbd></td><td>Close autocomplete</td></tr>
+                        <tr><td><kbd>Escape</kbd></td><td>Close autocomplete / prop popover</td></tr>
                     </tbody>
                 </table>
             </div>
