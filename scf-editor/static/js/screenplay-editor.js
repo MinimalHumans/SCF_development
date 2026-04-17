@@ -249,13 +249,9 @@ function rebuildLineTypes(state) {
         if (trimmed === '') {
             actualType = 'blank';
         } else if (i === cursorLine && pendingMergeType) {
-            // Explicit merge via Backspace/Delete at line boundary.
-            // The handler already determined which type wins (upper line).
             actualType = pendingMergeType;
             mergeTypeUsed = true;
         } else if (i === cursorLine && !linesDeleted && !isLoading) {
-            // Typing or line insertion — user's mode is authority
-            // Skipped during load (isLoading) to preserve server-provided types
             actualType = modeToLineType(currentMode);
         } else {
             const candidates = contentTypeMap.get(trimmed);
@@ -287,8 +283,6 @@ function rebuildLineTypes(state) {
     lineTypes = newTypes;
     lineContents = newContents;
 
-    // After structural deletes (not explicit merges), sync mode to cursor line's
-    // resolved type. Skip if pendingMergeType was used — handler already set mode.
     if (linesDeleted && !mergeTypeUsed) {
         const cursorIdx = cursorLine - 1;
         if (cursorIdx >= 0 && cursorIdx < newTypes.length) {
@@ -300,7 +294,6 @@ function rebuildLineTypes(state) {
         }
     }
 
-    // Always clear — consumed or not
     pendingMergeType = null;
 }
 
@@ -312,46 +305,24 @@ function initLineTypesFromServer(serverLines) {
 // ═══════════════════════════════════════════════════════════════════════════
 // Structural Spacing — Gap class resolver
 // ═══════════════════════════════════════════════════════════════════════════
-// Determines CSS margin class based on the transition between consecutive
-// line types. Replaces blank lines as visual separators.
 
 const _DIALOGUE_BLOCK_TYPES = new Set(['dialogue', 'parenthetical', 'character']);
 
 function getGapClass(currType, prevType) {
     if (!prevType) return null;
-
-    // Scene heading: always large gap (scene break)
-    if (currType === 'heading') {
-        return 'cm-scf-gap-scene';
-    }
-
-    // Character cue: new dialogue block — gap unless preceded by nothing meaningful
+    if (currType === 'heading') return 'cm-scf-gap-scene';
     if (currType === 'character') {
-        // Gap before character cue (start of dialogue block)
         if (prevType !== 'blank') return 'cm-scf-gap-block';
         return null;
     }
-
-    // Transition: gap before
-    if (currType === 'transition') {
-        return 'cm-scf-gap-element';
-    }
-
-    // Action after dialogue/parenthetical: end of dialogue block
-    if (currType === 'action' && (prevType === 'dialogue' || prevType === 'parenthetical')) {
-        return 'cm-scf-gap-element';
-    }
-
-    // Action after transition
-    if (currType === 'action' && prevType === 'transition') {
-        return 'cm-scf-gap-element';
-    }
-
+    if (currType === 'transition') return 'cm-scf-gap-element';
+    if (currType === 'action' && (prevType === 'dialogue' || prevType === 'parenthetical')) return 'cm-scf-gap-element';
+    if (currType === 'action' && prevType === 'transition') return 'cm-scf-gap-element';
     return null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Line Decoration Plugin — applies type classes AND structural gap margins
+// Line Decoration Plugin
 // ═══════════════════════════════════════════════════════════════════════════
 const LINE_CLS = {
     heading: 'cm-scf-heading', action: 'cm-scf-action', character: 'cm-scf-character',
@@ -371,30 +342,22 @@ const lineDecorationPlugin = ViewPlugin.fromClass(class {
         const cursorLine = doc.lineAt(view.state.selection.main.head).number;
         for (let i = 1; i <= doc.lines; i++) {
             const classes = [];
-
-            // Line type class (skip cursor line — mode CSS handles it)
             if (i !== cursorLine) {
                 const type = (i - 1 < lineTypes.length) ? lineTypes[i - 1] : 'action';
                 const cls = LINE_CLS[type];
                 if (cls) classes.push(cls);
             }
-
-            // Structural gap margin — based on type transition from previous line
             const currType = (i - 1 < lineTypes.length) ? lineTypes[i - 1] : 'action';
             const prevType = (i > 1 && i - 2 < lineTypes.length) ? lineTypes[i - 2] : null;
             const gapCls = getGapClass(currType, prevType);
             if (gapCls) classes.push(gapCls);
-
-            // Page break on every LINES_PER_PAGE-th line
             if (i % LINES_PER_PAGE === 0 && i < doc.lines) {
                 const pageNum = i / LINES_PER_PAGE;
                 classes.push('cm-scf-pagebreak');
-                // Build attrs with both class and data-page
                 const combined = classes.join(' ');
                 decos.push(Decoration.line({ attributes: { class: combined, 'data-page': String(pageNum) } }).range(doc.line(i).from));
                 continue;
             }
-
             if (classes.length > 0) {
                 decos.push(Decoration.line({ attributes: { class: classes.join(' ') } }).range(doc.line(i).from));
             }
@@ -404,58 +367,33 @@ const lineDecorationPlugin = ViewPlugin.fromClass(class {
 }, { decorations: v => v.decorations });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Structural Blank Stripping — Phase 2
+// Structural Blank Stripping
 // ═══════════════════════════════════════════════════════════════════════════
-// Removes blank lines that exist only as structural separators (between
-// different element types). Keeps intentional blanks (consecutive blanks,
-// blanks between same-type elements).
 
 function stripStructuralBlanks(lines) {
     const result = [];
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-
-        // A line is "blank" if its content is empty, regardless of stored type
-        if (line.content.trim() !== '') {
-            result.push(line);
-            continue;
-        }
-
-        // Empty line — check if it's structural (CSS handles spacing) or intentional
+        if (line.content.trim() !== '') { result.push(line); continue; }
         const prev = i > 0 ? lines[i - 1] : null;
         const next = i < lines.length - 1 ? lines[i + 1] : null;
-
-        if (isStructuralBlank(prev, next)) {
-            // Skip — CSS padding handles this spacing
-            continue;
-        }
-
-        // Intentional blank — keep it
+        if (isStructuralBlank(prev, next)) continue;
         result.push(line);
     }
     return result;
 }
 
 function isStructuralBlank(prev, next) {
-    // No context: keep the blank (edge case — blank at start/end of doc)
     if (!prev || !next) return false;
-
     const prevEmpty = prev.content.trim() === '';
     const nextEmpty = next.content.trim() === '';
-
-    // Adjacent to another blank: intentional spacing — keep both
     if (prevEmpty || nextEmpty) return false;
-
-    // Between two same-type content lines: intentional paragraph break — keep
     if (prev.line_type === next.line_type) return false;
-
-    // Single blank between two different content types: structural separator.
-    // CSS gap classes handle this spacing visually.
     return true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Mode System — Tab cycles
+// Mode System
 // ═══════════════════════════════════════════════════════════════════════════
 const MODES = ['description', 'scene', 'character', 'dialogue', 'transition'];
 const MODE_LABELS = { description: 'Description', scene: 'Scene Heading', character: 'Character', dialogue: 'Dialogue', transition: 'Transition' };
@@ -726,8 +664,8 @@ let navScenes = [], navCharacters = [], navLocations = [];
 let activeFilter = null;
 let loadedTitlePage = [];
 let lastEnterTime = 0;
-let pendingMergeType = null;  // Set by Backspace/Delete handlers — upper line's type wins on merge
-let isLoading = false;        // True during initial load — prevents cursor-line type override
+let pendingMergeType = null;
+let isLoading = false;
 
 function showToast(msg) {
     const t = document.createElement('div');
@@ -747,7 +685,7 @@ function showSyncToast(summary) {
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Load — strip structural blanks, then build CodeMirror text
+// Load
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function loadScreenplay() {
@@ -764,7 +702,6 @@ async function loadScreenplay() {
 
         loadedTitlePage = data.title_page || [];
 
-        // Build entity cache from loaded data (before stripping)
         entityCache.clear();
         for (const line of data.lines) {
             const ids = {};
@@ -776,24 +713,16 @@ async function loadScreenplay() {
             }
         }
 
-        // Phase 2: Strip structural blanks — CSS margins handle spacing
         const contentLines = stripStructuralBlanks(data.lines);
-
-        // Initialize line type registry from stripped content
         initLineTypesFromServer(contentLines);
-
-        // Build plain text for CodeMirror
         const text = contentLines.map(l => l.content).join('\n');
 
-        // Load into CodeMirror — isLoading prevents cursor-line type override
-        // so server-provided types are preserved (especially the first heading)
         isLoading = true;
         editorView.dispatch({
             changes: { from: 0, to: editorView.state.doc.length, insert: text }
         });
         isLoading = false;
 
-        // Sync mode to whatever line the cursor landed on
         if (lineTypes.length > 0 && lineTypes[0] && lineTypes[0] !== 'blank') {
             setMode(lineTypeToMode(lineTypes[0]));
         }
@@ -811,7 +740,7 @@ async function loadScreenplay() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Save — Phase 3: saves content lines only (no structural blanks)
+// Save
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function saveScreenplay() {
@@ -856,7 +785,6 @@ async function saveScreenplay() {
         if (data.summary) showSyncToast(data.summary);
         fetchNavigatorData();
 
-        // Reload to refresh entity cache with server-assigned IDs
         const reloadRes = await fetch('/api/screenplay-v2/load');
         if (reloadRes.ok) {
             const reloaded = await reloadRes.json();
@@ -872,8 +800,6 @@ async function saveScreenplay() {
             }
             loadedTitlePage = reloaded.title_page || [];
 
-            // Strip blanks again for line type registry (DB may have stored blanks
-            // from old saves; after this session's save it won't)
             const contentLines = stripStructuralBlanks(reloaded.lines);
             initLineTypesFromServer(contentLines);
         }
@@ -885,7 +811,7 @@ async function saveScreenplay() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Navigator — DB-driven
+// Navigator
 // ═══════════════════════════════════════════════════════════════════════════
 
 function initNavigatorResize() {
@@ -951,7 +877,9 @@ function renderScenes() {
         item.className = 'nav-item nav-scene-item';
         item.dataset.lineNumber = sc.line_number;
         item.dataset.sceneNumber = sc.scene_number;
-        const charNames = (sc.characters || []).map(ch => ch.name || '');
+
+        // Store character names uppercased for consistent filtering
+        const charNames = (sc.characters || []).map(ch => (ch.name || '').toUpperCase());
         item.dataset.characters = charNames.join(',');
 
         const num = document.createElement('span');
@@ -998,7 +926,8 @@ function renderCharacters() {
     for (const ch of navCharacters) {
         const item = document.createElement('div');
         item.className = 'nav-item nav-char-item';
-        item.dataset.charName = ch.name;
+        // Store uppercased name for consistent filtering
+        item.dataset.charName = ch.name.toUpperCase();
         item.innerHTML = `<span class="nav-item-icon">👤</span><span class="nav-item-name">${esc(ch.display_name)}</span><span class="nav-item-badge">${ch.scene_count}</span>`;
         if (ch.character_id) {
             const lk = document.createElement('a');
@@ -1009,7 +938,7 @@ function renderCharacters() {
             lk.addEventListener('click', e => e.stopPropagation());
             item.appendChild(lk);
         }
-        item.addEventListener('click', () => toggleFilter('character', ch.name));
+        item.addEventListener('click', () => toggleFilter('character', ch.name.toUpperCase()));
         f.appendChild(item);
     }
     c.innerHTML = '';
@@ -1050,6 +979,7 @@ function toggleFilter(type, name) {
     applyFilter();
     applyFilterHighlight();
 }
+
 function applyFilter() {
     const items = document.querySelectorAll('.nav-scene-item');
     const ind = document.getElementById('nav-scenes-filter');
@@ -1057,14 +987,18 @@ function applyFilter() {
     if (ind) ind.classList.add('active');
     items.forEach(item => {
         let vis = false;
-        if (activeFilter.type === 'character') vis = (item.dataset.characters || '').split(',').includes(activeFilter.name);
-        else if (activeFilter.type === 'location') {
+        if (activeFilter.type === 'character') {
+            // Both sides are already uppercased (stored that way in dataset and filter)
+            const chars = (item.dataset.characters || '').split(',');
+            vis = chars.includes(activeFilter.name);
+        } else if (activeFilter.type === 'location') {
             const sc = navScenes.find(s => s.scene_number === parseInt(item.dataset.sceneNumber));
             if (sc) vis = sc.heading.toUpperCase().includes(activeFilter.name);
         }
         item.classList.toggle('filtered-out', !vis);
     });
 }
+
 function applyFilterHighlight() {
     document.querySelectorAll('.nav-char-item').forEach(i => i.classList.toggle('active', !!(activeFilter && activeFilter.type === 'character' && i.dataset.charName === activeFilter.name)));
     document.querySelectorAll('.nav-loc-item').forEach(i => i.classList.toggle('active', !!(activeFilter && activeFilter.type === 'location' && i.dataset.locName === activeFilter.name)));
@@ -1074,7 +1008,11 @@ function scrollToLine(ln) {
     if (!editorView) return;
     const n = ln + 1;
     if (n < 1 || n > editorView.state.doc.lines) return;
-    editorView.dispatch({ selection: { anchor: editorView.state.doc.line(n).from }, scrollIntoView: true });
+    const pos = editorView.state.doc.line(n).from;
+    editorView.dispatch({
+        selection: { anchor: pos },
+        effects: EditorView.scrollIntoView(pos, { y: 'center' }),
+    });
     editorView.focus();
 }
 
@@ -1144,64 +1082,44 @@ function createEditor(container) {
                     { key: 'Tab', run: handleTab },
                     { key: 'Shift-Tab', run: handleShiftTab },
 
-                    // ── Backspace at line boundary: merge up, upper type wins ──
-                    // Exception: if upper line is blank, lower (current) line's type wins
-                    // because a blank line has no semantic type.
                     { key: 'Backspace', run(view) {
                         const { head, empty } = view.state.selection.main;
-                        if (!empty) return false; // selection — let default handle
-
+                        if (!empty) return false;
                         const line = view.state.doc.lineAt(head);
-                        if (head !== line.from) return false; // mid-line — let default handle
-                        if (line.number === 1) return false; // first line — nothing above
-
+                        if (head !== line.from) return false;
+                        if (line.number === 1) return false;
                         const prevLine = view.state.doc.line(line.number - 1);
                         const prevIdx = prevLine.number - 1;
                         const prevType = (prevIdx < lineTypes.length) ? lineTypes[prevIdx] : 'action';
-
                         const currIdx = line.number - 1;
                         const currType = (currIdx < lineTypes.length) ? lineTypes[currIdx] : 'action';
-
-                        // Determine winning type: upper wins UNLESS upper is blank
                         const winType = (prevType === 'blank') ? currType : prevType;
                         pendingMergeType = winType;
                         setMode(lineTypeToMode(winType));
-
-                        // Delete the newline to merge lines
                         view.dispatch({
                             changes: { from: prevLine.to, to: line.from },
                             selection: { anchor: prevLine.to },
                         });
-
                         return true;
                     }},
 
-                    // ── Delete at line boundary: merge down, current type wins ──
-                    // Exception: if current line is blank, lower line's type wins.
                     { key: 'Delete', run(view) {
                         const { head, empty } = view.state.selection.main;
-                        if (!empty) return false; // selection — let default handle
-
+                        if (!empty) return false;
                         const line = view.state.doc.lineAt(head);
-                        if (head !== line.to) return false; // mid-line — let default handle
-                        if (line.number === view.state.doc.lines) return false; // last line
-
+                        if (head !== line.to) return false;
+                        if (line.number === view.state.doc.lines) return false;
                         const currIdx = line.number - 1;
                         const currType = (currIdx < lineTypes.length) ? lineTypes[currIdx] : 'action';
-
                         const nextLine = view.state.doc.line(line.number + 1);
                         const nextIdx = nextLine.number - 1;
                         const nextType = (nextIdx < lineTypes.length) ? lineTypes[nextIdx] : 'action';
-
-                        // Current line wins UNLESS current is blank
                         const winType = (currType === 'blank') ? nextType : currType;
                         pendingMergeType = winType;
                         setMode(lineTypeToMode(winType));
-
                         view.dispatch({
                             changes: { from: line.to, to: nextLine.from },
                         });
-
                         return true;
                     }},
 
