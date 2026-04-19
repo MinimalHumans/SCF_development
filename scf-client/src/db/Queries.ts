@@ -148,9 +148,9 @@ export async function sceneContext(sceneId: number): Promise<any> {
   return result;
 }
 
-export async function characterCrossover(char1Id: number, char2Id: number): Promise<any[]> {
+export async function characterCrossover(char1Id: number, char2Id: number): Promise<any> {
   /** Scenes where both characters appear. */
-  const rows = await db.getRows(`
+  const scenes = await db.getRows(`
     SELECT
         s.id            AS scene_id,
         s.name          AS scene_name,
@@ -168,7 +168,20 @@ export async function characterCrossover(char1Id: number, char2Id: number): Prom
     ORDER BY s.scene_number ASC, s.id ASC
   `, [char1Id, char2Id]);
 
-  return rows;
+  // Fetch individual counts and names
+  const char1Rows = await db.getRows("SELECT name FROM character WHERE id = ?", [char1Id]);
+  const char2Rows = await db.getRows("SELECT name FROM character WHERE id = ?", [char2Id]);
+  
+  const char1Count = await db.getRows("SELECT COUNT(*) as cnt FROM scene_character WHERE character_id = ?", [char1Id]);
+  const char2Count = await db.getRows("SELECT COUNT(*) as cnt FROM scene_character WHERE character_id = ?", [char2Id]);
+
+  return {
+    scenes,
+    char1Name: char1Rows[0]?.name || 'Unknown',
+    char2Name: char2Rows[0]?.name || 'Unknown',
+    char1Count: char1Count[0]?.cnt || 0,
+    char2Count: char2Count[0]?.cnt || 0
+  };
 }
 
 export async function projectStats(): Promise<any> {

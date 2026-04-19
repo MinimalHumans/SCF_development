@@ -84,258 +84,302 @@ const QueryExplorer: React.FC = () => {
     }
   }, [activeQuery]);
 
-  const renderStats = (stats: any) => (
-    <div className="stats-results">
-      <div className="stats-grid">
-        <div className="stats-card">
-          <div className="stats-label">Total Scenes</div>
-          <div className="stats-value">{stats.scene_count}</div>
-        </div>
-        <div className="stats-card">
-          <div className="stats-label">Characters</div>
-          <div className="stats-value">{stats.character_count}</div>
-        </div>
-        <div className="stats-card">
-          <div className="stats-label">Locations</div>
-          <div className="stats-value">{stats.location_count}</div>
-        </div>
-        <div className="stats-card">
-          <div className="stats-label">Props</div>
-          <div className="stats-value">{stats.prop_count}</div>
-        </div>
-      </div>
+  const renderStats = (stats: any) => {
+    if (!stats || Array.isArray(stats)) return null;
 
-      <div className="stats-sections">
-        <div className="stats-section">
-          <h3>Top Characters (Scene Appearance)</h3>
-          <div className="stats-list">
-            {stats.top_characters.map((c: any) => (
-              <div key={c.id} className="stats-list-item">
-                <span>{c.name}</span>
-                <span className="badge">{c.scene_count} scenes</span>
-              </div>
-            ))}
+    return (
+      <div className="stats-results">
+        <div className="stats-grid">
+          <div className="stats-card">
+            <div className="stats-label">Total Scenes</div>
+            <div className="stats-value">{stats.scene_count || 0}</div>
           </div>
-        </div>
-        
-        <div className="stats-section">
-          <h3>Top Locations</h3>
-          <div className="stats-list">
-            {stats.top_locations.map((l: any) => (
-              <div key={l.id} className="stats-list-item">
-                <span>{l.name}</span>
-                <span className="badge">{l.scene_count} scenes</span>
-              </div>
-            ))}
+          <div className="stats-card">
+            <div className="stats-label">Characters</div>
+            <div className="stats-value">{stats.character_count || 0}</div>
+          </div>
+          <div className="stats-card">
+            <div className="stats-label">Locations</div>
+            <div className="stats-value">{stats.location_count || 0}</div>
+          </div>
+          <div className="stats-card">
+            <div className="stats-label">Props</div>
+            <div className="stats-value">{stats.prop_count || 0}</div>
           </div>
         </div>
 
-        <div className="stats-section warning">
-          <h3>Coverage Gaps: Scenes without Characters</h3>
-          <div className="stats-list">
-            {stats.scenes_without_characters.length > 0 ? (
-              stats.scenes_without_characters.map((s: any) => (
-                <Link key={s.id} to={`/browse/scene/${s.id}`} className="stats-list-item clickable">
-                  <span>Scene {s.scene_number}: {s.name}</span>
-                  <AlertCircle size={14} color="var(--accent-red)" />
-                </Link>
-              ))
-            ) : (
-              <div className="stats-empty">No coverage gaps found.</div>
-            )}
-          </div>
-        </div>
-
-        <div className="stats-section warning">
-          <h3>Unused Characters</h3>
-          <div className="stats-list">
-            {stats.characters_without_scenes.length > 0 ? (
-              stats.characters_without_scenes.map((c: any) => (
-                <Link key={c.id} to={`/browse/character/${c.id}`} className="stats-list-item clickable">
-                  <span>{c.name} ({c.role})</span>
-                  <AlertCircle size={14} color="var(--accent-red)" />
-                </Link>
-              ))
-            ) : (
-              <div className="stats-empty">All characters are used.</div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderJourney = (data: any[]) => (
-    <div className="query-table-container">
-      <table className="query-table">
-        <thead>
-          <tr>
-            <th>Scene #</th>
-            <th>Scene Name</th>
-            <th>Location</th>
-            <th>Role in Scene</th>
-            <th>Others Present</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((row) => (
-            <tr key={row.scene_id}>
-              <td>{row.scene_number}</td>
-              <td>{row.scene_name}</td>
-              <td>{row.location_name}</td>
-              <td><span className={`badge badge-${row.role_in_scene?.toLowerCase()}`}>{row.role_in_scene}</span></td>
-              <td>
-                <div className="tag-cloud">
-                  {row.other_characters.map((oc: any, i: number) => (
-                    <span key={i} className="mini-tag">{oc.character_name}</span>
-                  ))}
+        <div className="stats-sections">
+          <div className="stats-section">
+            <h3>Top Characters (Scene Appearance)</h3>
+            <div className="stats-list">
+              {(stats.top_characters || []).map((c: any) => (
+                <div key={c.id} className="stats-list-item">
+                  <span>{c.name}</span>
+                  <span className="badge">{c.scene_count} scenes</span>
                 </div>
-              </td>
-              <td>
-                <Link to={`/browse/scene/${row.scene_id}`} className="icon-link">
-                  <ExternalLink size={14} />
-                </Link>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-
-  const renderBreakdown = (data: any[]) => (
-    <div className="query-table-container">
-      <table className="query-table">
-        <thead>
-          <tr>
-            <th>Scene #</th>
-            <th>Scene Name</th>
-            <th>Time of Day</th>
-            <th>Characters</th>
-            <th>Props</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((row) => (
-            <tr key={row.scene_id}>
-              <td>{row.scene_number}</td>
-              <td>{row.scene_name}</td>
-              <td>{row.time_of_day}</td>
-              <td>
-                <div className="tag-cloud">
-                  {row.characters.map((c: any, i: number) => (
-                    <span key={i} className="mini-tag">{c.character_name}</span>
-                  ))}
-                </div>
-              </td>
-              <td>
-                <div className="tag-cloud">
-                  {row.props.map((p: any, i: number) => (
-                    <span key={i} className="mini-tag prop">{p.prop_name}</span>
-                  ))}
-                </div>
-              </td>
-              <td>
-                <Link to={`/browse/scene/${row.scene_id}`} className="icon-link">
-                  <ExternalLink size={14} />
-                </Link>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-
-  const renderCrossover = (data: any[]) => (
-    <div className="query-table-container">
-      <table className="query-table">
-        <thead>
-          <tr>
-            <th>Scene #</th>
-            <th>Scene Name</th>
-            <th>Location</th>
-            <th>Char 1 Role</th>
-            <th>Char 2 Role</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((row) => (
-            <tr key={row.scene_id}>
-              <td>{row.scene_number}</td>
-              <td>{row.scene_name}</td>
-              <td>{row.location_name}</td>
-              <td><span className="badge">{row.char1_role}</span></td>
-              <td><span className="badge">{row.char2_role}</span></td>
-              <td>
-                <Link to={`/browse/scene/${row.scene_id}`} className="icon-link">
-                  <ExternalLink size={14} />
-                </Link>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-
-  const renderContext = (scene: any) => (
-    <div className="scene-context-results">
-      <div className="context-header">
-        <div className="context-title">
-          <h2>Scene {scene.scene_number}: {scene.name}</h2>
-          <span className="badge">{scene.time_of_day}</span>
-        </div>
-        <div className="context-location">
-          <MapPin size={16} />
-          <span>{scene.location?.name || 'Unknown Location'}</span>
-        </div>
-      </div>
-
-      <div className="context-grid">
-        <div className="context-block">
-          <h3>Summary</h3>
-          <p className="context-text">{scene.summary || 'No summary available.'}</p>
+              ))}
+            </div>
+          </div>
           
-          <h3 style={{ marginTop: '20px' }}>Emotional Beat</h3>
-          <p className="context-text italic">{scene.emotional_beat || 'Not specified.'}</p>
-        </div>
-
-        <div className="context-block">
-          <h3>Characters</h3>
-          <div className="context-list">
-            {scene.characters.map((c: any) => (
-              <div key={c.id} className="context-list-item">
-                <strong>{c.name}</strong>
-                <span className="badge">{c.role_in_scene}</span>
-                {c.link_notes && <div className="sub-note">{c.link_notes}</div>}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="context-block">
-          <h3>Props</h3>
-          <div className="context-list">
-            {scene.props.length > 0 ? (
-              scene.props.map((p: any) => (
-                <div key={p.id} className="context-list-item">
-                  <strong>{p.name}</strong>
-                  <span className="badge prop">{p.usage_note}</span>
-                  {p.significance && <div className="sub-note">{p.significance}</div>}
+          <div className="stats-section">
+            <h3>Top Locations</h3>
+            <div className="stats-list">
+              {(stats.top_locations || []).map((l: any) => (
+                <div key={l.id} className="stats-list-item">
+                  <span>{l.name}</span>
+                  <span className="badge">{l.scene_count} scenes</span>
                 </div>
-              ))
-            ) : (
-              <div className="stats-empty">No props linked.</div>
-            )}
+              ))}
+            </div>
+          </div>
+
+          <div className="stats-section warning">
+            <h3>Coverage Gaps: Scenes without Characters</h3>
+            <div className="stats-list">
+              {(stats.scenes_without_characters || []).length > 0 ? (
+                stats.scenes_without_characters.map((s: any) => (
+                  <Link key={s.id} to={`/browse/scene/${s.id}`} className="stats-list-item clickable">
+                    <span>Scene {s.scene_number}: {s.name}</span>
+                    <AlertCircle size={14} color="var(--accent-red)" />
+                  </Link>
+                ))
+              ) : (
+                <div className="stats-empty">No coverage gaps found.</div>
+              )}
+            </div>
+          </div>
+
+          <div className="stats-section warning">
+            <h3>Unused Characters</h3>
+            <div className="stats-list">
+              {(stats.characters_without_scenes || []).length > 0 ? (
+                stats.characters_without_scenes.map((c: any) => (
+                  <Link key={c.id} to={`/browse/character/${c.id}`} className="stats-list-item clickable">
+                    <span>{c.name} ({c.role})</span>
+                    <AlertCircle size={14} color="var(--accent-red)" />
+                  </Link>
+                ))
+              ) : (
+                <div className="stats-empty">All characters are used.</div>
+              )}
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
+
+  const renderJourney = (data: any) => {
+    if (!Array.isArray(data)) return null;
+    return (
+      <div className="query-table-container">
+        <table className="query-table">
+          <thead>
+            <tr>
+              <th>Scene #</th>
+              <th>Scene Name</th>
+              <th>Location</th>
+              <th>Role in Scene</th>
+              <th>Others Present</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((row) => (
+              <tr key={row.scene_id}>
+                <td>{row.scene_number}</td>
+                <td>{row.scene_name}</td>
+                <td>{row.location_name}</td>
+                <td><span className={`badge badge-${row.role_in_scene?.toLowerCase()}`}>{row.role_in_scene}</span></td>
+                <td>
+                  <div className="tag-cloud">
+                    {(row.other_characters || []).map((oc: any, i: number) => (
+                      <span key={i} className="mini-tag">{oc.character_name}</span>
+                    ))}
+                  </div>
+                </td>
+                <td>
+                  <Link to={`/browse/scene/${row.scene_id}`} className="icon-link">
+                    <ExternalLink size={14} />
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  const renderBreakdown = (data: any) => {
+    if (!Array.isArray(data)) return null;
+    return (
+      <div className="query-table-container">
+        <table className="query-table">
+          <thead>
+            <tr>
+              <th>Scene #</th>
+              <th>Scene Name</th>
+              <th>Time of Day</th>
+              <th>Characters</th>
+              <th>Props</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((row) => (
+              <tr key={row.scene_id}>
+                <td>{row.scene_number}</td>
+                <td>{row.scene_name}</td>
+                <td>{row.time_of_day}</td>
+                <td>
+                  <div className="tag-cloud">
+                    {(row.characters || []).map((c: any, i: number) => (
+                      <span key={i} className="mini-tag">{c.character_name}</span>
+                    ))}
+                  </div>
+                </td>
+                <td>
+                  <div className="tag-cloud">
+                    {(row.props || []).map((p: any, i: number) => (
+                      <span key={i} className="mini-tag prop">{p.prop_name}</span>
+                    ))}
+                  </div>
+                </td>
+                <td>
+                  <Link to={`/browse/scene/${row.scene_id}`} className="icon-link">
+                    <ExternalLink size={14} />
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  const renderCrossover = (data: any) => {
+    if (!data || !data.scenes) return null;
+    const { scenes, char1Name, char2Name, char1Count, char2Count } = data;
+
+    return (
+      <div className="query-results-container">
+        <div className="query-feedback" style={{ 
+          marginBottom: '20px', 
+          padding: '16px', 
+          background: 'var(--bg-surface)', 
+          border: '1px solid var(--border)', 
+          borderRadius: 'var(--radius)' 
+        }}>
+          {scenes.length === 0 ? (
+            <p style={{ color: 'var(--warning)', fontWeight: 500 }}>
+              These characters never appear in the same scene.
+            </p>
+          ) : (
+            <p style={{ color: 'var(--success)', fontWeight: 500 }}>
+              These characters appear together in {scenes.length} scene{scenes.length === 1 ? '' : 's'}.
+            </p>
+          )}
+          <div style={{ marginTop: '8px', display: 'flex', gap: '20px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+            <span><strong>{char1Name}</strong> is in {char1Count} scenes.</span>
+            <span><strong>{char2Name}</strong> is in {char2Count} scenes.</span>
+          </div>
+        </div>
+
+        {scenes.length > 0 && (
+          <div className="query-table-container">
+            <table className="query-table">
+              <thead>
+                <tr>
+                  <th>Scene #</th>
+                  <th>Scene Name</th>
+                  <th>Location</th>
+                  <th>{char1Name} Role</th>
+                  <th>{char2Name} Role</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scenes.map((row: any) => (
+                  <tr key={row.scene_id}>
+                    <td>{row.scene_number}</td>
+                    <td>{row.scene_name}</td>
+                    <td>{row.location_name}</td>
+                    <td><span className="badge">{row.char1_role}</span></td>
+                    <td><span className="badge">{row.char2_role}</span></td>
+                    <td>
+                      <Link to={`/browse/scene/${row.scene_id}`} className="icon-link">
+                        <ExternalLink size={14} />
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderContext = (scene: any) => {
+    if (!scene || Array.isArray(scene)) return null;
+    return (
+      <div className="scene-context-results">
+        <div className="context-header">
+          <div className="context-title">
+            <h2>Scene {scene.scene_number}: {scene.name}</h2>
+            <span className="badge">{scene.time_of_day}</span>
+          </div>
+          <div className="context-location">
+            <MapPin size={16} />
+            <span>{scene.location?.name || 'Unknown Location'}</span>
+          </div>
+        </div>
+
+        <div className="context-grid">
+          <div className="context-block">
+            <h3>Summary</h3>
+            <p className="context-text">{scene.summary || 'No summary available.'}</p>
+            
+            <h3 style={{ marginTop: '20px' }}>Emotional Beat</h3>
+            <p className="context-text italic">{scene.emotional_beat || 'Not specified.'}</p>
+          </div>
+
+          <div className="context-block">
+            <h3>Characters</h3>
+            <div className="context-list">
+              {(scene.characters || []).map((c: any) => (
+                <div key={c.id} className="context-list-item">
+                  <strong>{c.name}</strong>
+                  <span className="badge">{c.role_in_scene}</span>
+                  {c.link_notes && <div className="sub-note">{c.link_notes}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="context-block">
+            <h3>Props</h3>
+            <div className="context-list">
+              {(scene.props || []).length > 0 ? (
+                scene.props.map((p: any) => (
+                  <div key={p.id} className="context-list-item">
+                    <strong>{p.name}</strong>
+                    <span className="badge prop">{p.usage_note}</span>
+                    {p.significance && <div className="sub-note">{p.significance}</div>}
+                  </div>
+                ))
+              ) : (
+                <div className="stats-empty">No props linked.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="query-explorer">

@@ -42,8 +42,8 @@ interface GroupedEntities {
 
 const SidebarTree: React.FC = () => {
   const [entities, setEntities] = useState<GroupedEntities>({});
-  const [sortMode, setSortMode] = useState<'alpha' | 'created'>(() => {
-    return (localStorage.getItem('scf_tree_sort') as 'alpha' | 'created') || 'alpha';
+  const [sortMode, setSortMode] = useState<'alpha' | 'created' | 'screenplay'>(() => {
+    return (localStorage.getItem('scf_tree_sort') as 'alpha' | 'created' | 'screenplay') || 'alpha';
   });
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
     const saved = localStorage.getItem('scf_tree_expanded');
@@ -97,9 +97,14 @@ const SidebarTree: React.FC = () => {
       
       if (typeDef.tier === 0) {
         try {
-          const nameField = typeDef.name_field || 'name';
-          const orderBy = sortMode === 'alpha' ? `${nameField} ASC` : 'id ASC';
-          const rows = await db.listEntities(type, { orderBy });
+          let rows;
+          if (sortMode === 'screenplay') {
+            rows = await db.listEntitiesByScreenplayOrder(type);
+          } else {
+            const nameField = typeDef.name_field || 'name';
+            const orderBy = sortMode === 'alpha' ? `${nameField} ASC` : 'id ASC';
+            rows = await db.listEntities(type, { orderBy });
+          }
           newEntities[category][type] = rows;
         } catch (e) {
           console.error(`Error fetching ${type}:`, e);
@@ -155,12 +160,20 @@ const SidebarTree: React.FC = () => {
                 <SortAsc size={14} />
             </button>
             <button 
+                className={`icon-button ${sortMode === 'screenplay' ? 'active' : ''}`}
+                onClick={() => setSortMode('screenplay')}
+                title="Sort by Screenplay Order"
+                style={{ padding: '2px 4px', background: sortMode === 'screenplay' ? 'var(--bg-hover)' : 'transparent', borderRadius: '4px', border: 'none', cursor: 'pointer', color: sortMode === 'screenplay' ? 'var(--text-accent)' : 'var(--text-muted)' }}
+            >
+                <Clock size={14} />
+            </button>
+            <button 
                 className={`icon-button ${sortMode === 'created' ? 'active' : ''}`}
                 onClick={() => setSortMode('created')}
                 title="Sort by Creation Order"
                 style={{ padding: '2px 4px', background: sortMode === 'created' ? 'var(--bg-hover)' : 'transparent', borderRadius: '4px', border: 'none', cursor: 'pointer', color: sortMode === 'created' ? 'var(--text-accent)' : 'var(--text-muted)' }}
             >
-                <Clock size={14} />
+                <Plus size={14} />
             </button>
           </div>
         </div>
@@ -215,11 +228,13 @@ const SidebarTree: React.FC = () => {
                             {!isPlaceholder && entities[category][type].length > 0 && (
                               <span style={{ 
                                 border: '1px solid var(--border)',
+                                background: 'var(--bg-base)',
                                 borderRadius: '10px',
                                 padding: '0 6px',
                                 fontSize: '10px',
                                 color: 'var(--text-muted)',
-                                marginRight: '8px'
+                                marginRight: '8px',
+                                boxShadow: 'inset 0 1px 4px rgba(0,0,0,0.2)'
                               }}>
                                 {entities[category][type].length}
                               </span>

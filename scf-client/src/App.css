@@ -353,11 +353,13 @@
   position: relative;
   width: 300px;
   margin: 0 20px;
+  display: flex;
+  align-items: center;
 }
 
 .global-search-input {
   width: 100%;
-  padding: 6px 12px 6px 32px;
+  padding: 6px 12px 6px 36px; /* Increased left padding for icon */
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -378,11 +380,31 @@
 
 .global-search-icon {
   position: absolute;
-  left: 10px;
+  left: 12px;
   top: 50%;
   transform: translateY(-50%);
   color: var(--text-muted);
   pointer-events: none;
+  z-index: 10;
+}
+
+.icon-button {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  padding: 6px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+}
+
+.icon-button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border);
 }
 
 .global-search-results {
