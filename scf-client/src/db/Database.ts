@@ -21,6 +21,11 @@ export interface ProjectStats {
   };
 }
 
+export interface ProjectInfo {
+  name: string;
+  lastModified: number;
+}
+
 class Database {
   private static instance: Database;
   private worker: Worker;
@@ -85,7 +90,7 @@ class Database {
     });
   }
 
-  public async listProjects(): Promise<string[]> {
+  public async listProjects(): Promise<ProjectInfo[]> {
     return this.call('listProjects', {});
   }
 

@@ -5,7 +5,6 @@ import {
   ChevronRight, 
   Plus, 
   Search,
-  Folder,
   FileText,
   Lock
 } from 'lucide-react';

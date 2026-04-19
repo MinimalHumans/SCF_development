@@ -8,8 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
-  LogOut,
-  Info
+  LogOut
 } from 'lucide-react';
 
 import SidebarTree from './components/SidebarTree';
@@ -127,33 +126,8 @@ const App: React.FC = () => {
 
         <section className="content-area">
           <Routes>
-            <Route path="/" element={
-              <div className="placeholder-view">
-                <div className="placeholder-header">
-                  <h1>Project Overview</h1>
-                  <p>Welcome back to {currentProject.replace('.scf', '')}.</p>
-                </div>
-                <div className="placeholder-card">
-                  <Info size={48} style={{ marginBottom: '16px', opacity: 0.5 }} />
-                  <p>Select an entity from the sidebar to view or edit its details.</p>
-                  <p style={{ marginTop: '12px', fontSize: '13px' }}>
-                    Use the navigation above to switch between the Entity Browser, Screenplay Editor, and Query Explorer.
-                  </p>
-                </div>
-              </div>
-            } />
-            <Route path="/browse" element={
-              <div className="placeholder-view">
-                <div className="placeholder-header">
-                  <h1>Search & Browse</h1>
-                  <p>Explore your story entities and their relationships.</p>
-                </div>
-                <div className="placeholder-card">
-                  <Search size={48} style={{ marginBottom: '16px', opacity: 0.5 }} />
-                  <p>Select an entity type in the sidebar to browse existing entries or create new ones.</p>
-                </div>
-              </div>
-            } />
+            <Route path="/" element={<EntityEditor entityType="project" entityId="1" />} />
+            <Route path="/browse" element={<EntityEditor entityType="project" entityId="1" />} />
             <Route path="/browse/:type/:id" element={<EntityEditor />} />
             <Route path="/screenplay" element={
               <div className="placeholder-view">
