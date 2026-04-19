@@ -1,0 +1,17 @@
+# 1. Enable Security Headers (CRITICAL for SQLite WASM / OPFS)
+# This enables SharedArrayBuffer support in the browser.
+<IfModule mod_headers.c>
+    Header set Cross-Origin-Opener-Policy "same-origin"
+    Header set Cross-Origin-Embedder-Policy "require-corp"
+</IfModule>
+
+# 2. SPA Routing (Handle React Router refresh)
+# Redirects all paths to index.html if the file/folder doesn't exist on disk.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+    RewriteRule ^index\.html$ - [L]
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule . /index.html [L]
+</IfModule>
