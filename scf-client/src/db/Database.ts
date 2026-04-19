@@ -200,6 +200,51 @@ class Database {
     return this.getRows<T>(sql, params);
   }
 
+  public async listEntitiesByScreenplayOrder<T = any>(entityType: string): Promise<T[]> {
+    /** 
+     * Custom sort: Entities appearing first in screenplay lines come first.
+     * Fallback to creation order (ID) for entities not in screenplay.
+     */
+    let joinTable = '';
+    let joinField = '';
+    
+    if (entityType === 'character') {
+      joinTable = 'screenplay_lines';
+      joinField = 'character_id';
+    } else if (entityType === 'location') {
+      joinTable = 'screenplay_lines';
+      joinField = 'location_id';
+    } else if (entityType === 'scene') {
+      return this.getRows<T>("SELECT * FROM scene ORDER BY scene_number ASC, id ASC");
+    } else if (entityType === 'prop') {
+        // Props use scene_prop junction
+        return this.getRows<T>(`
+            SELECT p.* FROM prop p
+            LEFT JOIN (
+                SELECT sp.prop_id, MIN(s.scene_number) as first_scene 
+                FROM scene_prop sp 
+                JOIN scene s ON s.id = sp.scene_id
+                GROUP BY sp.prop_id
+            ) ord ON p.id = ord.prop_id
+            ORDER BY CASE WHEN ord.first_scene IS NULL THEN 1 ELSE 0 END, ord.first_scene ASC, p.id ASC
+        `);
+    } else {
+        // Fallback for others
+        return this.listEntities(entityType, { orderBy: 'id ASC' });
+    }
+
+    return this.getRows<T>(`
+        SELECT e.* FROM ${entityType} e
+        LEFT JOIN (
+            SELECT ${joinField}, MIN(line_order) as first_line 
+            FROM ${joinTable} 
+            WHERE ${joinField} IS NOT NULL
+            GROUP BY ${joinField}
+        ) ord ON e.id = ord.${joinField}
+        ORDER BY CASE WHEN ord.first_line IS NULL THEN 1 ELSE 0 END, ord.first_line ASC, e.id ASC
+    `);
+  }
+
   public async getEntityById<T = any>(entityType: string, id: number): Promise<T | null> {
     const rows = await db.getRows<T>(`SELECT * FROM ${entityType} WHERE id = ?`, [id]);
     return rows.length > 0 ? rows[0] : null;
