@@ -1,11 +1,17 @@
-# 1. Enable Security Headers (CRITICAL for SQLite WASM / OPFS)
+# 1. Map MIME types (FIXES WASM ERRORS)
+<IfModule mod_mime.c>
+    AddType application/wasm .wasm
+    AddType application/javascript .js
+</IfModule>
+
+# 2. Enable Security Headers (CRITICAL for SQLite WASM / OPFS)
 # This enables SharedArrayBuffer support in the browser.
 <IfModule mod_headers.c>
     Header set Cross-Origin-Opener-Policy "same-origin"
     Header set Cross-Origin-Embedder-Policy "require-corp"
 </IfModule>
 
-# 2. SPA Routing (Handle React Router refresh)
+# 3. SPA Routing (Handle React Router refresh)
 # Redirects all paths to index.html if the file/folder doesn't exist on disk.
 <IfModule mod_rewrite.c>
     RewriteEngine On
