@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
+import { Routes, Route, Link, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { 
   Search, 
   Film, 
   Database as DbIcon, 
   Settings, 
-  ChevronLeft,
-  ChevronRight,
   X,
   LogOut
 } from 'lucide-react';
@@ -27,8 +25,15 @@ import './assets/css/entity_tooltips.css';
 import './assets/css/entity_images.css';
 import './App.css';
 
+const BrowseEmptyState = () => (
+  <div className="empty-state">
+    <DbIcon size={48} className="empty-state-icon" />
+    <h2>Select an entity to edit</h2>
+    <p>Or create a new one from the sidebar</p>
+  </div>
+);
+
 const App: React.FC = () => {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(Number(localStorage.getItem('scf_sidebar_width')) || 280);
   const [currentProject, setCurrentProject] = useState<string | null>(db.getCurrentProject());
   const [projectMetadata, setProjectMetadata] = useState<any>(null);
@@ -43,6 +48,8 @@ const App: React.FC = () => {
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const location = useLocation();
   const navigate = useNavigate();
+
+  const isBrowseRoute = location.pathname.startsWith('/browse');
 
   const fetchProjectMetadata = async () => {
     try {
@@ -224,13 +231,6 @@ const App: React.FC = () => {
     <div className="app-container">
       <header className="main-header">
         <div className="header-left">
-          <button 
-            className="icon-button menu-toggle" 
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            title={sidebarOpen ? "Collapse Sidebar" : "Expand Sidebar"}
-          >
-            {sidebarOpen ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
-          </button>
           <div className="logo">
             <span className="logo-icon">🎬</span>
             <span className="logo-text">SCF</span>
@@ -318,10 +318,10 @@ const App: React.FC = () => {
         <nav className="header-nav">
           <Link 
             to="/browse" 
-            className={`nav-link ${location.pathname.startsWith('/browse') || location.pathname === '/' ? 'active' : ''}`}
+            className={`nav-link ${location.pathname.startsWith('/browse') ? 'active' : ''}`}
           >
             <Search size={18} />
-            <span>Search & Browse</span>
+            <span>Entity Browser</span>
           </Link>
           <Link 
             to="/screenplay" 
@@ -351,23 +351,23 @@ const App: React.FC = () => {
       </header>
 
       <main className="main-content">
-        <aside 
-          className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}
-          style={{ width: sidebarOpen ? sidebarWidth : 0 }}
-        >
-          <SidebarTree />
-          {sidebarOpen && (
+        {isBrowseRoute && (
+          <aside 
+            className="sidebar open"
+            style={{ width: sidebarWidth }}
+          >
+            <SidebarTree />
             <div 
               className="sidebar-resizer" 
               onMouseDown={startResize}
             />
-          )}
-        </aside>
+          </aside>
+        )}
 
         <section className="content-area">
           <Routes>
-            <Route path="/" element={<EntityEditor entityType="project" entityId="1" />} />
-            <Route path="/browse" element={<EntityEditor entityType="project" entityId="1" />} />
+            <Route path="/" element={<Navigate to="/browse" replace />} />
+            <Route path="/browse" element={<BrowseEmptyState />} />
             <Route path="/browse/:type/:id" element={<EntityEditor />} />
             <Route path="/screenplay" element={<ScreenplayEditor />} />
             <Route path="/query" element={<QueryExplorer />} />
