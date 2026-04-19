@@ -1,0 +1,110 @@
+/* ==========================================================================
+   Prop Highlights (Phase 3 — Inline Prop Annotations)
+   Append this to the end of screenplay.css
+   ========================================================================== */
+
+/* Inline prop text highlight — subtle underline, warm accent */
+.cm-prop-highlight {
+    border-bottom: 1.5px dotted rgba(230, 169, 60, 0.7);
+    border-radius: 1px;
+    transition: background 0.15s, border-color 0.15s;
+    cursor: default;
+}
+.cm-prop-highlight:hover {
+    background: rgba(230, 169, 60, 0.10);
+    border-bottom-color: rgba(230, 169, 60, 1);
+}
+
+/* Navigator prop items */
+.nav-item.nav-prop-item .nav-item-icon { font-size: 11px; }
+
+/* Prop tag popover (shown on Ctrl+P with selection) */
+.prop-tag-popover {
+    position: fixed;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    z-index: 100;
+    min-width: 220px;
+    max-width: 360px;
+    overflow: hidden;
+}
+.prop-tag-popover.hidden { display: none; }
+
+.prop-tag-popover-header {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.prop-tag-popover-header .prop-tag-text {
+    color: #e6a93c;
+    font-weight: 700;
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: 12px;
+}
+
+/* Reuse screenplay-ac-item styles for prop suggestions */
+.prop-tag-popover .screenplay-ac-item {
+    padding: 6px 12px;
+}
+.prop-tag-popover .screenplay-ac-new {
+    padding: 6px 12px;
+    font-size: 11px;
+    color: var(--success);
+    cursor: pointer;
+    transition: background 0.1s;
+}
+.prop-tag-popover .screenplay-ac-new:hover {
+    background: var(--bg-hover);
+}
+
+/* Remove tag button in popover */
+.prop-tag-remove {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--danger);
+    cursor: pointer;
+    border-top: 1px solid var(--border-subtle);
+    transition: background 0.1s;
+}
+.prop-tag-remove:hover {
+    background: var(--danger-bg);
+}
+
+/* ==========================================================================
+   Navigator Sort Toggle
+   ========================================================================== */
+
+.nav-sort-toggle {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: var(--bg-base);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-left: 6px;
+    cursor: pointer;
+    user-select: none;
+    letter-spacing: 0.03em;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+.nav-sort-toggle:hover {
+    color: var(--text-accent);
+    border-color: var(--accent);
+    background: var(--accent-subtle);
+}
