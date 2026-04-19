@@ -4,37 +4,26 @@ import schema from './schema.json';
 const log = (...args: any[]) => console.log('[DatabaseWorker]', ...args);
 const error = (...args: any[]) => console.error('[DatabaseWorker]', ...args);
 
-let db: any;
-let sqlite3: any;
+let sqlite3: any = null;
+let db: any = null;
+let currentDbName: string | null = null;
 
-const fieldTypeToSql = (type: string): string => {
+const fieldTypeToSql = (type: string) => {
   switch (type) {
-    case 'integer':
-    case 'reference':
-    case 'boolean':
-      return 'INTEGER';
-    case 'float':
-      return 'REAL';
-    case 'json':
-    case 'text':
-    case 'textarea':
-    case 'select':
-    case 'multiselect':
-    default:
-      return 'TEXT';
+    case 'integer': return 'INTEGER';
+    case 'float': return 'REAL';
+    case 'boolean': return 'BOOLEAN';
+    case 'json': return 'JSON';
+    case 'reference': return 'INTEGER';
+    default: return 'TEXT';
   }
 };
 
-const safeExec = (sql: string | any) => {
-  const sqlString = typeof sql === 'string' ? sql : sql.sql;
-  const firstLine = sqlString.trim().split('\n')[0].substring(0, 100);
-  log(`Executing: ${firstLine}${sqlString.length > 100 ? '...' : ''}`);
+const safeExec = (sql: any) => {
   try {
-    const result = db.exec(sql);
-    log(`Done.`);
-    return result;
+    return db.exec(sql);
   } catch (err: any) {
-    error(`Error executing SQL: ${firstLine}`, err);
+    error(`Error executing SQL: ${typeof sql === 'string' ? sql : JSON.stringify(sql)}`, err);
     throw err;
   }
 };
@@ -42,68 +31,18 @@ const safeExec = (sql: string | any) => {
 const initSchema = () => {
   log('Initializing schema...');
   
-  // Metadata table
+  // Create project table first as it's the context
   safeExec(`
-    CREATE TABLE IF NOT EXISTS _scf_meta (
-      key TEXT PRIMARY KEY,
-      value TEXT
-    )
-  `);
-
-  safeExec("INSERT OR REPLACE INTO _scf_meta (key, value) VALUES ('scf_version', '0.1.0')");
-  safeExec(`INSERT OR REPLACE INTO _scf_meta (key, value) VALUES ('updated_at', '${new Date().toISOString()}')`);
-
-  // Screenplay infrastructure tables
-  safeExec(`
-    CREATE TABLE IF NOT EXISTS screenplay_meta (
+    CREATE TABLE IF NOT EXISTS project (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      fountain_path TEXT,
-      title TEXT,
-      author TEXT,
-      draft TEXT,
-      last_synced TEXT,
-      total_scenes INTEGER DEFAULT 0,
-      total_pages INTEGER DEFAULT 0
-    )
-  `);
-
-  safeExec(`
-    CREATE TABLE IF NOT EXISTS screenplay_character_map (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      text_name TEXT NOT NULL UNIQUE,
-      character_id INTEGER REFERENCES character(id),
-      is_primary_name INTEGER DEFAULT 1,
-      created_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  safeExec(`
-    CREATE TABLE IF NOT EXISTS screenplay_scene_map (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      scene_id INTEGER REFERENCES scene(id),
-      heading_text TEXT,
-      scene_order INTEGER,
-      in_screenplay INTEGER DEFAULT 1,
-      created_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  safeExec(`
-    CREATE TABLE IF NOT EXISTS screenplay_location_map (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      text_name TEXT NOT NULL,
-      location_id INTEGER REFERENCES location(id),
-      created_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  safeExec(`
-    CREATE TABLE IF NOT EXISTS screenplay_prop_map (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      prop_id INTEGER REFERENCES prop(id),
-      text_fragment TEXT,
-      scene_id INTEGER REFERENCES scene(id),
-      created_at TEXT DEFAULT (datetime('now'))
+      name TEXT NOT NULL,
+      logline TEXT,
+      genre_tone TEXT,
+      target_runtime TEXT,
+      setting_period TEXT,
+      notes TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
     )
   `);
 
@@ -122,6 +61,7 @@ const initSchema = () => {
       updated_at TEXT DEFAULT (datetime('now'))
     )
   `);
+
   safeExec(`CREATE INDEX IF NOT EXISTS idx_screenplay_lines_order ON screenplay_lines(line_order)`);
   safeExec(`CREATE INDEX IF NOT EXISTS idx_screenplay_lines_scene ON screenplay_lines(scene_id)`);
 
@@ -161,7 +101,6 @@ const initSchema = () => {
       metadata JSON
     )
   `);
-  safeExec(`CREATE INDEX IF NOT EXISTS idx_version_lines_version ON screenplay_version_lines(version_id)`);
 
   safeExec(`
     CREATE TABLE IF NOT EXISTS screenplay_version_title_page (
@@ -174,28 +113,17 @@ const initSchema = () => {
   `);
 
   safeExec(`
-    CREATE TABLE IF NOT EXISTS screenplay_prop_tags (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      tagged_text TEXT NOT NULL,
-      prop_id INTEGER NOT NULL REFERENCES prop(id) ON DELETE CASCADE,
-      created_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-  safeExec(`CREATE INDEX IF NOT EXISTS idx_prop_tags_prop ON screenplay_prop_tags(prop_id)`);
-
-  // Entity Images table
-  safeExec(`
     CREATE TABLE IF NOT EXISTS entity_images (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       entity_type TEXT NOT NULL,
       entity_id INTEGER NOT NULL,
-      filename TEXT NOT NULL,
-      relative_path TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      sort_order INTEGER DEFAULT 0,
+      image_data TEXT NOT NULL,
+      description TEXT,
+      is_primary BOOLEAN DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     )
   `);
+
   safeExec(`CREATE INDEX IF NOT EXISTS idx_entity_images_lookup ON entity_images(entity_type, entity_id)`);
 
   // Generic Entity Tables from schema.json
@@ -224,7 +152,21 @@ const initSchema = () => {
     const sql = `CREATE TABLE IF NOT EXISTS ${entityName} (\n  ${columns.join(",\n  ")}\n)`;
     safeExec(sql);
 
-    // Simple migration: check for missing columns
+    // Seed project table if it's the one we just created and it's empty
+    if (entityName === 'project') {
+        let count = 0;
+        safeExec({
+            sql: "SELECT COUNT(*) as cnt FROM project",
+            rowMode: 'object',
+            callback: (row: any) => { count = row.cnt; }
+        });
+        if (count === 0) {
+            log('Seeding initial project record...');
+            safeExec("INSERT INTO project (name) VALUES ('Untitled Project')");
+        }
+    }
+
+    // Migration
     const existingColumns: Set<string> = new Set();
     safeExec({
       sql: `PRAGMA table_info(${entityName})`,
@@ -250,52 +192,115 @@ const initSchema = () => {
   log('Schema initialization complete.');
 };
 
-const openDatabase = async (dbName: string) => {
+const validateSqliteHeader = async (opfsPath: string) => {
+  const root = await navigator.storage.getDirectory();
+  try {
+    const fileHandle = await root.getFileHandle(opfsPath);
+    const file = await fileHandle.getFile();
+    
+    if (file.size > 0) {
+      const buffer = await file.slice(0, 100).arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      const expected = [0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, 0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00];
+      
+      let isValid = bytes.length >= 16;
+      for (let i = 0; i < 16 && isValid; i++) {
+        if (bytes[i] !== expected[i]) isValid = false;
+      }
+      
+      if (!isValid) {
+        throw new Error("Invalid SCF file: The file header does not match the SQLite standard. It may be corrupted or not a valid .scf database.");
+      }
+
+      const writeVersion = bytes[18];
+      const readVersion = bytes[19];
+      if (writeVersion === 2 || readVersion === 2) {
+        log("WAL mode detected in file header.");
+      }
+    }
+  } catch (e: any) {
+    if (e.name !== 'NotFoundError' && e.message.indexOf('Invalid SCF file') === -1) {
+      throw e;
+    } else if (e.message.indexOf('Invalid SCF file') !== -1) {
+      throw e;
+    }
+  }
+};
+
+const openDatabase = async (dbName: string, retryCount = 0) => {
+  const maxRetries = 3;
+  let opfsPath = dbName.startsWith('/') ? dbName.substring(1) : dbName;
+  try { opfsPath = decodeURIComponent(opfsPath); } catch (e) {}
+
   try {
     if (db) {
       log('Closing previous database connection...');
-      try {
-        db.close();
-      } catch (closeErr) {
-        error('Error closing previous database:', closeErr);
-      }
+      try { db.close(); } catch (e) {}
       db = null;
+      currentDbName = null;
+      await new Promise(r => setTimeout(r, 200));
     }
 
     if (!sqlite3) {
       sqlite3 = await sqlite3InitModule();
     }
 
-    // For OPFS, often the path should not have a leading slash
-    // or it should be consistent. We'll use the name directly for OPFS
-    // and /name for others.
     if ('opfs' in sqlite3) {
-      const opfsPath = dbName.startsWith('/') ? dbName.substring(1) : dbName;
-      log(`Opening OPFS database: ${opfsPath}`);
-      db = new sqlite3.oo1.OpfsDb(opfsPath);
+      await validateSqliteHeader(opfsPath);
+      const root = await navigator.storage.getDirectory();
+      try {
+        const handle = await root.getFileHandle(opfsPath);
+        await handle.getFile();
+      } catch (e) {
+        log(`OPFS Handle check failed (likely locked): ${e}`);
+        throw e;
+      }
+
+      log(`Opening OPFS database (Attempt ${retryCount + 1}): ${opfsPath}`);
+      db = new sqlite3.oo1.DB(opfsPath, 'ct', 'opfs');
+      currentDbName = opfsPath;
       log(`OPFS database opened successfully: ${opfsPath}`);
     } else {
       const path = dbName.startsWith('/') ? dbName : `/${dbName}`;
       log(`Opening InMemory database: ${path}`);
       db = new sqlite3.oo1.DB(path, 'ct');
-      log(`InMemory database opened successfully: ${path}`);
+      currentDbName = dbName;
     }
 
-    // Disable WAL for now as it can cause issues in OPFS
-    safeExec("PRAGMA journal_mode=DELETE");
-    safeExec("PRAGMA foreign_keys=ON");
-
-    initSchema();
+    try {
+        safeExec("PRAGMA busy_timeout = 10000");
+        safeExec("PRAGMA journal_mode=DELETE");
+        safeExec("PRAGMA foreign_keys=ON");
+        initSchema();
+    } catch (sqlErr: any) {
+        if (sqlErr.message && sqlErr.message.includes('CANTOPEN')) {
+            throw sqlErr;
+        }
+        throw sqlErr;
+    }
 
     return true;
   } catch (err: any) {
-    error(`Failed to open database ${dbName}:`, err);
+    if (db) {
+      try { db.close(); } catch (e) {}
+      db = null;
+      currentDbName = null;
+    }
+
+    const isLockError = err.message && (err.message.includes('CANTOPEN') || err.message.includes('locked'));
+    if (isLockError && retryCount < maxRetries) {
+      log(`Database file is likely locked or busy. Retrying in 500ms... (${retryCount + 1}/${maxRetries})`);
+      await new Promise(r => setTimeout(r, 500));
+      return openDatabase(dbName, retryCount + 1);
+    }
+
+    error(`Failed to open database ${dbName} after ${retryCount} retries:`, err);
     throw err;
   }
 };
 
 const listProjects = async () => {
-  if (!('opfs' in sqlite3)) return [];
+  if (!sqlite3 || !('opfs' in sqlite3)) return [];
   
   try {
     const root = await navigator.storage.getDirectory();
@@ -303,8 +308,10 @@ const listProjects = async () => {
     for await (const entry of (root as any).values()) {
       if (entry.kind === 'file' && entry.name.endsWith('.scf')) {
         const file = await entry.getFile();
+        let displayName = entry.name;
+        try { displayName = decodeURIComponent(entry.name); } catch (e) {}
         projects.push({
-          name: entry.name,
+          name: displayName,
           lastModified: file.lastModified
         });
       }
@@ -317,31 +324,80 @@ const listProjects = async () => {
 };
 
 const deleteProject = async (name: string) => {
-    const opfsPath = name.startsWith('/') ? name.substring(1) : name;
+    let opfsPath = name.startsWith('/') ? name.substring(1) : name;
+    try { opfsPath = decodeURIComponent(opfsPath); } catch (e) {}
     
-    if (db) {
-        // Close if it matches either format
-        const currentFile = db.filename;
-        if (currentFile === name || currentFile === `/${name}` || currentFile === opfsPath) {
-            log(`Closing database before deletion: ${currentFile}`);
-            try {
-                db.close();
-            } catch (e) {}
-            db = null;
+    if (db && (currentDbName === opfsPath || currentDbName === name)) {
+        log(`Closing database before deletion: ${currentDbName}`);
+        try { db.close(); } catch (e) {}
+        db = null;
+        currentDbName = null;
+        await new Promise(r => setTimeout(r, 200));
+    }
+    
+    const root = await navigator.storage.getDirectory();
+    try {
+        await root.removeEntry(opfsPath);
+    } catch (e) {
+        try {
+            await root.removeEntry(encodeURIComponent(opfsPath));
+        } catch (e2) {
+            throw e;
         }
     }
-    const root = await navigator.storage.getDirectory();
-    await root.removeEntry(opfsPath);
     log(`Project deleted: ${opfsPath}`);
 };
 
+const renameProject = async (oldName: string, newName: string) => {
+    let oldPath = oldName.startsWith('/') ? oldName.substring(1) : oldName;
+    try { oldPath = decodeURIComponent(oldPath); } catch (e) {}
+    
+    let newPath = newName.startsWith('/') ? newName.substring(1) : newName;
+    try { newPath = decodeURIComponent(newPath); } catch (e) {}
+
+    log(`Renaming project: ${oldPath} -> ${newPath}`);
+
+    if (db && (currentDbName === oldPath || currentDbName === oldName)) {
+        log(`Closing database before rename: ${currentDbName}`);
+        try { db.close(); } catch (e) {}
+        db = null;
+        currentDbName = null;
+        await new Promise(r => setTimeout(r, 300));
+    }
+
+    const root = await navigator.storage.getDirectory();
+    
+    try {
+        const oldHandle = await root.getFileHandle(oldPath);
+        if ((oldHandle as any).move) {
+            await (oldHandle as any).move(newPath);
+        } else {
+            const file = await oldHandle.getFile();
+            const newHandle = await root.getFileHandle(newPath, { create: true });
+            const writable = await (newHandle as any).createWritable();
+            await writable.write(file);
+            await writable.close();
+            
+            const newFile = await newHandle.getFile();
+            if (newFile.size === file.size || (file.size === 0 && newFile.size === 0)) {
+                await root.removeEntry(oldPath);
+            } else {
+                throw new Error(`Rename failed size check`);
+            }
+        }
+        log(`Rename complete: ${newPath}`);
+        await openDatabase(newPath);
+    } catch (err) {
+        error(`Rename failed:`, err);
+        throw err;
+    }
+};
+
 self.onmessage = async (e) => {
-  const { type, id, sql, params, dbName } = e.data;
+  const { type, id, sql, params, dbName, oldName, newName } = e.data;
 
   if (type === 'start') {
-    if (!sqlite3) {
-        sqlite3 = await sqlite3InitModule();
-    }
+    if (!sqlite3) { sqlite3 = await sqlite3InitModule(); }
     self.postMessage({ type: 'ready' });
     return;
   }
@@ -372,6 +428,16 @@ self.onmessage = async (e) => {
     return;
   }
 
+  if (type === 'renameProject') {
+    try {
+      await renameProject(oldName, newName);
+      self.postMessage({ type: 'success', id });
+    } catch (err: any) {
+      self.postMessage({ type: 'error', id, error: err.message });
+    }
+    return;
+  }
+
   if (!db) {
     self.postMessage({ type: 'error', id, error: 'Database not initialized. Call open first.' });
     return;
@@ -380,10 +446,7 @@ self.onmessage = async (e) => {
   try {
     switch (type) {
       case 'exec':
-        safeExec({
-          sql,
-          bind: params
-        });
+        safeExec({ sql, bind: params });
         self.postMessage({ type: 'success', id });
         break;
       case 'getRows':
@@ -395,11 +458,6 @@ self.onmessage = async (e) => {
           callback: (row: any) => rows.push(row)
         });
         self.postMessage({ type: 'success', id, rows });
-        break;
-      case 'export':
-        // Not implemented in worker directly usually, but we could
-        // For now, project manager can handle file downloads via OPFS directly if needed
-        self.postMessage({ type: 'error', id, error: 'Export not implemented in worker' });
         break;
       default:
         self.postMessage({ type: 'error', id, error: `Unknown message type: ${type}` });

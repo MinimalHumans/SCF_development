@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  ChevronsDown, 
   AlertCircle,
   Clapperboard,
   Calendar,
   ChevronRight,
-  Upload
+  Upload,
+  Trash2,
+  X
 } from 'lucide-react';
 import { db } from '../db/Database';
 import type { ProjectInfo } from '../db/Database';
@@ -19,6 +20,10 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ onProjectOpened }) => {
   const [newProjectName, setNewProjectName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingImport, setLoadingImport] = useState(false);
+  const [importStep, setImportStep] = useState<string | null>(null);
+  const [isModifierPressed, setIsModifierPressed] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
 
   const fetchProjects = async () => {
     setLoading(true);
@@ -35,6 +40,24 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ onProjectOpened }) => {
 
   useEffect(() => {
     fetchProjects();
+    
+    const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.altKey || e.ctrlKey || e.metaKey) setIsModifierPressed(true);
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+        if (!e.altKey && !e.ctrlKey && !e.metaKey) setIsModifierPressed(false);
+    };
+    const handleBlur = () => setIsModifierPressed(false);
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+    
+    return () => {
+        window.removeEventListener('keydown', handleKeyDown);
+        window.removeEventListener('keyup', handleKeyUp);
+        window.removeEventListener('blur', handleBlur);
+    };
   }, []);
 
   const handleCreateProject = async () => {
@@ -52,25 +75,53 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ onProjectOpened }) => {
     }
   };
 
-  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setPendingFile(file);
+    // Reset input so same file can be selected again
+    e.target.value = '';
+  };
 
+  const confirmImport = async () => {
+    if (!pendingFile) return;
+
+    setLoadingImport(true);
     try {
-      const buffer = await file.arrayBuffer();
-      const root = await navigator.storage.getDirectory();
-      
-      let fileName = file.name;
-      // We accept .scf and .fountain. If it's something else, we might still try but it's risky.
-      // For now, just save it with its original name.
-      const fileHandle = await root.getFileHandle(fileName, { create: true });
-      const writable = await (fileHandle as any).createWritable();
-      await writable.write(buffer);
-      await writable.close();
-      
-      await fetchProjects();
+      if (pendingFile.name.endsWith('.fountain')) {
+        setImportStep("Reading file...");
+        const text = await pendingFile.text();
+        const baseName = pendingFile.name.replace(/\.fountain$/i, '');
+        const projectName = `${baseName}.scf`;
+        
+        setImportStep("Extracting story data...");
+        const { importAsNewProject } = await import('../db/FountainImport');
+        await importAsNewProject(text, projectName);
+        
+        setImportStep("Finalizing project...");
+        await fetchProjects();
+      } else {
+        setImportStep("Validating SQLite structure...");
+        const buffer = await pendingFile.arrayBuffer();
+        const root = await navigator.storage.getDirectory();
+        
+        setImportStep("Finalizing project...");
+        const fileHandle = await root.getFileHandle(pendingFile.name, { create: true });
+        const writable = await (fileHandle as any).createWritable();
+        await writable.write(buffer);
+        await writable.close();
+        
+        // Wait 300ms for OPFS to flush and release handles before we try to open it
+        await new Promise(r => setTimeout(r, 300));
+        
+        await fetchProjects();
+      }
+      setPendingFile(null);
     } catch (err: any) {
       setError("Failed to import file: " + err.message);
+    } finally {
+      setLoadingImport(false);
+      setImportStep(null);
     }
   };
 
@@ -104,6 +155,18 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ onProjectOpened }) => {
     }
   };
 
+  const handleDeleteProject = async (name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm(`Permanently delete project "${name}"?`)) return;
+    
+    try {
+        await db.deleteProject(name);
+        await fetchProjects();
+    } catch (err: any) {
+        setError("Failed to delete project: " + err.message);
+    }
+  };
+
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleString(undefined, {
       year: 'numeric',
@@ -124,6 +187,23 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ onProjectOpened }) => {
       background: 'var(--bg-base)',
       padding: '80px 10%'
     }}>
+      {loadingImport && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.8)', display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center', zIndex: 9999, color: 'white'
+        }}>
+          <div style={{ marginBottom: '20px', color: 'var(--accent)' }}>
+            <Clapperboard size={48} className="animate-pulse" />
+          </div>
+          <div style={{ fontSize: '20px', fontWeight: 700, marginBottom: '8px' }}>
+            Importing Project
+          </div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '14px' }}>
+            {importStep || "Please wait..."}
+          </div>
+        </div>
+      )}
       <div className="project-manager-card" style={{
         width: '100%',
         maxWidth: '640px',
@@ -208,11 +288,39 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ onProjectOpened }) => {
             <h3 style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
               Import Project
             </h3>
-            <label className="file-input-label" style={{ justifyContent: 'center', gap: '8px', padding: '16px', borderStyle: 'dashed' }}>
-              <Upload size={18} />
-              <span style={{ fontSize: '14px' }}>Drag & drop .scf or .fountain or browse to upload</span>
-              <input type="file" accept=".scf,.fountain" onChange={handleImportFile} />
-            </label>
+            {!pendingFile ? (
+                <label className="file-input-label" style={{ justifyContent: 'center', gap: '8px', padding: '16px', borderStyle: 'dashed' }}>
+                    <Upload size={18} />
+                    <span style={{ fontSize: '14px' }}>Drag & drop .scf or .fountain or browse to upload</span>
+                    <input type="file" accept=".scf,.fountain" onChange={handleImportFile} />
+                </label>
+            ) : (
+                <div style={{ 
+                    padding: '16px', 
+                    background: 'var(--bg-input)', 
+                    border: '1px solid var(--accent)', 
+                    borderRadius: 'var(--radius)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ color: 'var(--accent)' }}><Upload size={20} /></div>
+                        <div>
+                            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>Ready to import: {pendingFile.name}</div>
+                            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{(pendingFile.size / 1024).toFixed(1)} KB</div>
+                        </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        <button onClick={() => setPendingFile(null)} className="btn btn-icon" style={{ padding: '8px' }}>
+                            <X size={16} />
+                        </button>
+                        <button onClick={confirmImport} className="btn btn-primary" style={{ padding: '8px 16px' }}>
+                            Import Now
+                        </button>
+                    </div>
+                </div>
+            )}
           </section>
 
           {/* EXISTING */}
@@ -241,7 +349,8 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ onProjectOpened }) => {
                       alignItems: 'center',
                       gap: '16px',
                       cursor: 'pointer',
-                      transition: 'all 0.2s'
+                      transition: 'all 0.2s',
+                      position: 'relative'
                     }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.borderColor = 'var(--border)';
@@ -267,18 +376,36 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ onProjectOpened }) => {
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '6px' }} onClick={e => e.stopPropagation()}>
+                      {isModifierPressed && (
+                        <button 
+                            className="btn-icon btn-danger"
+                            onClick={(e) => handleDeleteProject(proj.name, e)}
+                            style={{ 
+                                padding: '6px',
+                                background: 'rgba(255,0,0,0.1)',
+                                color: 'var(--danger)',
+                                border: '1px solid var(--danger)',
+                                borderRadius: '4px'
+                            }}
+                            title="Delete Project"
+                        >
+                            <Trash2 size={16} />
+                        </button>
+                      )}
                       <button 
                         className="btn-icon" 
                         onClick={(e) => handleDownload(proj.name, e)}
                         style={{ 
-                          padding: '6px', 
+                          padding: '6px 10px', 
                           color: 'var(--text-muted)', 
                           border: '1px solid transparent',
                           background: 'none',
                           transition: 'all 0.15s',
                           display: 'flex',
                           alignItems: 'center',
-                          justifyContent: 'center'
+                          justifyContent: 'center',
+                          fontSize: '18px',
+                          lineHeight: 1
                         }}
                         onMouseEnter={(e) => {
                           e.currentTarget.style.borderColor = 'var(--border)';
@@ -292,7 +419,7 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ onProjectOpened }) => {
                         }}
                         title="Download"
                       >
-                        <ChevronsDown size={16} />
+                        ⇓
                       </button>
                       <div style={{ padding: '6px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>
                         <ChevronRight size={18} />
