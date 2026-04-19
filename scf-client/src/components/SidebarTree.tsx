@@ -211,17 +211,19 @@ const SidebarTree: React.FC = () => {
                             <span className="type-icon">{typeDef.icon || '📄'}</span>
                             <span className="node-label" style={{ color: isPlaceholder ? 'var(--text-muted)' : 'inherit', flex: 1 }}>
                                 {typeDef.label_plural}
-                                {!isPlaceholder && entities[category][type].length > 0 && (
-                                  <span style={{ 
-                                    fontSize: '0.9em', 
-                                    color: 'var(--text-muted)',
-                                    marginLeft: '6px',
-                                    fontWeight: 'normal'
-                                  }}>
-                                    [{entities[category][type].length}]
-                                  </span>
-                                )}
                             </span>
+                            {!isPlaceholder && entities[category][type].length > 0 && (
+                              <span style={{ 
+                                border: '1px solid var(--border)',
+                                borderRadius: '10px',
+                                padding: '0 6px',
+                                fontSize: '10px',
+                                color: 'var(--text-muted)',
+                                marginRight: '8px'
+                              }}>
+                                {entities[category][type].length}
+                              </span>
+                            )}
                             {!isPlaceholder && (
                               <button 
                                 className="add-button" 
