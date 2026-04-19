@@ -97,6 +97,19 @@ const RelationshipPanel: React.FC<RelationshipPanelProps> = ({ entityType, entit
     }
   };
 
+  const handleCreateNew = async (targetType: string, table: string) => {
+    const name = prompt(`Enter name for new ${schema[targetType].label}:`);
+    if (!name) return;
+
+    try {
+      const nameField = schema[targetType].name_field || 'name';
+      const newId = await db.createEntity(targetType, { [nameField]: name });
+      await handleAddLink(table, targetType, newId);
+    } catch (e) {
+      console.error("Error creating new entity inline:", e);
+    }
+  };
+
   const handleRemoveLink = async (table: string, linkId: number) => {
     try {
       await db.deleteEntity(table, linkId);
@@ -148,16 +161,19 @@ const RelationshipPanel: React.FC<RelationshipPanelProps> = ({ entityType, entit
               <select 
                 className="text-sm"
                 onChange={(e) => {
-                  if (e.target.value) {
+                  if (e.target.value === 'NEW') {
+                    handleCreateNew(targetType, table);
+                  } else if (e.target.value) {
                     handleAddLink(table, targetType, parseInt(e.target.value));
-                    e.target.value = '';
                   }
+                  e.target.value = '';
                 }}
               >
                 <option value="">+ Link a {schema[targetType].label}...</option>
                 {available.map(e => (
                   <option key={e.id} value={e.id}>{e.name}</option>
                 ))}
+                <option value="NEW">✨ Create New {schema[targetType].label}...</option>
               </select>
             </div>
           </div>
