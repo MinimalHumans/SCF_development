@@ -1,0 +1,332 @@
+/* ==========================================================================
+   Entity Images — Reference Tab Styles
+   ========================================================================== */
+
+/* --- Upload Zone --------------------------------------------------------- */
+
+.image-upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius-lg);
+    padding: 28px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: var(--bg-input);
+    margin-bottom: 24px;
+    position: relative;
+}
+
+.image-upload-zone:hover {
+    border-color: var(--accent);
+    background: var(--accent-subtle);
+}
+
+.image-upload-zone.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-subtle);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.image-upload-zone input[type="file"] {
+    display: none;
+}
+
+.image-upload-icon {
+    font-size: 28px;
+    margin-bottom: 8px;
+    opacity: 0.6;
+}
+
+.image-upload-text {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.image-upload-text strong {
+    color: var(--text-accent);
+}
+
+.image-upload-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+.image-upload-progress {
+    font-size: 12px;
+    color: var(--text-accent);
+    margin-top: 8px;
+    display: none;
+}
+
+.image-upload-zone.uploading .image-upload-progress {
+    display: block;
+}
+
+.image-upload-zone.uploading .image-upload-text {
+    display: none;
+}
+
+/* --- Thumbnail Grid ------------------------------------------------------ */
+
+.image-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 16px;
+}
+
+.image-grid-empty {
+    text-align: center;
+    padding: 32px 20px;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-style: italic;
+}
+
+/* --- Image Card ---------------------------------------------------------- */
+
+.image-card {
+    background: var(--bg-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    overflow: hidden;
+    transition: border-color 0.15s;
+    display: flex;
+    flex-direction: column;
+}
+
+.image-card:hover {
+    border-color: var(--border);
+}
+
+.image-card-thumb {
+    position: relative;
+    aspect-ratio: 4 / 3;
+    background: var(--bg-base);
+    cursor: pointer;
+    overflow: hidden;
+}
+
+.image-card-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transition: transform 0.2s ease;
+}
+
+.image-card-thumb:hover img {
+    transform: scale(1.03);
+}
+
+.image-card-thumb .image-card-zoom {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    width: 28px;
+    height: 28px;
+    font-size: 14px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.image-card-thumb:hover .image-card-zoom {
+    opacity: 1;
+}
+
+.image-card-body {
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+}
+
+.image-card-desc {
+    width: 100%;
+    padding: 6px 8px;
+    font-size: 12px;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    min-height: 36px;
+    max-height: 80px;
+    line-height: 1.4;
+    transition: border-color 0.15s;
+    outline: none;
+}
+
+.image-card-desc:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.image-card-desc::placeholder {
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+.image-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px 8px;
+}
+
+.image-card-filename {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.image-card-delete {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+
+.image-card-delete:hover {
+    background: var(--danger-bg);
+    color: var(--danger);
+}
+
+/* --- Image missing state ------------------------------------------------- */
+
+.image-card-missing {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* ==========================================================================
+   Lightbox
+   ========================================================================== */
+
+.image-lightbox-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 600;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+    cursor: pointer;
+}
+
+.image-lightbox-overlay.active {
+    display: flex;
+}
+
+.image-lightbox-content {
+    position: relative;
+    max-width: 90vw;
+    max-height: 90vh;
+    cursor: default;
+}
+
+.image-lightbox-content img {
+    max-width: 90vw;
+    max-height: 85vh;
+    object-fit: contain;
+    border-radius: var(--radius);
+    box-shadow: 0 16px 64px rgba(0, 0, 0, 0.6);
+    display: block;
+}
+
+.image-lightbox-close {
+    position: absolute;
+    top: -40px;
+    right: 0;
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 28px;
+    cursor: pointer;
+    padding: 4px 8px;
+    opacity: 0.7;
+    transition: opacity 0.15s;
+}
+
+.image-lightbox-close:hover {
+    opacity: 1;
+}
+
+.image-lightbox-caption {
+    text-align: center;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 13px;
+    margin-top: 12px;
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* --- Lightbox nav arrows ------------------------------------------------- */
+
+.image-lightbox-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(0, 0, 0, 0.5);
+    color: #fff;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    opacity: 0.6;
+    transition: opacity 0.15s, background 0.15s;
+}
+
+.image-lightbox-nav:hover {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.7);
+}
+
+.image-lightbox-prev {
+    left: -60px;
+}
+
+.image-lightbox-next {
+    right: -60px;
+}
+
+/* ==========================================================================
+   Image count badge on Reference tab
+   ========================================================================== */
+
+.tab-image-count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    background: var(--bg-base);
+    padding: 1px 6px;
+    border-radius: 8px;
+    margin-left: 6px;
+}
