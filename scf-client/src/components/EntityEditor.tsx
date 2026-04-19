@@ -21,8 +21,15 @@ interface Field {
   hidden: boolean;
 }
 
-const EntityEditor: React.FC = () => {
-  const { type, id } = useParams<{ type: string; id: string }>();
+interface EntityEditorProps {
+  entityType?: string;
+  entityId?: string;
+}
+
+const EntityEditor: React.FC<EntityEditorProps> = ({ entityType: propType, entityId: propId }) => {
+  const params = useParams<{ type: string; id: string }>();
+  const type = propType || params.type;
+  const id = propId || params.id;
   const navigate = useNavigate();
   const [entity, setEntity] = useState<Record<string, any> | null>(null);
   const [loading, setLoading] = useState(true);

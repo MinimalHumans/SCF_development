@@ -275,11 +275,12 @@ const listProjects = async () => {
     const root = await navigator.storage.getDirectory();
     const projects = [];
     for await (const entry of (root as any).values()) {
-      if (entry.kind === 'file' && entry.name.endsWith('.scf')) {
-        projects.push(entry.name);
-      } else if (entry.kind === 'file' && entry.name.endsWith('.db')) {
-        // Support legacy .db extension if any
-        projects.push(entry.name);
+      if (entry.kind === 'file' && (entry.name.endsWith('.scf') || entry.name.endsWith('.db'))) {
+        const file = await entry.getFile();
+        projects.push({
+          name: entry.name,
+          lastModified: file.lastModified
+        });
       }
     }
     return projects;
