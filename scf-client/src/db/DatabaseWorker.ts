@@ -25,22 +25,36 @@ const fieldTypeToSql = (type: string): string => {
   }
 };
 
+const safeExec = (sql: string | any) => {
+  const sqlString = typeof sql === 'string' ? sql : sql.sql;
+  const firstLine = sqlString.trim().split('\n')[0].substring(0, 100);
+  log(`Executing: ${firstLine}${sqlString.length > 100 ? '...' : ''}`);
+  try {
+    const result = db.exec(sql);
+    log(`Done.`);
+    return result;
+  } catch (err: any) {
+    error(`Error executing SQL: ${firstLine}`, err);
+    throw err;
+  }
+};
+
 const initSchema = () => {
   log('Initializing schema...');
   
   // Metadata table
-  db.exec(`
+  safeExec(`
     CREATE TABLE IF NOT EXISTS _scf_meta (
       key TEXT PRIMARY KEY,
       value TEXT
     )
   `);
 
-  db.exec("INSERT OR REPLACE INTO _scf_meta (key, value) VALUES ('scf_version', '0.1.0')");
-  db.exec(`INSERT OR REPLACE INTO _scf_meta (key, value) VALUES ('updated_at', '${new Date().toISOString()}')`);
+  safeExec("INSERT OR REPLACE INTO _scf_meta (key, value) VALUES ('scf_version', '0.1.0')");
+  safeExec(`INSERT OR REPLACE INTO _scf_meta (key, value) VALUES ('updated_at', '${new Date().toISOString()}')`);
 
   // Screenplay infrastructure tables
-  db.exec(`
+  safeExec(`
     CREATE TABLE IF NOT EXISTS screenplay_meta (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       fountain_path TEXT,
@@ -53,7 +67,7 @@ const initSchema = () => {
     )
   `);
 
-  db.exec(`
+  safeExec(`
     CREATE TABLE IF NOT EXISTS screenplay_character_map (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       text_name TEXT NOT NULL UNIQUE,
@@ -63,7 +77,7 @@ const initSchema = () => {
     )
   `);
 
-  db.exec(`
+  safeExec(`
     CREATE TABLE IF NOT EXISTS screenplay_scene_map (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       scene_id INTEGER REFERENCES scene(id),
@@ -74,7 +88,7 @@ const initSchema = () => {
     )
   `);
 
-  db.exec(`
+  safeExec(`
     CREATE TABLE IF NOT EXISTS screenplay_location_map (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       text_name TEXT NOT NULL,
@@ -83,7 +97,7 @@ const initSchema = () => {
     )
   `);
 
-  db.exec(`
+  safeExec(`
     CREATE TABLE IF NOT EXISTS screenplay_prop_map (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       prop_id INTEGER REFERENCES prop(id),
@@ -94,7 +108,7 @@ const initSchema = () => {
   `);
 
   // Screenplay Editor tables
-  db.exec(`
+  safeExec(`
     CREATE TABLE IF NOT EXISTS screenplay_lines (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       scene_id INTEGER REFERENCES scene(id) ON DELETE SET NULL,
@@ -108,10 +122,10 @@ const initSchema = () => {
       updated_at TEXT DEFAULT (datetime('now'))
     )
   `);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_screenplay_lines_order ON screenplay_lines(line_order)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_screenplay_lines_scene ON screenplay_lines(scene_id)`);
+  safeExec(`CREATE INDEX IF NOT EXISTS idx_screenplay_lines_order ON screenplay_lines(line_order)`);
+  safeExec(`CREATE INDEX IF NOT EXISTS idx_screenplay_lines_scene ON screenplay_lines(scene_id)`);
 
-  db.exec(`
+  safeExec(`
     CREATE TABLE IF NOT EXISTS screenplay_title_page (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       key TEXT NOT NULL,
@@ -120,7 +134,7 @@ const initSchema = () => {
     )
   `);
 
-  db.exec(`
+  safeExec(`
     CREATE TABLE IF NOT EXISTS screenplay_versions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       version_number INTEGER NOT NULL,
@@ -134,7 +148,7 @@ const initSchema = () => {
     )
   `);
 
-  db.exec(`
+  safeExec(`
     CREATE TABLE IF NOT EXISTS screenplay_version_lines (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       version_id INTEGER NOT NULL REFERENCES screenplay_versions(id) ON DELETE CASCADE,
@@ -147,9 +161,9 @@ const initSchema = () => {
       metadata JSON
     )
   `);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_version_lines_version ON screenplay_version_lines(version_id)`);
+  safeExec(`CREATE INDEX IF NOT EXISTS idx_version_lines_version ON screenplay_version_lines(version_id)`);
 
-  db.exec(`
+  safeExec(`
     CREATE TABLE IF NOT EXISTS screenplay_version_title_page (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       version_id INTEGER NOT NULL REFERENCES screenplay_versions(id) ON DELETE CASCADE,
@@ -159,7 +173,7 @@ const initSchema = () => {
     )
   `);
 
-  db.exec(`
+  safeExec(`
     CREATE TABLE IF NOT EXISTS screenplay_prop_tags (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       tagged_text TEXT NOT NULL,
@@ -167,10 +181,10 @@ const initSchema = () => {
       created_at TEXT DEFAULT (datetime('now'))
     )
   `);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_prop_tags_prop ON screenplay_prop_tags(prop_id)`);
+  safeExec(`CREATE INDEX IF NOT EXISTS idx_prop_tags_prop ON screenplay_prop_tags(prop_id)`);
 
   // Entity Images table
-  db.exec(`
+  safeExec(`
     CREATE TABLE IF NOT EXISTS entity_images (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       entity_type TEXT NOT NULL,
@@ -182,7 +196,7 @@ const initSchema = () => {
       created_at TEXT DEFAULT (datetime('now'))
     )
   `);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_entity_images_lookup ON entity_images(entity_type, entity_id)`);
+  safeExec(`CREATE INDEX IF NOT EXISTS idx_entity_images_lookup ON entity_images(entity_type, entity_id)`);
 
   // Generic Entity Tables from schema.json
   for (const [entityName, entityDef] of Object.entries(schema)) {
@@ -208,11 +222,11 @@ const initSchema = () => {
     }
 
     const sql = `CREATE TABLE IF NOT EXISTS ${entityName} (\n  ${columns.join(",\n  ")}\n)`;
-    db.exec(sql);
+    safeExec(sql);
 
     // Simple migration: check for missing columns
     const existingColumns: Set<string> = new Set();
-    db.exec({
+    safeExec({
       sql: `PRAGMA table_info(${entityName})`,
       rowMode: 'object',
       callback: (row: any) => existingColumns.add(row.name)
@@ -228,7 +242,7 @@ const initSchema = () => {
             alter += ` DEFAULT ${field.default}`;
           }
         }
-        db.exec(alter);
+        safeExec(alter);
       }
     }
   }
@@ -239,7 +253,12 @@ const initSchema = () => {
 const openDatabase = async (dbName: string) => {
   try {
     if (db) {
-      db.close();
+      log('Closing previous database connection...');
+      try {
+        db.close();
+      } catch (closeErr) {
+        error('Error closing previous database:', closeErr);
+      }
       db = null;
     }
 
@@ -247,17 +266,24 @@ const openDatabase = async (dbName: string) => {
       sqlite3 = await sqlite3InitModule();
     }
 
-    const path = `/${dbName}`;
+    // For OPFS, often the path should not have a leading slash
+    // or it should be consistent. We'll use the name directly for OPFS
+    // and /name for others.
     if ('opfs' in sqlite3) {
-      db = new sqlite3.oo1.OpfsDb(path);
-      log(`OPFS database opened: ${path}`);
+      const opfsPath = dbName.startsWith('/') ? dbName.substring(1) : dbName;
+      log(`Opening OPFS database: ${opfsPath}`);
+      db = new sqlite3.oo1.OpfsDb(opfsPath);
+      log(`OPFS database opened successfully: ${opfsPath}`);
     } else {
+      const path = dbName.startsWith('/') ? dbName : `/${dbName}`;
+      log(`Opening InMemory database: ${path}`);
       db = new sqlite3.oo1.DB(path, 'ct');
-      log(`InMemory database opened (OPFS not available): ${path}`);
+      log(`InMemory database opened successfully: ${path}`);
     }
 
-    db.exec("PRAGMA journal_mode=WAL");
-    db.exec("PRAGMA foreign_keys=ON");
+    // Disable WAL for now as it can cause issues in OPFS
+    safeExec("PRAGMA journal_mode=DELETE");
+    safeExec("PRAGMA foreign_keys=ON");
 
     initSchema();
 
@@ -275,7 +301,7 @@ const listProjects = async () => {
     const root = await navigator.storage.getDirectory();
     const projects = [];
     for await (const entry of (root as any).values()) {
-      if (entry.kind === 'file' && (entry.name.endsWith('.scf') || entry.name.endsWith('.db'))) {
+      if (entry.kind === 'file' && entry.name.endsWith('.scf')) {
         const file = await entry.getFile();
         projects.push({
           name: entry.name,
@@ -291,12 +317,22 @@ const listProjects = async () => {
 };
 
 const deleteProject = async (name: string) => {
-    if (db && db.filename === `/${name}`) {
-        db.close();
-        db = null;
+    const opfsPath = name.startsWith('/') ? name.substring(1) : name;
+    
+    if (db) {
+        // Close if it matches either format
+        const currentFile = db.filename;
+        if (currentFile === name || currentFile === `/${name}` || currentFile === opfsPath) {
+            log(`Closing database before deletion: ${currentFile}`);
+            try {
+                db.close();
+            } catch (e) {}
+            db = null;
+        }
     }
     const root = await navigator.storage.getDirectory();
-    await root.removeEntry(name);
+    await root.removeEntry(opfsPath);
+    log(`Project deleted: ${opfsPath}`);
 };
 
 self.onmessage = async (e) => {
@@ -344,7 +380,7 @@ self.onmessage = async (e) => {
   try {
     switch (type) {
       case 'exec':
-        db.exec({
+        safeExec({
           sql,
           bind: params
         });
@@ -352,7 +388,7 @@ self.onmessage = async (e) => {
         break;
       case 'getRows':
         const rows: any[] = [];
-        db.exec({
+        safeExec({
           sql,
           bind: params,
           rowMode: 'object',
