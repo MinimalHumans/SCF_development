@@ -242,7 +242,9 @@ const openDatabase = async (dbName: string, retryCount = 0) => {
     }
 
     if (!sqlite3) {
-      sqlite3 = await sqlite3InitModule();
+      sqlite3 = await (sqlite3InitModule as any)({
+        locateFile: (path: string) => `/sqlite3/${path}`
+      });
     }
 
     if ('opfs' in sqlite3) {
