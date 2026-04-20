@@ -1,0 +1,29 @@
+# 1. Map MIME types
+<IfModule mod_mime.c>
+    AddType application/wasm .wasm
+    AddType application/javascript .js
+</IfModule>
+
+# 2. Enable Security Headers
+<IfModule mod_headers.c>
+    Header set Cross-Origin-Opener-Policy "same-origin"
+    Header set Cross-Origin-Embedder-Policy "require-corp"
+</IfModule>
+
+# 3. SPA Routing (with Asset Exclusion)
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+    
+    # DO NOT redirect real files or directories
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # DO NOT redirect static assets that might be missing (to prevent MIME errors)
+    RewriteCond %{REQUEST_URI} \.(wasm|js|css|png|jpg|svg|ico)$ [NC]
+    RewriteRule ^ - [L,R=404]
+
+    # Everything else goes to index.html
+    RewriteRule . /index.html [L]
+</IfModule>

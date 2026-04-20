@@ -37,7 +37,7 @@ export async function importAsNewProject(fountainText: string, projectName: stri
   const projects = await db.getRows(`SELECT id FROM project LIMIT 1`);
   if (projects.length > 0) {
     const update: Record<string, any> = {};
-    if (data.title) update.name = data.title;
+    update.name = data.title || projectName.replace(/\.scf$/i, '');
     if (data.author) update.notes = `Written by ${data.author}`;
     if (Object.keys(update).length > 0) {
       await db.updateEntity('project', projects[0].id, update);

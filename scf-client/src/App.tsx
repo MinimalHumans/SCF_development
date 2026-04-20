@@ -125,10 +125,15 @@ const App: React.FC = () => {
   }, [settingsOpen]);
 
   useEffect(() => {
+    setProjectStats(null);
+  }, [currentProject]);
+
+  useEffect(() => {
     if (settingsOpen) {
+      setProjectStats(null);
       Queries.projectStats().then(setProjectStats);
     }
-  }, [settingsOpen]);
+  }, [settingsOpen, currentProject]);
 
   useEffect(() => {
     const doSearch = async () => {

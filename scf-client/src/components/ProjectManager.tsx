@@ -92,7 +92,12 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ onProjectOpened }) => {
         setImportStep("Reading file...");
         const text = await pendingFile.text();
         const baseName = pendingFile.name.replace(/\.fountain$/i, '');
-        const projectName = `${baseName}.scf`;
+        const displayName = baseName
+          .replace(/[_\-]+/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .replace(/\b\w/g, c => c.toUpperCase());
+        const projectName = `${displayName}.scf`;
         
         setImportStep("Extracting story data...");
         const { importAsNewProject } = await import('../db/FountainImport');
@@ -181,7 +186,7 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ onProjectOpened }) => {
     <div className="project-manager-wrapper" style={{
       display: 'flex',
       alignItems: 'flex-start',
-      justifyContent: 'flex-start',
+      justifyContent: 'center',
       minHeight: '100vh',
       width: '100%',
       background: 'var(--bg-base)',
