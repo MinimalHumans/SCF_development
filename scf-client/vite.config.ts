@@ -13,4 +13,7 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['@sqlite.org/sqlite-wasm'],
   },
+  build: {
+    target: 'esnext'
+  }
 })
