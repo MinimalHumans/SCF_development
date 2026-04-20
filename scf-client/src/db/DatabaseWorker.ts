@@ -126,6 +126,48 @@ const initSchema = () => {
 
   safeExec(`CREATE INDEX IF NOT EXISTS idx_entity_images_lookup ON entity_images(entity_type, entity_id)`);
 
+  safeExec(`
+    CREATE TABLE IF NOT EXISTS screenplay_meta (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT,
+      author TEXT,
+      total_scenes INTEGER DEFAULT 0,
+      total_pages INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  safeExec(`
+    CREATE TABLE IF NOT EXISTS screenplay_character_map (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      text_name TEXT NOT NULL,
+      character_id INTEGER REFERENCES character(id) ON DELETE CASCADE,
+      is_primary_name BOOLEAN DEFAULT 0
+    )
+  `);
+
+  safeExec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_scm_text_name ON screenplay_character_map(text_name)`);
+
+  safeExec(`
+    CREATE TABLE IF NOT EXISTS screenplay_scene_map (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scene_id INTEGER REFERENCES scene(id) ON DELETE CASCADE,
+      heading_text TEXT,
+      scene_order INTEGER,
+      in_screenplay BOOLEAN DEFAULT 1
+    )
+  `);
+
+  safeExec(`
+    CREATE TABLE IF NOT EXISTS screenplay_location_map (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      text_name TEXT NOT NULL,
+      location_id INTEGER REFERENCES location(id) ON DELETE CASCADE
+    )
+  `);
+
+  safeExec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_slm_text_name ON screenplay_location_map(text_name)`);
+
   // Generic Entity Tables from schema.json
   for (const [entityName, entityDef] of Object.entries(schema)) {
     const columns = [
@@ -253,9 +295,11 @@ const openDatabase = async (dbName: string, retryCount = 0) => {
       try {
         const handle = await root.getFileHandle(opfsPath);
         await handle.getFile();
-      } catch (e) {
-        log(`OPFS Handle check failed (likely locked): ${e}`);
-        throw e;
+      } catch (e: any) {
+        if (e.name !== 'NotFoundError') {
+          log(`OPFS Handle check failed (likely locked): ${e}`);
+          throw e;
+        }
       }
 
       log(`Opening OPFS database (Attempt ${retryCount + 1}): ${opfsPath}`);
