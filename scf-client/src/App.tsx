@@ -45,6 +45,7 @@ const App: React.FC = () => {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const location = useLocation();
   const navigate = useNavigate();
@@ -134,6 +135,28 @@ const App: React.FC = () => {
       Queries.projectStats().then(setProjectStats);
     }
   }, [settingsOpen, currentProject]);
+
+  useEffect(() => {
+    const getCurrentScript = () => {
+      const scripts = Array.from(document.querySelectorAll('script[src]'));
+      return scripts.map(s => (s as HTMLScriptElement).src).join(',');
+    };
+    const baseline = getCurrentScript();
+
+    const check = async () => {
+      try {
+        const res = await fetch('/', { cache: 'no-store' });
+        const html = await res.text();
+        const match = html.match(/src="(\/assets\/index-[^"]+\.js)"/);
+        if (match && !baseline.includes(match[1])) {
+          setUpdateAvailable(true);
+        }
+      } catch {}
+    };
+
+    const interval = setInterval(check, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const doSearch = async () => {
@@ -234,6 +257,21 @@ const App: React.FC = () => {
 
   return (
     <div className="app-container">
+      {updateAvailable && (
+        <div style={{
+          position: 'fixed', bottom: '16px', right: '16px', zIndex: 9999,
+          background: 'var(--bg-surface)', border: '1px solid var(--accent)',
+          borderRadius: 'var(--radius-lg)', padding: '12px 16px',
+          display: 'flex', alignItems: 'center', gap: '12px',
+          boxShadow: 'var(--shadow-lg)', fontSize: '14px'
+        }}>
+          <span>A new version is available.</span>
+          <button className="btn btn-primary" style={{ padding: '4px 12px', fontSize: '13px' }}
+            onClick={() => window.location.reload()}>
+            Refresh
+          </button>
+        </div>
+      )}
       <header className="main-header">
         <div className="header-left">
           <div className="logo">
