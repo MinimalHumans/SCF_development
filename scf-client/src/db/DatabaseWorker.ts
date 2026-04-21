@@ -168,6 +168,41 @@ const initSchema = () => {
 
   safeExec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_slm_text_name ON screenplay_location_map(text_name)`);
 
+  // Entity annotation map (staged/committed spans)
+  safeExec(`
+    CREATE TABLE IF NOT EXISTS screenplay_line_annotations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      line_order INTEGER NOT NULL,
+      char_from INTEGER NOT NULL,
+      char_to INTEGER NOT NULL,
+      entity_type TEXT NOT NULL CHECK(entity_type IN ('character','location','prop')),
+      entity_state TEXT NOT NULL CHECK(entity_state IN ('staged','committed')),
+      entity_id INTEGER,
+      staged_local_id TEXT
+    )
+  `);
+
+  safeExec(`CREATE INDEX IF NOT EXISTS idx_sla_line ON screenplay_line_annotations(line_order)`);
+
+  // Act groupings (navigator-only, no in-text marker)
+  safeExec(`
+    CREATE TABLE IF NOT EXISTS scene_act_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      act_name TEXT NOT NULL DEFAULT 'Act',
+      act_order INTEGER NOT NULL DEFAULT 0,
+      scene_ids JSON NOT NULL DEFAULT '[]'
+    )
+  `);
+
+  // Soft-delete support on entity tables (migration guard)
+  for (const tbl of ['character', 'location', 'prop']) {
+    const cols: Set<string> = new Set();
+    safeExec({ sql: `PRAGMA table_info(${tbl})`, rowMode: 'object', callback: (r: any) => cols.add(r.name) });
+    if (!cols.has('deleted')) {
+      safeExec(`ALTER TABLE ${tbl} ADD COLUMN deleted BOOLEAN NOT NULL DEFAULT 0`);
+    }
+  }
+
   // Generic Entity Tables from schema.json
   for (const [entityName, entityDef] of Object.entries(schema)) {
     const columns = [

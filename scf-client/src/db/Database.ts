@@ -520,6 +520,183 @@ class Database {
   // Project Helpers
   // ===========================================================================
 
+  // ===========================================================================
+  // Screenplay IDE — Annotations
+  // ===========================================================================
+
+  public async loadAnnotations(): Promise<any[]> {
+    return this.getRows(`
+      SELECT id, line_order, char_from, char_to,
+             entity_type, entity_state, entity_id, staged_local_id
+      FROM screenplay_line_annotations
+      ORDER BY line_order ASC, char_from ASC
+    `);
+  }
+
+  public async saveAnnotations(annotations: {
+    line_order: number;
+    char_from: number;
+    char_to: number;
+    entity_type: string;
+    entity_state: string;
+    entity_id: number | null;
+    staged_local_id: string | null;
+  }[]): Promise<void> {
+    await this.exec('BEGIN TRANSACTION');
+    try {
+      await this.exec('DELETE FROM screenplay_line_annotations');
+      for (const a of annotations) {
+        await this.exec(
+          `INSERT INTO screenplay_line_annotations
+           (line_order, char_from, char_to, entity_type, entity_state, entity_id, staged_local_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [a.line_order, a.char_from, a.char_to, a.entity_type, a.entity_state,
+           a.entity_id ?? null, a.staged_local_id ?? null]
+        );
+      }
+      await this.exec('COMMIT');
+    } catch (e) {
+      await this.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  // ===========================================================================
+  // Screenplay IDE — Act Groups
+  // ===========================================================================
+
+  public async loadActGroups(): Promise<any[]> {
+    const rows = await this.getRows(
+      'SELECT id, act_name, act_order, scene_ids FROM scene_act_groups ORDER BY act_order ASC'
+    );
+    return rows.map(r => ({ ...r, scene_ids: JSON.parse(r.scene_ids || '[]') }));
+  }
+
+  public async saveActGroups(groups: { act_name: string; act_order: number; scene_ids: number[] }[]): Promise<void> {
+    await this.exec('BEGIN TRANSACTION');
+    try {
+      await this.exec('DELETE FROM scene_act_groups');
+      for (const g of groups) {
+        await this.exec(
+          'INSERT INTO scene_act_groups (act_name, act_order, scene_ids) VALUES (?, ?, ?)',
+          [g.act_name, g.act_order, JSON.stringify(g.scene_ids)]
+        );
+      }
+      await this.exec('COMMIT');
+    } catch (e) {
+      await this.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  // ===========================================================================
+  // Screenplay IDE — Entity autocomplete (excludes soft-deleted)
+  // ===========================================================================
+
+  public async autocompleteCharacters(q: string): Promise<{ id: number; name: string }[]> {
+    return this.getRows(
+      `SELECT id, name FROM character WHERE name LIKE ? AND (deleted IS NULL OR deleted = 0)
+       ORDER BY name ASC LIMIT 12`,
+      [`%${q}%`]
+    );
+  }
+
+  public async autocompleteLocations(q: string): Promise<{ id: number; name: string }[]> {
+    return this.getRows(
+      `SELECT id, name FROM location WHERE name LIKE ? AND (deleted IS NULL OR deleted = 0)
+       ORDER BY name ASC LIMIT 12`,
+      [`%${q}%`]
+    );
+  }
+
+  public async autocompleteProps(q: string): Promise<{ id: number; name: string }[]> {
+    return this.getRows(
+      `SELECT id, name FROM prop WHERE name LIKE ? AND (deleted IS NULL OR deleted = 0)
+       ORDER BY name ASC LIMIT 12`,
+      [`%${q}%`]
+    );
+  }
+
+  // ===========================================================================
+  // Screenplay IDE — Entity soft-delete / rename
+  // ===========================================================================
+
+  public async softDeleteEntity(entityType: string, id: number): Promise<void> {
+    await this.exec(`UPDATE ${entityType} SET deleted = 1, updated_at = datetime('now') WHERE id = ?`, [id]);
+  }
+
+  public async restoreDeletedEntity(entityType: string, id: number): Promise<void> {
+    await this.exec(`UPDATE ${entityType} SET deleted = 0, updated_at = datetime('now') WHERE id = ?`, [id]);
+  }
+
+  public async renameEntityById(entityType: string, id: number, newName: string): Promise<void> {
+    await this.exec(
+      `UPDATE ${entityType} SET name = ?, updated_at = datetime('now') WHERE id = ?`,
+      [newName, id]
+    );
+    window.dispatchEvent(new CustomEvent('scf-data-updated', { detail: { type: entityType, id, action: 'rename' } }));
+  }
+
+  public async findOrCreateEntity(entityType: string, name: string): Promise<number> {
+    const rows = await this.getRows<{ id: number }>(
+      `SELECT id FROM ${entityType} WHERE LOWER(name) = LOWER(?) AND (deleted IS NULL OR deleted = 0) LIMIT 1`,
+      [name]
+    );
+    if (rows.length > 0) return rows[0].id;
+    return this.createEntity(entityType, { name });
+  }
+
+  // ===========================================================================
+  // Screenplay IDE — Save with annotations (atomic)
+  // ===========================================================================
+
+  public async saveScreenplayWithAnnotations(
+    titlePage: any[],
+    lines: any[],
+    annotations: Parameters<Database['saveAnnotations']>[0]
+  ): Promise<void> {
+    await this.exec('BEGIN TRANSACTION');
+    try {
+      await this.exec('DELETE FROM screenplay_title_page');
+      for (let i = 0; i < titlePage.length; i++) {
+        await this.exec(
+          'INSERT INTO screenplay_title_page (key, value, sort_order) VALUES (?, ?, ?)',
+          [titlePage[i].key || '', titlePage[i].value || '', i]
+        );
+      }
+
+      await this.exec('DELETE FROM screenplay_lines');
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        await this.exec(
+          `INSERT INTO screenplay_lines
+           (line_order, line_type, content, scene_id, character_id, location_id, metadata)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [i, l.line_type || 'action', l.content || '',
+           l.scene_id ?? null, l.character_id ?? null, l.location_id ?? null,
+           l.metadata ? JSON.stringify(l.metadata) : null]
+        );
+      }
+
+      await this.exec('DELETE FROM screenplay_line_annotations');
+      for (const a of annotations) {
+        await this.exec(
+          `INSERT INTO screenplay_line_annotations
+           (line_order, char_from, char_to, entity_type, entity_state, entity_id, staged_local_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [a.line_order, a.char_from, a.char_to, a.entity_type, a.entity_state,
+           a.entity_id ?? null, a.staged_local_id ?? null]
+        );
+      }
+
+      await this.exec('COMMIT');
+      window.dispatchEvent(new CustomEvent('scf-data-updated', { detail: { type: 'screenplay', action: 'save' } }));
+    } catch (e) {
+      await this.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
   public async getProjectStats(): Promise<ProjectStats> {
     const stats: ProjectStats = {
       entities: {},

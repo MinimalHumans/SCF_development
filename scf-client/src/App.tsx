@@ -12,7 +12,7 @@ import {
 import SidebarTree from './components/SidebarTree';
 import EntityEditor from './components/EntityEditor';
 import ProjectManager from './components/ProjectManager';
-import ScreenplayEditor from './components/ScreenplayEditor';
+import ScreenplayIDE from './components/ScreenplayIDE';
 import QueryExplorer from './components/QueryExplorer';
 import { db } from './db/Database';
 import * as Queries from './db/Queries';
@@ -23,6 +23,7 @@ import './assets/css/screenplay_versions.css';
 import './assets/css/screenplay_props.css';
 import './assets/css/entity_tooltips.css';
 import './assets/css/entity_images.css';
+import './assets/css/screenplay_ide.css';
 import './App.css';
 
 const BrowseEmptyState = () => (
@@ -412,7 +413,7 @@ const App: React.FC = () => {
             <Route path="/" element={<Navigate to="/browse" replace />} />
             <Route path="/browse" element={<BrowseEmptyState />} />
             <Route path="/browse/:type/:id" element={<EntityEditor />} />
-            <Route path="/screenplay" element={<ScreenplayEditor />} />
+            <Route path="/screenplay" element={<ScreenplayIDE />} />
             <Route path="/query" element={<QueryExplorer />} />
           </Routes>
         </section>

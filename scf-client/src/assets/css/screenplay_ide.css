@@ -1,0 +1,608 @@
+/* =============================================================================
+   CSS Custom Properties — entity colours
+   ============================================================================= */
+:root {
+  --entity-char-bg:          rgba(37, 99, 235, 0.08);
+  --entity-loc-bg:           rgba(22, 163, 74, 0.08);
+  --entity-prop-bg:          rgba(124, 58, 237, 0.08);
+  --entity-char:             #2563eb;
+  --entity-loc:              #16a34a;
+  --entity-prop:             #7c3aed;
+  --entity-staged-border:    #94a3b8;
+  --entity-committed-border: #334155;
+}
+
+/* =============================================================================
+   IDE root — three-panel layout
+   ============================================================================= */
+.ide-root {
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+.ide-panel-left,
+.ide-panel-right {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border);
+}
+
+.ide-panel-right {
+  border-right: none;
+  border-left: 1px solid var(--border);
+}
+
+.ide-panel-center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.ide-resize-handle {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.ide-resize-handle:hover { background: var(--accent); }
+
+/* =============================================================================
+   Toolbar
+   ============================================================================= */
+.ide-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  height: 38px;
+  flex-shrink: 0;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.ide-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ide-tab-btn:hover  { background: var(--bg-hover); color: var(--text-primary); }
+.ide-tab-btn.active { background: var(--bg-active); color: var(--text-primary); font-weight: 600; }
+
+.ide-toolbar-spacer { flex: 1; }
+
+.ide-mode-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  background: var(--bg-base);
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+.ide-save-btn {
+  padding: 4px 12px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 4px;
+}
+
+/* =============================================================================
+   Editor area
+   ============================================================================= */
+.ide-editor-area {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.ide-cm-host {
+  height: 100%;
+  overflow: auto;
+}
+
+.ide-cm-host .cm-editor {
+  height: 100%;
+}
+
+.ide-cm-host .cm-scroller {
+  overflow: auto;
+  height: 100%;
+}
+
+/* =============================================================================
+   Title page editor
+   ============================================================================= */
+.ide-title-editor {
+  padding: 40px 48px;
+  max-width: 600px;
+  margin: 0 auto;
+  overflow-y: auto;
+  height: 100%;
+}
+
+/* =============================================================================
+   Versions panel
+   ============================================================================= */
+.ide-versions {
+  padding: 24px;
+  overflow-y: auto;
+  height: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* =============================================================================
+   Status bar
+   ============================================================================= */
+.ide-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 24px;
+  flex-shrink: 0;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 8px;
+}
+
+.ide-status-item { padding: 0 8px; }
+.ide-status-sep  { width: 1px; height: 14px; background: var(--border); }
+
+/* =============================================================================
+   Fountain line styles (CodeMirror decorations)
+   ============================================================================= */
+.cm-fountain-heading {
+  font-weight: 700;
+  text-transform: uppercase;
+  padding-top: 1.5em !important;
+}
+.cm-fountain-character {
+  text-transform: uppercase;
+  padding-top: 1em !important;
+  padding-left: 4em;
+}
+.cm-fountain-dialogue {
+  padding-left: 2.5em;
+  padding-right: 2.5em;
+}
+.cm-fountain-parenthetical {
+  padding-left: 3.5em;
+  font-style: italic;
+}
+.cm-fountain-transition {
+  text-align: right;
+  text-transform: uppercase;
+  padding-top: 0.5em !important;
+}
+.cm-fountain-section {
+  font-weight: 700;
+  font-size: 1.05em;
+  padding-top: 0.75em !important;
+}
+.cm-fountain-synopsis   { font-style: italic; opacity: 0.65; }
+.cm-fountain-centered   { text-align: center; }
+.cm-fountain-boneyard   { opacity: 0.4; }
+
+/* =============================================================================
+   Entity span decorations
+   ============================================================================= */
+.cm-entity {
+  border-radius: 2px;
+  padding: 0 1px;
+  transition: background 0.1s;
+}
+.cm-entity:hover { filter: brightness(0.9); }
+
+.cm-entity-staged    { text-decoration: underline dotted var(--entity-staged-border) 2px; }
+.cm-entity-committed { text-decoration: underline solid var(--entity-committed-border) 2px; }
+
+.cm-entity-character { background: var(--entity-char-bg); }
+.cm-entity-location  { background: var(--entity-loc-bg); }
+.cm-entity-prop      { background: var(--entity-prop-bg); }
+
+/* =============================================================================
+   Production Navigator
+   ============================================================================= */
+.nav-ide-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.nav-ide-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.nav-ide-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 7px 4px;
+  font-size: 11px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.nav-ide-tab:hover { color: var(--text-primary); }
+.nav-ide-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.nav-ide-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+/* Selection bar */
+.nav-ide-selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--bg-active);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+.nav-ide-selection-bar span { flex: 1; }
+
+/* Act groups */
+.nav-ide-act { border-bottom: 1px solid var(--border); }
+
+.nav-ide-act-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  user-select: none;
+}
+.nav-ide-act-header:hover { background: var(--bg-hover); }
+
+.nav-ide-act-chevron { color: var(--text-muted); flex-shrink: 0; }
+.nav-ide-act-name    { flex: 1; }
+.nav-ide-act-count   { font-size: 10px; color: var(--text-muted); }
+
+.nav-ide-act-name-input {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 1px 4px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+.nav-ide-act-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.nav-ide-act-header:hover .nav-ide-act-actions { opacity: 1; }
+
+.nav-ide-act-scenes { padding: 0 0 4px; }
+
+/* Scenes */
+.nav-ide-scene {
+  display: flex;
+  flex-direction: column;
+  padding: 5px 10px 5px 20px;
+  cursor: pointer;
+  font-size: 11px;
+  border-left: 3px solid transparent;
+}
+.nav-ide-scene:hover    { background: var(--bg-hover); }
+.nav-ide-scene.selected { background: var(--bg-active); border-left-color: var(--accent); }
+.nav-ide-scene.in-act   { padding-left: 28px; }
+
+.nav-ide-scene-num {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+.nav-ide-scene-heading {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nav-ide-scene-entities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 3px;
+}
+
+.nav-ide-chip {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 10px;
+  line-height: 1.4;
+}
+.nav-ide-chip-char { background: var(--entity-char-bg); color: var(--entity-char); }
+.nav-ide-chip-more { background: var(--bg-active); color: var(--text-muted); }
+
+.nav-ide-ungrouped-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 8px 10px 4px;
+}
+
+/* Entity rows (characters / locations tabs) */
+.nav-ide-list { padding: 4px 0; }
+
+.nav-ide-entity-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+}
+.nav-ide-entity-row:hover     { background: var(--bg-hover); }
+.nav-ide-entity-row.active-filter {
+  background: var(--bg-active);
+  border-left-color: var(--accent);
+}
+
+.nav-ide-entity-icon { flex-shrink: 0; }
+.char-icon { color: var(--entity-char); }
+.loc-icon  { color: var(--entity-loc);  }
+.nav-ide-entity-name  { flex: 1; }
+.nav-ide-entity-badge {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 5px;
+}
+
+.nav-ide-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--bg-active);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-ide-empty,
+.nav-ide-empty-act { font-size: 11px; color: var(--text-muted); padding: 12px 16px; text-align: center; }
+
+/* =============================================================================
+   Icon buttons
+   ============================================================================= */
+.nav-ide-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 4px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.nav-ide-icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.nav-ide-icon-btn-danger:hover { color: var(--error, #ef4444); }
+
+/* =============================================================================
+   Entity Properties Panel
+   ============================================================================= */
+.ep-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.ep-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 2px solid var(--border);
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ep-staged { border-bottom-color: var(--entity-staged-border); }
+
+.ep-type-icon { flex-shrink: 0; }
+.ep-type-label { color: var(--text-muted); font-size: 11px; font-weight: 400; }
+.ep-entity-name { flex: 1; }
+
+.ep-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+.ep-rename-input {
+  flex: 1;
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+.ep-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.ep-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 8px 0 12px;
+}
+.ep-hint kbd {
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-family: monospace;
+}
+
+.ep-staged-text {
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 0;
+  color: var(--text-secondary);
+}
+
+.ep-commit-btn {
+  width: 100%;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 7px;
+}
+
+.ep-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.ep-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.ep-action-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.ep-action-danger:hover { color: var(--error, #ef4444); border-color: var(--error, #ef4444); }
+
+.ep-swap-box {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-base);
+}
+.ep-swap-input {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.ep-swap-result {
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.ep-swap-result:hover { background: var(--bg-hover); }
+
+.ep-field {
+  margin-bottom: 12px;
+}
+.ep-field label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.ep-field p {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.ep-scenes label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.ep-scene-chip {
+  font-size: 11px;
+  padding: 3px 8px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ep-empty {
+  padding: 24px 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.ep-fallback {
+  background: var(--bg-surface);
+}
