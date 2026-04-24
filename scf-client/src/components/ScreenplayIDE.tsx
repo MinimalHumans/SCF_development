@@ -5,7 +5,7 @@ import {
   lineNumbers,
   drawSelection,
 } from '@codemirror/view';
-import { EditorState } from '@codemirror/state';
+import { EditorState, StateEffect } from '@codemirror/state';
 import {
   history,
   historyKeymap,
@@ -17,10 +17,17 @@ import {
   Trash2, List, User,
 } from 'lucide-react';
 import { db } from '../db/Database';
-import { fountainHighlighter, fountainTheme, classifyFountainLine, FountainLineType } from './ide/FountainExtension';
-import { entityStateField, spansToAnnotations, annotationsToEffects } from './ide/EntityStateField';
+import { fountainHighlighter, fountainTheme, classifyFountainLine } from './ide/FountainExtension';
+import type { FountainLineType } from './ide/FountainExtension';
+import {
+  entityStateField,
+  spansToAnnotations,
+  annotationsToEffects,
+  commitEntitySpanEffect,
+} from './ide/EntityStateField';
 import { entityAutocomplete, openPropAutocomplete } from './ide/EntityAutocomplete';
-import { ProductionNavigator, NavScene, ActGroup } from './ide/ProductionNavigator';
+import { ProductionNavigator } from './ide/ProductionNavigator';
+import type { NavScene, ActGroup } from './ide/ProductionNavigator';
 import { EntityPropertiesPanel } from './ide/EntityPropertiesPanel';
 
 // =============================================================================
@@ -107,17 +114,12 @@ function buildEditorState(doc: string): EditorState {
       fountainHighlighter,
       fountainTheme,
       entityStateField,
-      entityAutocomplete,
+      ...entityAutocomplete,
       EditorView.lineWrapping,
       EditorView.theme({
         '&': { height: '100%', fontFamily: "'Courier Prime', 'Courier New', Courier, monospace", fontSize: '15px' },
         '.cm-scroller': { overflow: 'auto' },
         '.cm-content': { padding: '2rem 4rem', maxWidth: '780px', margin: '0 auto' },
-        '.cm-entity-staged':    { borderBottom: '2px dotted var(--entity-staged-border)', cursor: 'pointer' },
-        '.cm-entity-committed': { borderBottom: '2px solid var(--entity-committed-border)', cursor: 'pointer' },
-        '.cm-entity-character': { background: 'var(--entity-char-bg)' },
-        '.cm-entity-location':  { background: 'var(--entity-loc-bg)' },
-        '.cm-entity-prop':      { background: 'var(--entity-prop-bg)' },
       }),
       keymap.of([
         ...defaultKeymap,
@@ -206,6 +208,81 @@ export const ScreenplayIDE: React.FC = () => {
     };
   }, []);
 
+  // Auto-linking by exact match (§2 spec)
+  const autoLinkEntities = useCallback(async (v: EditorView) => {
+    const { state } = v;
+    const { spans } = state.field(entityStateField);
+    const effects: StateEffect<any>[] = [];
+
+    // Fetch all known entities for exact matching
+    const [allChars, allLocs, allProps] = await Promise.all([
+      db.getRows<{ id: number; name: string }>(`SELECT id, name FROM character WHERE (deleted IS NULL OR deleted = 0)`),
+      db.getRows<{ id: number; name: string }>(`SELECT id, name FROM location WHERE (deleted IS NULL OR deleted = 0)`),
+      db.getRows<{ id: number; name: string }>(`SELECT id, name FROM prop WHERE (deleted IS NULL OR deleted = 0)`),
+    ]);
+
+    const charMap = new Map(allChars.map(c => [c.name.toLowerCase(), c.id]));
+    const locMap  = new Map(allLocs.map(l => [l.name.toLowerCase(), l.id]));
+    const propMap = new Map(allProps.map(p => [p.name.toLowerCase(), p.id]));
+
+    // Scan the doc line by line
+    let prevType: FountainLineType = 'blank';
+    for (let i = 1; i <= state.doc.lines; i++) {
+      const line = state.doc.line(i);
+      const text = line.text;
+      const type = classifyFountainLine(text, prevType);
+      prevType = type;
+
+      if (type === 'character') {
+        const name = text.trim().toUpperCase();
+        const id = charMap.get(name.toLowerCase());
+        if (id) {
+          const from = line.from + (text.length - text.trimStart().length);
+          const to   = from + name.length;
+          // Only add if not already present
+          if (!spans.some(s => s.from === from && s.entityId === id)) {
+            effects.push(commitEntitySpanEffect.of({ from, to, entityId: id, entityType: 'character' }));
+          }
+        }
+      } else if (type === 'heading') {
+        const match = text.match(/^(\.?(?:INT|EXT|I\/E|INT\.\/EXT|EXT\.\/INT)\.?\s+)(.*?)(\s+-\s+.*)?$/i);
+        if (match) {
+          const prefix = match[1];
+          const locName = match[2].trim();
+          const id = locMap.get(locName.toLowerCase());
+          if (id) {
+            const from = line.from + prefix.length;
+            const to   = from + locName.length;
+            if (!spans.some(s => s.from === from && s.entityId === id)) {
+              effects.push(commitEntitySpanEffect.of({ from, to, entityId: id, entityType: 'location' }));
+            }
+          }
+        }
+      }
+      
+      // Props: Scan any text for exact prop matches (more expensive but thorough)
+      // For performance, we only do this on the active line or during full-scan
+      if (text.length > 0 && propMap.size > 0) {
+          for (const [propName, propId] of propMap.entries()) {
+              if (propName.length < 3) continue; // Skip too short props to avoid false positives
+              const regex = new RegExp(`\\b${propName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+              let match;
+              while ((match = regex.exec(text)) !== null) {
+                  const from = line.from + match.index;
+                  const to   = from + match[0].length;
+                  if (!spans.some(s => s.from === from && s.entityId === propId)) {
+                      effects.push(commitEntitySpanEffect.of({ from, to, entityId: propId, entityType: 'prop' }));
+                  }
+              }
+          }
+      }
+    }
+
+    if (effects.length > 0) {
+      v.dispatch({ effects });
+    }
+  }, []);
+
   // Persist panel widths
   useEffect(() => { localStorage.setItem('ide_left_width',  String(leftWidth));  }, [leftWidth]);
   useEffect(() => { localStorage.setItem('ide_right_width', String(rightWidth)); }, [rightWidth]);
@@ -235,11 +312,23 @@ export const ScreenplayIDE: React.FC = () => {
       if (effects.length > 0) view.dispatch({ effects });
     }
 
+    // Auto-link exact matches (§2 spec)
+    await autoLinkEntities(view);
+
     setActGroups(actGroupsData);
     setVersions(vers);
     refreshNavScenes(nav);
     setSaveStatus('saved');
   };
+
+  // Debounced auto-link while editing
+  useEffect(() => {
+    if (saveStatus !== 'dirty') return;
+    const t = setTimeout(() => {
+      if (viewRef.current) autoLinkEntities(viewRef.current);
+    }, 2000);
+    return () => clearTimeout(t);
+  }, [saveStatus, autoLinkEntities]);
 
   // Build NavScene[] from navigator data
   const refreshNavScenes = async (navArg?: any) => {
@@ -281,6 +370,9 @@ export const ScreenplayIDE: React.FC = () => {
     if (!v) return;
     setSaveStatus('saving');
 
+    // Final auto-link pass before saving (§2 spec)
+    await autoLinkEntities(v);
+
     const doc   = v.state.doc;
     const lines = Array.from({ length: doc.lines }, (_, i) => {
       const line = doc.line(i + 1);
@@ -297,14 +389,16 @@ export const ScreenplayIDE: React.FC = () => {
 
     const annotations = spansToAnnotations(v.state);
 
-    await db.saveScreenplayWithAnnotations(titlePage, lines, annotations);
+    const summary = await db.saveScreenplayWithAnnotations(titlePage, lines, annotations);
     await db.saveActGroups(actGroups);
 
-    const nav = await db.getNavigatorData();
-    refreshNavScenes(nav);
+    await refreshNavScenes();
 
     setSaveStatus('saved');
-    showToast('Saved');
+    const stagedMsg = summary.staged_count > 0
+      ? ` · ${summary.staged_count} entity${summary.staged_count > 1 ? 'ies' : ''} staged`
+      : '';
+    showToast(`Saved${stagedMsg}`);
   }, [titlePage, actGroups]);
 
   // =============================================================================

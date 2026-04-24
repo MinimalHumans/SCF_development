@@ -2,14 +2,14 @@
    CSS Custom Properties — entity colours
    ============================================================================= */
 :root {
-  --entity-char-bg:          rgba(37, 99, 235, 0.08);
-  --entity-loc-bg:           rgba(22, 163, 74, 0.08);
-  --entity-prop-bg:          rgba(124, 58, 237, 0.08);
-  --entity-char:             #2563eb;
-  --entity-loc:              #16a34a;
-  --entity-prop:             #7c3aed;
-  --entity-staged-border:    #94a3b8;
-  --entity-committed-border: #334155;
+  --entity-char-bg:          rgba(37, 99, 235, 0.15);
+  --entity-loc-bg:           rgba(22, 163, 74, 0.15);
+  --entity-prop-bg:          rgba(124, 58, 237, 0.15);
+  --entity-char:             #3b82f6;
+  --entity-loc:              #22c55e;
+  --entity-prop:             #8b5cf6;
+  --entity-staged-border:    #64748b;
+  --entity-committed-border: #94a3b8;
 }
 
 /* =============================================================================
@@ -176,10 +176,12 @@
 /* =============================================================================
    Fountain line styles (CodeMirror decorations)
    ============================================================================= */
+/* Blank lines are stripped on save; recreate vertical rhythm via padding-top
+   (CM6 measures padding inside .cm-line, not margin — using margin breaks click-to-cursor alignment) */
 .cm-fountain-heading {
   font-weight: 700;
   text-transform: uppercase;
-  padding-top: 1.5em !important;
+  padding-top: 2em !important;
 }
 .cm-fountain-character {
   text-transform: uppercase;
@@ -197,12 +199,15 @@
 .cm-fountain-transition {
   text-align: right;
   text-transform: uppercase;
-  padding-top: 0.5em !important;
+  padding-top: 1em !important;
 }
 .cm-fountain-section {
   font-weight: 700;
   font-size: 1.05em;
-  padding-top: 0.75em !important;
+  padding-top: 1em !important;
+}
+.cm-fountain-action {
+  padding-top: 0.5em !important;
 }
 .cm-fountain-synopsis   { font-style: italic; opacity: 0.65; }
 .cm-fountain-centered   { text-align: center; }

@@ -1,19 +1,20 @@
 import {
   autocompletion,
   CompletionContext,
-  CompletionResult,
-  Completion,
   startCompletion,
+  closeCompletion,
 } from '@codemirror/autocomplete';
-import { EditorView } from '@codemirror/view';
+import type { CompletionResult, Completion } from '@codemirror/autocomplete';
+import { EditorView, keymap } from '@codemirror/view';
 import {
   addEntitySpanEffect,
   commitEntitySpanEffect,
   newStagedId,
-  EntityType,
   entityStateField,
 } from './EntityStateField';
-import { classifyFountainLine, FountainLineType } from './FountainExtension';
+import type { EntityType } from './EntityStateField';
+import { classifyFountainLine } from './FountainExtension';
+import type { FountainLineType } from './FountainExtension';
 import { db } from '../../db/Database';
 
 // =============================================================================
@@ -85,12 +86,11 @@ function buildCompletions(
   query: string,
   entityType: EntityType,
   from: number,
-  view: EditorView
 ): Completion[] {
   const items: Completion[] = results.map(r => ({
     label: r.name,
     type: entityType,
-    apply: (editorView: EditorView, _completion: Completion, _from: number, to: number) => {
+    apply: (editorView: EditorView, _completion: Completion, _from: number, _to: number) => {
       const line = editorView.state.doc.lineAt(from);
       const insertTo = line.to;
       // Replace from the entityFrom to end of matched word
@@ -151,8 +151,8 @@ async function fountainCompletionSource(ctx: CompletionContext): Promise<Complet
 
   // Exact-match auto-commit (§2 spec)
   const exact = results.find(r => r.name.toLowerCase() === query.toLowerCase());
-  if (exact && !ctx.explicit) {
-    const view: EditorView = ctx.view;
+  if (exact && !ctx.explicit && ctx.view) {
+    const view = ctx.view;
     const line = view.state.doc.lineAt(from);
     const to = from + query.length;
     if (to <= line.to) {
@@ -166,7 +166,7 @@ async function fountainCompletionSource(ctx: CompletionContext): Promise<Complet
     }
   }
 
-  const completions = buildCompletions(results, query, entityType, from, ctx.view);
+  const completions = buildCompletions(results, query, entityType, from);
   if (!completions.length) return null;
 
   return { from, options: completions, validFor: /^[\w\s\.']*$/ };
@@ -200,40 +200,80 @@ export async function openPropAutocomplete(view: EditorView): Promise<boolean> {
 // Prop override CompletionSource (picks up __scf_prop_override)
 // =============================================================================
 
-async function propOverrideSource(ctx: CompletionContext): Promise<CompletionResult | null> {
+async function propOverrideSource(_ctx: CompletionContext): Promise<CompletionResult | null> {
   const override = (window as any).__scf_prop_override;
   if (!override) return null;
   (window as any).__scf_prop_override = null;
 
   const { query, results, from, to } = override;
-  const items = buildCompletions(results, query, 'prop', from, ctx.view);
+  const items = buildCompletions(results, query, 'prop', from);
   if (!items.length) return null;
   return { from, to, options: items, validFor: /^[\w\s]*$/ };
 }
 
 // =============================================================================
-// Staged entity on Escape / double-space
+// Time-of-day suggestions after ' - ' in scene headings
+// =============================================================================
+
+const TIME_OF_DAY = [
+  'DAY', 'NIGHT', 'MORNING', 'AFTERNOON', 'EVENING',
+  'DUSK', 'DAWN', 'CONTINUOUS', 'LATER', 'MOMENTS LATER',
+];
+
+async function timeOfDaySource(ctx: CompletionContext): Promise<CompletionResult | null> {
+  const line = ctx.state.doc.lineAt(ctx.pos);
+  // Only on heading lines
+  if (!/^(\.?(?:INT|EXT|I\/E|INT\.\/EXT|EXT\.\/INT))/i.test(line.text)) return null;
+
+  // Look for ' - ' followed by cursor
+  const dashMatch = line.text.match(/\s-\s(.*)$/);
+  if (!dashMatch) return null;
+
+  const dashOffset = line.text.lastIndexOf(' - ');
+  const afterDash  = dashOffset + 3; // skip ' - '
+  const fromPos    = line.from + afterDash;
+  if (ctx.pos < fromPos) return null;
+
+  const typed = line.text.slice(afterDash).toUpperCase();
+  const matches = TIME_OF_DAY.filter(t => t.startsWith(typed) || typed === '');
+  if (!matches.length) return null;
+
+  return {
+    from: fromPos,
+    options: matches.map(t => ({ label: t, type: 'keyword', boost: 5 })),
+    validFor: /^[A-Z\s]*$/,
+  };
+}
+
+// =============================================================================
+// Escape→Staged behavior
 // =============================================================================
 
 export function stageCurrentToken(view: EditorView, entityType: EntityType): void {
   const { state } = view;
   const pos  = state.selection.main.head;
   const line = state.doc.lineAt(pos);
-
-  // Find word boundaries
-  let from = pos;
-  let to   = pos;
   const text = line.text;
-  const relPos = pos - line.from;
-  while (from > line.from && /\w/.test(text[from - line.from - 1])) from--;
-  while (to < line.to   && /\w/.test(text[to - line.from]))   to++;
 
-  if (from === to) return;
+  // Find boundaries of the current "word" (including spaces for multi-word names)
+  // Walk backward to line start or previous punctuation
+  let from = pos - line.from;
+  while (from > 0 && /[\w\s']/.test(text[from - 1])) from--;
+  let to = pos - line.from;
+  while (to < text.length && /[\w\s']/.test(text[to])) to++;
+
+  // Trim trailing spaces
+  while (to > from && text[to - 1] === ' ') to--;
+
+  const absFrom = line.from + from;
+  const absTo   = line.from + to;
+  if (absFrom >= absTo) return;
 
   view.dispatch({
     effects: [
       addEntitySpanEffect.of({
-        from, to,
+        from: absFrom,
+        to: absTo,
         entityType,
         state: 'staged',
         entityId: null,
@@ -243,13 +283,50 @@ export function stageCurrentToken(view: EditorView, entityType: EntityType): voi
   });
 }
 
+// When Escape is pressed and autocomplete is open: close dropdown and stage the current token
+function escapeToStageCommand(view: EditorView): boolean {
+  // Determine entity type for the current line
+  const { state } = view;
+  const line = state.doc.lineAt(state.selection.main.head);
+
+  let prevType: FountainLineType = 'blank';
+  for (let i = 1; i < line.number; i++) {
+    prevType = classifyFountainLine(state.doc.line(i).text, prevType);
+  }
+  const lineType = classifyFountainLine(line.text, prevType);
+
+  let entityType: EntityType | null = null;
+  if (lineType === 'character') entityType = 'character';
+  else if (lineType === 'heading') entityType = 'location';
+
+  // Only intercept if autocomplete is currently open
+  // closeCompletion returns true if it was open
+  const wasOpen = closeCompletion(view);
+  if (wasOpen && entityType) {
+    stageCurrentToken(view, entityType);
+    return true;
+  }
+  return wasOpen;
+}
+
 // =============================================================================
-// Export the autocompletion extension
+// Entity-aware keymap extensions
 // =============================================================================
 
-export const entityAutocomplete = autocompletion({
-  override: [fountainCompletionSource, propOverrideSource],
-  closeOnBlur: true,
-  activateOnTyping: true,
-  defaultKeymap: true,
-});
+export const entityKeymap = keymap.of([
+  { key: 'Escape', run: escapeToStageCommand },
+]);
+
+// =============================================================================
+// Export the autocompletion extension bundle
+// =============================================================================
+
+export const entityAutocomplete = [
+  autocompletion({
+    override: [fountainCompletionSource, propOverrideSource, timeOfDaySource],
+    closeOnBlur: true,
+    activateOnTyping: true,
+    defaultKeymap: true,
+  }),
+  entityKeymap,
+];

@@ -1,7 +1,7 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
-  ChevronDown, ChevronRight, Film, User, MapPin, Package,
-  Plus, FolderPlus, Trash2, Edit2, Check, X,
+  ChevronDown, ChevronRight, Film, User, MapPin,
+  FolderPlus, Trash2, Edit2, X,
 } from 'lucide-react';
 
 // =============================================================================
@@ -49,11 +49,15 @@ export const ProductionNavigator: React.FC<Props> = ({
   onFilterCharacter,
   onFilterLocation,
 }) => {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem('ide_nav_collapsed') || '{}'); } catch { return {}; }
+  });
   const [selectedSceneIds, setSelectedSceneIds] = useState<Set<number>>(new Set());
   const [editingActId, setEditingActId] = useState<number | null>(null);
   const [editingActName, setEditingActName] = useState('');
-  const [activeTab, setActiveTab] = useState<'scenes' | 'characters' | 'locations'>('scenes');
+  const [activeTab, setActiveTab] = useState<'scenes' | 'characters' | 'locations'>(() => {
+    return (localStorage.getItem('ide_nav_tab') as any) || 'scenes';
+  });
 
   // Derive unique characters and locations from scene data
   const allCharacters = Array.from(
@@ -75,7 +79,11 @@ export const ProductionNavigator: React.FC<Props> = ({
   }
 
   const toggleCollapsed = (key: string) =>
-    setCollapsed(p => ({ ...p, [key]: !p[key] }));
+    setCollapsed(p => {
+      const next = { ...p, [key]: !p[key] };
+      localStorage.setItem('ide_nav_collapsed', JSON.stringify(next));
+      return next;
+    });
 
   const filteredScenes = scenes.filter(s => {
     if (filterCharacter && !s.characters.includes(filterCharacter)) return false;
@@ -241,7 +249,7 @@ export const ProductionNavigator: React.FC<Props> = ({
           <button
             key={tab}
             className={`nav-ide-tab ${activeTab === tab ? 'active' : ''}`}
-            onClick={() => setActiveTab(tab)}
+            onClick={() => { setActiveTab(tab); localStorage.setItem('ide_nav_tab', tab); }}
           >
             {tab === 'scenes' && <Film size={12} />}
             {tab === 'characters' && <User size={12} />}

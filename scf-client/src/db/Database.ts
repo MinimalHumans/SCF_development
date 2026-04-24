@@ -370,42 +370,50 @@ class Database {
     const versionNumber = nextNumRows[0].next_num;
 
     const charCountRows = await this.getRows("SELECT COUNT(DISTINCT character_id) AS cnt FROM screenplay_lines WHERE character_id IS NOT NULL");
-    const locCountRows = await this.getRows("SELECT COUNT(DISTINCT location_id) AS cnt FROM screenplay_lines WHERE location_id IS NOT NULL");
-    
+    const locCountRows  = await this.getRows("SELECT COUNT(DISTINCT location_id)  AS cnt FROM screenplay_lines WHERE location_id  IS NOT NULL");
+    const stagedRows    = await this.getRows("SELECT COUNT(*) AS cnt FROM screenplay_line_annotations WHERE entity_state = 'staged' AND project_id = 1");
+
     const allContent = await this.getRows("SELECT content FROM screenplay_lines WHERE content != ''");
-    const wordCount = allContent.reduce((sum, r) => sum + (r.content.split(/\s+/).length), 0);
+    const wordCount  = allContent.reduce((sum, r) => sum + (r.content.split(/\s+/).length), 0);
 
     await this.exec("BEGIN TRANSACTION");
     try {
       await this.exec(
-        `INSERT INTO screenplay_versions 
+        `INSERT INTO screenplay_versions
          (version_number, description, line_count, scene_count, character_count, location_count, word_count)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [versionNumber, description, stats.screenplay.lines, stats.screenplay.scenes, charCountRows[0].cnt, locCountRows[0].cnt, wordCount]
+        [versionNumber, description, stats.screenplay.lines, stats.screenplay.scenes,
+         charCountRows[0].cnt, locCountRows[0].cnt, wordCount]
       );
 
       const versionIdRows = await this.getRows("SELECT last_insert_rowid() as id");
       const versionId = versionIdRows[0].id;
 
       await this.exec(
-        `INSERT INTO screenplay_version_lines 
+        `INSERT INTO screenplay_version_lines
          (version_id, line_order, line_type, content, scene_id, character_id, location_id, metadata)
          SELECT ?, line_order, line_type, content, scene_id, character_id, location_id, metadata
-         FROM screenplay_lines
-         ORDER BY line_order`,
+         FROM screenplay_lines ORDER BY line_order`,
         [versionId]
       );
 
       await this.exec(
         `INSERT INTO screenplay_version_title_page (version_id, key, value, sort_order)
-         SELECT ?, key, value, sort_order
-         FROM screenplay_title_page
-         ORDER BY sort_order, id`,
+         SELECT ?, key, value, sort_order FROM screenplay_title_page ORDER BY sort_order, id`,
+        [versionId]
+      );
+
+      // Snapshot entity annotation map
+      await this.exec(
+        `INSERT INTO screenplay_version_annotations
+         (version_id, line_order, char_from, char_to, entity_type, entity_state, entity_id, staged_local_id)
+         SELECT ?, line_order, char_from, char_to, entity_type, entity_state, entity_id, staged_local_id
+         FROM screenplay_line_annotations WHERE project_id = 1`,
         [versionId]
       );
 
       await this.exec("COMMIT");
-      return { version_id: versionId, version_number: versionNumber };
+      return { version_id: versionId, version_number: versionNumber, staged_count: stagedRows[0].cnt };
     } catch (e) {
       await this.exec("ROLLBACK");
       throw e;
@@ -427,31 +435,34 @@ class Database {
     try {
       await this.exec("DELETE FROM screenplay_lines");
       await this.exec("DELETE FROM screenplay_title_page");
+      await this.exec("DELETE FROM screenplay_line_annotations WHERE project_id = 1");
 
       await this.exec(
-        `INSERT INTO screenplay_lines 
+        `INSERT INTO screenplay_lines
          (line_order, line_type, content, scene_id, character_id, location_id, metadata)
          SELECT line_order, line_type, content, scene_id, character_id, location_id, metadata
-         FROM screenplay_version_lines
-         WHERE version_id = ?
-         ORDER BY line_order`,
+         FROM screenplay_version_lines WHERE version_id = ? ORDER BY line_order`,
         [versionId]
       );
 
       await this.exec(
         `INSERT INTO screenplay_title_page (key, value, sort_order)
-         SELECT key, value, sort_order
-         FROM screenplay_version_title_page
-         WHERE version_id = ?
-         ORDER BY sort_order, id`,
+         SELECT key, value, sort_order FROM screenplay_version_title_page
+         WHERE version_id = ? ORDER BY sort_order, id`,
+        [versionId]
+      );
+
+      // Restore annotation map if the version has one
+      await this.exec(
+        `INSERT INTO screenplay_line_annotations
+         (project_id, line_order, char_from, char_to, entity_type, entity_state, entity_id, staged_local_id)
+         SELECT 1, line_order, char_from, char_to, entity_type, entity_state, entity_id, staged_local_id
+         FROM screenplay_version_annotations WHERE version_id = ?`,
         [versionId]
       );
 
       await this.exec("COMMIT");
-      
-      // Notify app of data change
       window.dispatchEvent(new CustomEvent('scf-data-updated', { detail: { type: 'screenplay', action: 'restore' } }));
-      
       return { success: true };
     } catch (e) {
       await this.exec("ROLLBACK");
@@ -529,6 +540,7 @@ class Database {
       SELECT id, line_order, char_from, char_to,
              entity_type, entity_state, entity_id, staged_local_id
       FROM screenplay_line_annotations
+      WHERE project_id = 1
       ORDER BY line_order ASC, char_from ASC
     `);
   }
@@ -544,12 +556,12 @@ class Database {
   }[]): Promise<void> {
     await this.exec('BEGIN TRANSACTION');
     try {
-      await this.exec('DELETE FROM screenplay_line_annotations');
+      await this.exec('DELETE FROM screenplay_line_annotations WHERE project_id = 1');
       for (const a of annotations) {
         await this.exec(
           `INSERT INTO screenplay_line_annotations
-           (line_order, char_from, char_to, entity_type, entity_state, entity_id, staged_local_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (project_id, line_order, char_from, char_to, entity_type, entity_state, entity_id, staged_local_id)
+           VALUES (1, ?, ?, ?, ?, ?, ?, ?)`,
           [a.line_order, a.char_from, a.char_to, a.entity_type, a.entity_state,
            a.entity_id ?? null, a.staged_local_id ?? null]
         );
@@ -567,7 +579,7 @@ class Database {
 
   public async loadActGroups(): Promise<any[]> {
     const rows = await this.getRows(
-      'SELECT id, act_name, act_order, scene_ids FROM scene_act_groups ORDER BY act_order ASC'
+      'SELECT id, act_name, act_order, scene_ids FROM scene_act_groups WHERE project_id = 1 ORDER BY act_order ASC'
     );
     return rows.map(r => ({ ...r, scene_ids: JSON.parse(r.scene_ids || '[]') }));
   }
@@ -575,10 +587,10 @@ class Database {
   public async saveActGroups(groups: { act_name: string; act_order: number; scene_ids: number[] }[]): Promise<void> {
     await this.exec('BEGIN TRANSACTION');
     try {
-      await this.exec('DELETE FROM scene_act_groups');
+      await this.exec('DELETE FROM scene_act_groups WHERE project_id = 1');
       for (const g of groups) {
         await this.exec(
-          'INSERT INTO scene_act_groups (act_name, act_order, scene_ids) VALUES (?, ?, ?)',
+          'INSERT INTO scene_act_groups (project_id, act_name, act_order, scene_ids) VALUES (1, ?, ?, ?)',
           [g.act_name, g.act_order, JSON.stringify(g.scene_ids)]
         );
       }
@@ -654,9 +666,27 @@ class Database {
     titlePage: any[],
     lines: any[],
     annotations: Parameters<Database['saveAnnotations']>[0]
-  ): Promise<void> {
+  ): Promise<{ staged_count: number; committed_count: number }> {
+    // Strip blank lines before storing (rendered via CSS margins)
+    const nonBlankLines = lines.filter(l => l.line_type !== 'blank');
+
+    // Remap annotation line_orders to match the stripped array
+    // Build a mapping: original line_order → new line_order
+    const orderMap = new Map<number, number>();
+    let newIdx = 0;
+    for (let orig = 0; orig < lines.length; orig++) {
+      if (lines[orig].line_type !== 'blank') {
+        orderMap.set(orig, newIdx++);
+      }
+    }
+
+    const remappedAnnotations = annotations
+      .filter(a => orderMap.has(a.line_order))
+      .map(a => ({ ...a, line_order: orderMap.get(a.line_order)! }));
+
     await this.exec('BEGIN TRANSACTION');
     try {
+      // Title page
       await this.exec('DELETE FROM screenplay_title_page');
       for (let i = 0; i < titlePage.length; i++) {
         await this.exec(
@@ -665,9 +695,10 @@ class Database {
         );
       }
 
+      // Lines (blank-stripped)
       await this.exec('DELETE FROM screenplay_lines');
-      for (let i = 0; i < lines.length; i++) {
-        const l = lines[i];
+      for (let i = 0; i < nonBlankLines.length; i++) {
+        const l = nonBlankLines[i];
         await this.exec(
           `INSERT INTO screenplay_lines
            (line_order, line_type, content, scene_id, character_id, location_id, metadata)
@@ -678,22 +709,130 @@ class Database {
         );
       }
 
-      await this.exec('DELETE FROM screenplay_line_annotations');
-      for (const a of annotations) {
+      // Annotations (project_id scoped)
+      await this.exec('DELETE FROM screenplay_line_annotations WHERE project_id = 1');
+      for (const a of remappedAnnotations) {
         await this.exec(
           `INSERT INTO screenplay_line_annotations
-           (line_order, char_from, char_to, entity_type, entity_state, entity_id, staged_local_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (project_id, line_order, char_from, char_to, entity_type, entity_state, entity_id, staged_local_id)
+           VALUES (1, ?, ?, ?, ?, ?, ?, ?)`,
           [a.line_order, a.char_from, a.char_to, a.entity_type, a.entity_state,
            a.entity_id ?? null, a.staged_local_id ?? null]
         );
       }
 
+      // Auto-create committed entities (characters + locations) and rebuild junctions
+      await this._syncCommittedEntities(nonBlankLines, remappedAnnotations);
+
       await this.exec('COMMIT');
       window.dispatchEvent(new CustomEvent('scf-data-updated', { detail: { type: 'screenplay', action: 'save' } }));
+
+      const staged    = remappedAnnotations.filter(a => a.entity_state === 'staged').length;
+      const committed = remappedAnnotations.filter(a => a.entity_state === 'committed').length;
+      return { staged_count: staged, committed_count: committed };
     } catch (e) {
       await this.exec('ROLLBACK');
       throw e;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Internal: auto-create entities + rebuild scene_character junction
+  // ---------------------------------------------------------------------------
+
+  private async _syncCommittedEntities(
+    lines: any[],
+    annotations: { line_order: number; entity_type: string; entity_state: string; entity_id: number | null; staged_local_id: string | null }[]
+  ): Promise<void> {
+    // 1. Walk heading lines → find/create scene records
+    const sceneLineMap = new Map<number, number>(); // line_order → scene.id
+    let sceneIdx = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (l.line_type !== 'heading') continue;
+      sceneIdx++;
+      const existing = await this.getRows<{ id: number }>(
+        `SELECT id FROM scene WHERE LOWER(name) = LOWER(?) LIMIT 1`, [l.content]
+      );
+      let sceneId: number;
+      if (existing.length > 0) {
+        sceneId = existing[0].id;
+        await this.exec(`UPDATE scene SET scene_number = ?, updated_at = datetime('now') WHERE id = ?`, [sceneIdx, sceneId]);
+      } else {
+        await this.exec(
+          `INSERT INTO scene (name, scene_number) VALUES (?, ?)`, [l.content, sceneIdx]
+        );
+        const r = await this.getRows<{ id: number }>('SELECT last_insert_rowid() as id');
+        sceneId = r[0].id;
+      }
+      sceneLineMap.set(i, sceneId);
+      // Back-patch scene_id on the line
+      await this.exec(`UPDATE screenplay_lines SET scene_id = ? WHERE line_order = ?`, [sceneId, i]);
+    }
+
+    // 2. For each committed annotation, ensure the entity exists
+    const committedAnnotations = annotations.filter(a => a.entity_state === 'committed' && a.entity_id != null);
+    for (const a of committedAnnotations) {
+      if (a.entity_type === 'character' || a.entity_type === 'location') {
+        // Just ensure entity isn't soft-deleted
+        await this.exec(
+          `UPDATE ${a.entity_type} SET deleted = 0 WHERE id = ?`, [a.entity_id]
+        );
+      }
+    }
+
+    // 3. Rebuild scene_character junction from committed character cues
+    // Find current scenes and clear
+    const allSceneIds = [...sceneLineMap.values()];
+    if (allSceneIds.length > 0) {
+      await this.exec(
+        `DELETE FROM scene_character WHERE scene_id IN (${allSceneIds.map(() => '?').join(',')})`,
+        allSceneIds
+      );
+    }
+
+    // Walk character lines and link to their current scene
+    let currentSceneId: number | null = null;
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (sceneLineMap.has(i)) currentSceneId = sceneLineMap.get(i)!;
+      if (l.line_type !== 'character' || currentSceneId == null) continue;
+
+      // Find committed annotation on this character line
+      const ann = committedAnnotations.find(
+        a => a.line_order === i && a.entity_type === 'character'
+      );
+      if (!ann?.entity_id) continue;
+
+      // Upsert scene_character
+      const exists = await this.getRows<{ id: number }>(
+        `SELECT id FROM scene_character WHERE scene_id = ? AND character_id = ? LIMIT 1`,
+        [currentSceneId, ann.entity_id]
+      );
+      if (exists.length === 0) {
+        await this.exec(
+          `INSERT INTO scene_character (scene_id, character_id) VALUES (?, ?)`,
+          [currentSceneId, ann.entity_id]
+        );
+      }
+
+      // Back-patch character_id on the line
+      await this.exec(
+        `UPDATE screenplay_lines SET character_id = ? WHERE line_order = ?`,
+        [ann.entity_id, i]
+      );
+    }
+
+    // 4. Back-patch location_id on heading lines via committed location annotations
+    for (const a of committedAnnotations) {
+      if (a.entity_type !== 'location') continue;
+      const headingLine = lines[a.line_order];
+      if (headingLine?.line_type === 'heading') {
+        await this.exec(
+          `UPDATE screenplay_lines SET location_id = ? WHERE line_order = ?`,
+          [a.entity_id, a.line_order]
+        );
+      }
     }
   }
 

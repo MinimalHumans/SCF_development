@@ -1,4 +1,5 @@
-import { ViewPlugin, ViewUpdate, Decoration, DecorationSet, EditorView } from '@codemirror/view';
+import { ViewPlugin, ViewUpdate, Decoration, EditorView } from '@codemirror/view';
+import type { DecorationSet } from '@codemirror/view';
 import { RangeSetBuilder } from '@codemirror/state';
 
 // =============================================================================
@@ -108,47 +109,40 @@ export const fountainTheme = EditorView.baseTheme({
   '.cm-fountain-heading': {
     fontWeight: 'bold',
     textTransform: 'uppercase',
-    marginTop: '1.5em',
-    display: 'block',
+    paddingTop: '1.5em',
   },
   '.cm-fountain-character': {
     textAlign: 'center',
     textTransform: 'uppercase',
-    marginTop: '1em',
-    display: 'block',
+    paddingTop: '1em',
     paddingLeft: '4em',
   },
   '.cm-fountain-dialogue': {
     paddingLeft: '2.5em',
     paddingRight: '2.5em',
-    display: 'block',
   },
   '.cm-fountain-parenthetical': {
     paddingLeft: '3.5em',
     fontStyle: 'italic',
-    display: 'block',
   },
   '.cm-fountain-transition': {
     textAlign: 'right',
     textTransform: 'uppercase',
-    display: 'block',
+    paddingTop: '1em',
   },
   '.cm-fountain-section': {
     fontWeight: 'bold',
     fontSize: '1.05em',
-    display: 'block',
+    paddingTop: '1em',
   },
   '.cm-fountain-synopsis': {
     fontStyle: 'italic',
     opacity: '0.6',
-    display: 'block',
   },
   '.cm-fountain-centered': {
     textAlign: 'center',
-    display: 'block',
   },
   '.cm-fountain-boneyard': {
     opacity: '0.4',
-    display: 'block',
   },
 });

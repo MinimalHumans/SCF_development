@@ -31,21 +31,80 @@ const safeExec = (sql: any) => {
 const initSchema = () => {
   log('Initializing schema...');
   
-  // Create project table first as it's the context
-  safeExec(`
-    CREATE TABLE IF NOT EXISTS project (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      logline TEXT,
-      genre_tone TEXT,
-      target_runtime TEXT,
-      setting_period TEXT,
-      notes TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
+  // 1. Generic Entity Tables from schema.json (Character, Location, Prop, etc.)
+  for (const [entityName, entityDef] of Object.entries(schema)) {
+    const columns = [
+      "id INTEGER PRIMARY KEY AUTOINCREMENT",
+      "created_at TEXT DEFAULT (datetime('now'))",
+      "updated_at TEXT DEFAULT (datetime('now'))",
+    ];
 
+    for (const field of (entityDef as any).fields) {
+      let col = `${field.name} ${fieldTypeToSql(field.field_type)}`;
+      if (field.required) {
+        col += " NOT NULL";
+      }
+      if (field.default !== null && field.default !== undefined) {
+        if (typeof field.default === 'string') {
+          col += ` DEFAULT '${field.default}'`;
+        } else {
+          col += ` DEFAULT ${field.default}`;
+        }
+      }
+      columns.push(col);
+    }
+
+    const sql = `CREATE TABLE IF NOT EXISTS ${entityName} (\n  ${columns.join(",\n  ")}\n)`;
+    safeExec(sql);
+
+    // Seed project table if it's the one we just created and it's empty
+    if (entityName === 'project') {
+        let count = 0;
+        safeExec({
+            sql: "SELECT COUNT(*) as cnt FROM project",
+            rowMode: 'object',
+            callback: (row: any) => { count = row.cnt; }
+        });
+        if (count === 0) {
+            log('Seeding initial project record...');
+            safeExec("INSERT INTO project (name) VALUES ('Untitled Project')");
+        }
+    }
+
+    // Migration for generic fields
+    const existingColumns: Set<string> = new Set();
+    safeExec({
+      sql: `PRAGMA table_info(${entityName})`,
+      rowMode: 'object',
+      callback: (row: any) => existingColumns.add(row.name)
+    });
+
+    for (const field of (entityDef as any).fields) {
+      if (!existingColumns.has(field.name)) {
+        let alter = `ALTER TABLE ${entityName} ADD COLUMN ${field.name} ${fieldTypeToSql(field.field_type)}`;
+        if (field.default !== null && field.default !== undefined) {
+          if (typeof field.default === 'string') {
+            alter += ` DEFAULT '${field.default}'`;
+          } else {
+            alter += ` DEFAULT ${field.default}`;
+          }
+        }
+        safeExec(alter);
+      }
+    }
+  }
+
+  // 2. Soft-delete support on entity tables (migration guard)
+  for (const tbl of ['character', 'location', 'prop']) {
+    const cols: Set<string> = new Set();
+    safeExec({ sql: `PRAGMA table_info(${tbl})`, rowMode: 'object', callback: (r: any) => cols.add(r.name) });
+    if (!cols.has('deleted')) {
+      safeExec(`ALTER TABLE ${tbl} ADD COLUMN deleted BOOLEAN NOT NULL DEFAULT 0`);
+    }
+  }
+
+  // 3. Editor-specific tables and their internal migrations
+  
   // Screenplay Editor tables
   safeExec(`
     CREATE TABLE IF NOT EXISTS screenplay_lines (
@@ -172,6 +231,7 @@ const initSchema = () => {
   safeExec(`
     CREATE TABLE IF NOT EXISTS screenplay_line_annotations (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL DEFAULT 1,
       line_order INTEGER NOT NULL,
       char_from INTEGER NOT NULL,
       char_to INTEGER NOT NULL,
@@ -182,89 +242,53 @@ const initSchema = () => {
     )
   `);
 
-  safeExec(`CREATE INDEX IF NOT EXISTS idx_sla_line ON screenplay_line_annotations(line_order)`);
+  safeExec(`CREATE INDEX IF NOT EXISTS idx_sla_line ON screenplay_line_annotations(project_id, line_order)`);
 
-  // Act groupings (navigator-only, no in-text marker)
+  // Migration: add project_id if existing DB lacks it
+  {
+    const slaCols: Set<string> = new Set();
+    safeExec({ sql: 'PRAGMA table_info(screenplay_line_annotations)', rowMode: 'object', callback: (r: any) => slaCols.add(r.name) });
+    if (!slaCols.has('project_id')) {
+      safeExec('ALTER TABLE screenplay_line_annotations ADD COLUMN project_id INTEGER NOT NULL DEFAULT 1');
+    }
+  }
+
+  // Act groupings
   safeExec(`
     CREATE TABLE IF NOT EXISTS scene_act_groups (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL DEFAULT 1,
       act_name TEXT NOT NULL DEFAULT 'Act',
       act_order INTEGER NOT NULL DEFAULT 0,
       scene_ids JSON NOT NULL DEFAULT '[]'
     )
   `);
 
-  // Soft-delete support on entity tables (migration guard)
-  for (const tbl of ['character', 'location', 'prop']) {
-    const cols: Set<string> = new Set();
-    safeExec({ sql: `PRAGMA table_info(${tbl})`, rowMode: 'object', callback: (r: any) => cols.add(r.name) });
-    if (!cols.has('deleted')) {
-      safeExec(`ALTER TABLE ${tbl} ADD COLUMN deleted BOOLEAN NOT NULL DEFAULT 0`);
+  // Migration: add project_id if existing DB lacks it
+  {
+    const sagCols: Set<string> = new Set();
+    safeExec({ sql: 'PRAGMA table_info(scene_act_groups)', rowMode: 'object', callback: (r: any) => sagCols.add(r.name) });
+    if (!sagCols.has('project_id')) {
+      safeExec('ALTER TABLE scene_act_groups ADD COLUMN project_id INTEGER NOT NULL DEFAULT 1');
     }
   }
 
-  // Generic Entity Tables from schema.json
-  for (const [entityName, entityDef] of Object.entries(schema)) {
-    const columns = [
-      "id INTEGER PRIMARY KEY AUTOINCREMENT",
-      "created_at TEXT DEFAULT (datetime('now'))",
-      "updated_at TEXT DEFAULT (datetime('now'))",
-    ];
+  // Version annotation snapshots
+  safeExec(`
+    CREATE TABLE IF NOT EXISTS screenplay_version_annotations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      version_id INTEGER NOT NULL REFERENCES screenplay_versions(id) ON DELETE CASCADE,
+      line_order INTEGER NOT NULL,
+      char_from INTEGER NOT NULL,
+      char_to INTEGER NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_state TEXT NOT NULL,
+      entity_id INTEGER,
+      staged_local_id TEXT
+    )
+  `);
 
-    for (const field of (entityDef as any).fields) {
-      let col = `${field.name} ${fieldTypeToSql(field.field_type)}`;
-      if (field.required) {
-        col += " NOT NULL";
-      }
-      if (field.default !== null && field.default !== undefined) {
-        if (typeof field.default === 'string') {
-          col += ` DEFAULT '${field.default}'`;
-        } else {
-          col += ` DEFAULT ${field.default}`;
-        }
-      }
-      columns.push(col);
-    }
-
-    const sql = `CREATE TABLE IF NOT EXISTS ${entityName} (\n  ${columns.join(",\n  ")}\n)`;
-    safeExec(sql);
-
-    // Seed project table if it's the one we just created and it's empty
-    if (entityName === 'project') {
-        let count = 0;
-        safeExec({
-            sql: "SELECT COUNT(*) as cnt FROM project",
-            rowMode: 'object',
-            callback: (row: any) => { count = row.cnt; }
-        });
-        if (count === 0) {
-            log('Seeding initial project record...');
-            safeExec("INSERT INTO project (name) VALUES ('Untitled Project')");
-        }
-    }
-
-    // Migration
-    const existingColumns: Set<string> = new Set();
-    safeExec({
-      sql: `PRAGMA table_info(${entityName})`,
-      rowMode: 'object',
-      callback: (row: any) => existingColumns.add(row.name)
-    });
-
-    for (const field of (entityDef as any).fields) {
-      if (!existingColumns.has(field.name)) {
-        let alter = `ALTER TABLE ${entityName} ADD COLUMN ${field.name} ${fieldTypeToSql(field.field_type)}`;
-        if (field.default !== null && field.default !== undefined) {
-          if (typeof field.default === 'string') {
-            alter += ` DEFAULT '${field.default}'`;
-          } else {
-            alter += ` DEFAULT ${field.default}`;
-          }
-        }
-        safeExec(alter);
-      }
-    }
-  }
+  safeExec(`CREATE INDEX IF NOT EXISTS idx_sva_version ON screenplay_version_annotations(version_id)`);
 
   log('Schema initialization complete.');
 };

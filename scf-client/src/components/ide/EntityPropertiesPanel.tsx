@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { User, MapPin, Package, Link2, Edit2, Unlink, RefreshCw, X } from 'lucide-react';
+import { User, MapPin, Package, Link2, Edit2, Unlink, RefreshCw, X, Check } from 'lucide-react';
 import { EditorView } from '@codemirror/view';
 import { startCompletion } from '@codemirror/autocomplete';
 import { db } from '../../db/Database';
+import type { EntitySpan, EntityType } from './EntityStateField';
 import {
-  EntitySpan,
   spanAtPos,
-  EntityType,
   commitEntitySpanEffect,
   unlinkEntitySpanEffect,
   addEntitySpanEffect,

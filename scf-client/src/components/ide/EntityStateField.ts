@@ -3,10 +3,10 @@ import {
   StateEffect,
   EditorState,
   Transaction,
-  RangeSet,
   RangeSetBuilder,
 } from '@codemirror/state';
-import { Decoration, DecorationSet, EditorView } from '@codemirror/view';
+import { Decoration, EditorView } from '@codemirror/view';
+import type { DecorationSet } from '@codemirror/view';
 
 // =============================================================================
 // Types
