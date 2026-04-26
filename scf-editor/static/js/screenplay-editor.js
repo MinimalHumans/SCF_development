@@ -1,661 +1,184 @@
 /**
- * SCF Screenplay Editor v2 — SQLite-Native
+ * SCF Screenplay Editor v3
  * ==========================================
- * 
- * Source of truth: screenplay_lines table (structured rows with entity FKs)
- * Editor: CodeMirror 6 with parallel metadata
- * 
- * Load: GET /api/screenplay-v2/load → lines array → CodeMirror text
- * Save: CodeMirror text → classify lines → PUT /api/screenplay-v2/save
- * 
- * Tab cycles modes: Description → Scene → Character → Dialogue → Transition
- * Autocomplete: Character mode → character names, Scene mode → locations
- * Navigator: DB queries via /api/screenplay-v2/scenes|characters|locations
- * Ctrl+P: Tag selected text as a prop (inline prop annotations)
- * 
- * STRUCTURAL SPACING: Visual gaps between screenplay elements are rendered
- * via CSS margins, not blank lines. The document contains only content lines
- * and intentional user-inserted blanks.
+ *
+ * MODEL
+ * -----
+ * The editor's document contains ONLY real content lines. No blanks.
+ * Visual spacing between blocks is provided entirely by CSS gap classes
+ * applied via line decorations.
+ *
+ * Each line has a stored type held in a `StateField`. Types are STICKY:
+ * they only change when the user does something explicit (Tab, Enter,
+ * Backspace/Delete merge, autocomplete, server load). Typing characters
+ * does NOT reclassify. There is no Fountain runtime classifier; the
+ * `classifyAllLines` helper is only used as a fallback for legacy data.
+ *
+ * Position mapping uses assoc=-1 so old line starts still map to new
+ * line starts even when a character is typed at line start. This was
+ * the bug in v2: with assoc=1, typing the first character of a line
+ * caused the type to revert to a fresh classification.
+ *
+ * LOAD/SAVE
+ * ---------
+ * Load: any blank-empty line in the server response is dropped. The
+ *       remaining lines + their types go straight into the editor.
+ * Save: the editor's content is sent as-is. Empty lines (which shouldn't
+ *       exist post-load, but we coerce defensively) are typed 'blank'.
+ *       The client sends NO blank-content lines beyond that.
+ *
+ * If the server injects structural blanks during save processing, they
+ * get filtered out on the next load. The client never propagates them
+ * back into editor state.
  */
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CodeMirror Imports
+// Imports
 // ═══════════════════════════════════════════════════════════════════════════
-
 const CM_STATE_DEP = '@codemirror/state@6.5.2';
-const { EditorState, StateEffect } = await import(`https://esm.sh/@codemirror/state@6.5.2`);
-const { EditorView, keymap, placeholder, drawSelection, highlightActiveLine, Decoration, ViewPlugin, MatchDecorator } =
+const { EditorState, StateEffect, StateField } = await import(`https://esm.sh/@codemirror/state@6.5.2`);
+const { EditorView, keymap, placeholder, drawSelection, highlightActiveLine, Decoration, ViewPlugin } =
     await import(`https://esm.sh/@codemirror/view@6.36.5?deps=${CM_STATE_DEP}`);
 const { defaultKeymap, history, historyKeymap } =
     await import(`https://esm.sh/@codemirror/commands@6.8.0?deps=${CM_STATE_DEP}`);
-const { StreamLanguage } =
-    await import(`https://esm.sh/@codemirror/language@6.10.8?deps=${CM_STATE_DEP}`);
 
-console.log('[SCF-v2] Modules loaded');
+console.log('[SCF-v3] Modules loaded');
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Patterns
+// Patterns (used only by classifyAllLines fallback)
 // ═══════════════════════════════════════════════════════════════════════════
 const HEADING_RE = /^(\.(?=[A-Z])|(?:INT|EXT|EST|I\/E|INT\.\/EXT\.)[\s./])/i;
 const CHARACTER_CUE_RE = /^[A-Z][A-Z0-9 ._\-']+(?:\s*\((?:V\.?O\.?|O\.?S\.?|CONT'?D?|O\.?C\.?)\))?$/;
 const TRANSITION_RE = /^[A-Z\s]+(?:TO|IN|OUT|UP):?\s*$/;
-const FORCED_TRANSITION_RE = /^>\s*.+/;
 const PARENTHETICAL_RE = /^\s*\(.*\)\s*$/;
-const TITLE_KEY_RE = /^(Title|Credit|Author|Authors|Source|Notes|Draft date|Date|Contact|Copyright|Revision|Font)\s*:/i;
-const CENTERED_RE = /^>.*<$/;
-const SECTION_RE = /^#{1,6}\s/;
-const SYNOPSIS_RE = /^=\s/;
-
-// Character extension stripping
-const CHAR_EXT_RE = /\s*\((?:V\.?O\.?|O\.?S\.?|O\.?C\.?|CONT'?D?)\)\s*$/i;
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Line Classification
-// ═══════════════════════════════════════════════════════════════════════════
-
-function classifyLine(trimmed, st) {
-    if (trimmed === '') { st.prevBlank = true; st.inDialogue = false; return 'blank'; }
-    if (st.inBoneyard) { if (trimmed.includes('*/')) st.inBoneyard = false; st.prevBlank = false; return 'boneyard'; }
-    if (trimmed.startsWith('/*')) { st.inBoneyard = true; if (trimmed.includes('*/')) st.inBoneyard = false; st.prevBlank = false; return 'boneyard'; }
-    if (st.inTitlePage) {
-        if (TITLE_KEY_RE.test(trimmed)) { st.prevBlank = false; return 'titlekey'; }
-        if (!st.prevBlank) { st.prevBlank = false; return 'titlevalue'; }
-        st.inTitlePage = false;
-    }
-    if (HEADING_RE.test(trimmed)) { st.prevBlank = false; st.inDialogue = false; return 'heading'; }
-    if (SECTION_RE.test(trimmed)) { st.prevBlank = false; return 'section'; }
-    if (SYNOPSIS_RE.test(trimmed)) { st.prevBlank = false; return 'synopsis'; }
-    if (CENTERED_RE.test(trimmed)) { st.prevBlank = false; return 'centered'; }
-    if (FORCED_TRANSITION_RE.test(trimmed) && !CENTERED_RE.test(trimmed)) { st.prevBlank = false; return 'transition'; }
-    if (st.inDialogue && PARENTHETICAL_RE.test(trimmed)) { st.prevBlank = false; return 'parenthetical'; }
-    if (st.inDialogue) { st.prevBlank = false; return 'dialogue'; }
-    if (st.prevBlank && TRANSITION_RE.test(trimmed) && trimmed.length > 2) { st.prevBlank = false; return 'transition'; }
-    if (st.prevBlank && CHARACTER_CUE_RE.test(trimmed) && trimmed.length > 1 && !TRANSITION_RE.test(trimmed)) {
-        st.prevBlank = false; st.inDialogue = true; return 'character';
-    }
-    if (trimmed.startsWith('@')) { st.prevBlank = false; st.inDialogue = true; return 'character'; }
-    st.prevBlank = false; st.inDialogue = false; return 'action';
-}
-
-/** Classify all lines in a text string. Returns array of {line_type, content}. */
-function classifyAllLines(text) {
-    const rawLines = text.split('\n');
-    const st = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
-    return rawLines.map(raw => {
-        const trimmed = raw.trim();
-        const line_type = classifyLine(trimmed, st);
-        return { line_type, content: trimmed };
-    });
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Entity Cache — content-addressed ID lookup
-// ═══════════════════════════════════════════════════════════════════════════
-
-const entityCache = new Map();
-
-function cacheKey(lineType, content) {
-    return `${lineType}:${content.trim()}`;
-}
-
-function cacheEntityIds(lineType, content, ids) {
-    const key = cacheKey(lineType, content);
-    const existing = entityCache.get(key) || {};
-    entityCache.set(key, { ...existing, ...ids });
-}
-
-function getCachedIds(lineType, content) {
-    return entityCache.get(cacheKey(lineType, content)) || {};
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Fountain StreamLanguage (syntax coloring)
-// ═══════════════════════════════════════════════════════════════════════════
-const fountainStreamMode = {
-    name: 'fountain',
-    startState() { return { inBoneyard: false, inTitlePage: true, prevLineBlank: true, inDialogue: false }; },
-    copyState(s) { return { ...s }; },
-    token(stream, state) {
-        if (state.inBoneyard) { const ci = stream.string.indexOf('*/', stream.pos); if (ci >= 0) { stream.pos = ci + 2; state.inBoneyard = false; } else stream.skipToEnd(); return 'fountain-boneyard'; }
-        if (stream.match('/*')) { state.inBoneyard = true; const ci = stream.string.indexOf('*/', stream.pos); if (ci >= 0) { stream.pos = ci + 2; state.inBoneyard = false; } else stream.skipToEnd(); return 'fountain-boneyard'; }
-        if (stream.sol()) {
-            const trimmed = stream.string.trim();
-            if (trimmed === '') { stream.skipToEnd(); state.prevLineBlank = true; state.inDialogue = false; return null; }
-            if (state.inTitlePage) { if (TITLE_KEY_RE.test(stream.string)) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-titleKey'; } if (!state.prevLineBlank) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-titleValue'; } if (state.prevLineBlank && !TITLE_KEY_RE.test(stream.string)) state.inTitlePage = false; }
-            if (HEADING_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return 'fountain-heading'; }
-            if (SECTION_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-section'; }
-            if (SYNOPSIS_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-synopsis'; }
-            if (CENTERED_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-centered'; }
-            if (FORCED_TRANSITION_RE.test(trimmed) && !CENTERED_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-transition'; }
-            if (state.inDialogue && PARENTHETICAL_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-parenthetical'; }
-            if (state.inDialogue) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-dialogue'; }
-            if (state.prevLineBlank && TRANSITION_RE.test(trimmed) && trimmed.length > 2) { stream.skipToEnd(); state.prevLineBlank = false; return 'fountain-transition'; }
-            if (state.prevLineBlank && CHARACTER_CUE_RE.test(trimmed) && trimmed.length > 1 && !TRANSITION_RE.test(trimmed)) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = true; return 'fountain-character'; }
-            if (trimmed.startsWith('@')) { stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = true; return 'fountain-character'; }
-            stream.skipToEnd(); state.prevLineBlank = false; state.inDialogue = false; return null;
-        }
-        stream.skipToEnd(); return null;
-    },
-    blankLine(state) { state.prevLineBlank = true; state.inDialogue = false; },
-};
-const fountainLanguage = StreamLanguage.define(fountainStreamMode);
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Line Type Registry
-// ═══════════════════════════════════════════════════════════════════════════
-
-let lineTypes = [];
-let lineContents = [];
-
-function modeToLineType(mode) {
-    return { description: 'action', scene: 'heading', character: 'character',
-             dialogue: 'dialogue', transition: 'transition' }[mode] || 'action';
-}
-
-function lineTypeToMode(type) {
-    return { heading: 'scene', character: 'character', dialogue: 'dialogue',
-             parenthetical: 'dialogue', transition: 'transition',
-             action: 'description' }[type] || 'description';
-}
-
-function adjustState(st, type) {
-    switch (type) {
-        case 'heading':    st.inDialogue = false; st.prevBlank = false; break;
-        case 'character':  st.inDialogue = true;  st.prevBlank = false; break;
-        case 'dialogue':   st.prevBlank = false; break;
-        case 'parenthetical': st.prevBlank = false; break;
-        case 'transition': st.inDialogue = false; st.prevBlank = false; break;
-        case 'action':     st.inDialogue = false; st.prevBlank = false; break;
-        case 'blank':      st.prevBlank = true; st.inDialogue = false; break;
-        default:           st.prevBlank = false; break;
-    }
-}
-
-/** Repair pass — only for large changes (paste, import). */
-function repairDialoguePairs(types, contents, cursorIdx) {
-    const n = types.length;
-    for (let i = 0; i < n; i++) {
-        if (types[i] !== 'action') continue;
-        const t = contents[i];
-        if (!t) continue;
-        if (!CHARACTER_CUE_RE.test(t) || t.length <= 1 || TRANSITION_RE.test(t)) continue;
-        const prevType = i > 0 ? types[i - 1] : 'blank';
-        const prevOk = prevType === 'blank' || prevType === 'action' || prevType === 'dialogue'
-            || prevType === 'parenthetical' || prevType === 'heading' || prevType === 'transition';
-        if (!prevOk) continue;
-        const nextIdx = i + 1;
-        if (nextIdx >= n || types[nextIdx] === 'blank') continue;
-        if (types[nextIdx] === 'heading' || types[nextIdx] === 'transition') continue;
-        types[i] = 'character';
-        for (let j = i + 1; j < n; j++) {
-            if (j === cursorIdx) continue;
-            if (types[j] === 'blank' || types[j] === 'heading' || types[j] === 'transition') break;
-            if (PARENTHETICAL_RE.test(contents[j])) { types[j] = 'parenthetical'; }
-            else { types[j] = 'dialogue'; }
-        }
-    }
-    for (let i = 0; i < n; i++) {
-        if (i === cursorIdx) continue;
-        if (types[i] !== 'character') continue;
-        let hasDialogue = false;
-        for (let j = i + 1; j < n; j++) {
-            if (types[j] === 'dialogue' || types[j] === 'parenthetical') { hasDialogue = true; break; }
-            if (types[j] === 'blank' || types[j] === 'heading' || types[j] === 'character' || types[j] === 'transition') break;
-        }
-        if (!hasDialogue) types[i] = 'action';
-    }
-    for (let i = 0; i < n; i++) {
-        if (i === cursorIdx) continue;
-        if (types[i] !== 'dialogue' && types[i] !== 'parenthetical') continue;
-        let hasCharacter = false;
-        for (let j = i - 1; j >= 0; j--) {
-            if (types[j] === 'character') { hasCharacter = true; break; }
-            if (types[j] === 'dialogue' || types[j] === 'parenthetical') continue;
-            break;
-        }
-        if (!hasCharacter) types[i] = 'action';
-    }
-}
-
-/** Rebuild lineTypes using content-keyed map.
- *  Cursor line override only when typing (not deleting).
- *  Mode syncs to resolved type after structural deletes.
- */
-function rebuildLineTypes(state) {
-    const doc = state.doc;
-    const cursorLine = doc.lineAt(state.selection.main.head).number;
-    const prevLineCount = lineTypes.length;
-    const linesDeleted = doc.lines < prevLineCount;
-
-    const contentTypeMap = new Map();
-    for (let i = 0; i < lineTypes.length; i++) {
-        const type = lineTypes[i];
-        const content = lineContents[i];
-        if (type && type !== 'blank' && content) {
-            if (!contentTypeMap.has(content)) contentTypeMap.set(content, []);
-            contentTypeMap.get(content).push({ type, oldPos: i });
-        }
-    }
-
-    const st = { prevBlank: true, inDialogue: false, inBoneyard: false, inTitlePage: true };
-    const newTypes = [];
-    const newContents = [];
-    let mergeTypeUsed = false;
-
-    for (let i = 1; i <= doc.lines; i++) {
-        const trimmed = doc.line(i).text.trim();
-        const contentType = classifyLine(trimmed, st);
-        let actualType;
-
-        if (trimmed === '') {
-            actualType = 'blank';
-        } else if (i === cursorLine && pendingMergeType) {
-            actualType = pendingMergeType;
-            mergeTypeUsed = true;
-        } else if (i === cursorLine && !linesDeleted && !isLoading) {
-            actualType = modeToLineType(currentMode);
-        } else {
-            const candidates = contentTypeMap.get(trimmed);
-            if (candidates && candidates.length > 0) {
-                const newIdx = i - 1;
-                let bestIdx = 0;
-                let bestDist = Math.abs(candidates[0].oldPos - newIdx);
-                for (let j = 1; j < candidates.length; j++) {
-                    const dist = Math.abs(candidates[j].oldPos - newIdx);
-                    if (dist < bestDist) { bestDist = dist; bestIdx = j; }
-                }
-                actualType = candidates[bestIdx].type;
-                candidates.splice(bestIdx, 1);
-            } else {
-                actualType = contentType;
-            }
-        }
-
-        if (actualType !== contentType) adjustState(st, actualType);
-        newTypes.push(actualType);
-        newContents.push(trimmed);
-    }
-
-    const lineCountDelta = Math.abs(doc.lines - prevLineCount);
-    if (lineCountDelta > 3) {
-        repairDialoguePairs(newTypes, newContents, cursorLine - 1);
-    }
-
-    lineTypes = newTypes;
-    lineContents = newContents;
-
-    if (linesDeleted && !mergeTypeUsed) {
-        const cursorIdx = cursorLine - 1;
-        if (cursorIdx >= 0 && cursorIdx < newTypes.length) {
-            const resolvedType = newTypes[cursorIdx];
-            if (resolvedType && resolvedType !== 'blank') {
-                const newMode = lineTypeToMode(resolvedType);
-                if (newMode !== currentMode) setMode(newMode);
-            }
-        }
-    }
-
-    pendingMergeType = null;
-}
-
-function initLineTypesFromServer(serverLines) {
-    lineTypes = serverLines.map(l => l.line_type || 'action');
-    lineContents = serverLines.map(l => (l.content || '').trim());
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Structural Spacing — Gap class resolver
-// ═══════════════════════════════════════════════════════════════════════════
-
-const _DIALOGUE_BLOCK_TYPES = new Set(['dialogue', 'parenthetical', 'character']);
-
-function getGapClass(currType, prevType) {
-    if (!prevType) return null;
-    if (currType === 'heading') return 'cm-scf-gap-scene';
-    if (currType === 'character') {
-        if (prevType !== 'blank') return 'cm-scf-gap-block';
-        return null;
-    }
-    if (currType === 'transition') return 'cm-scf-gap-element';
-    if (currType === 'action' && (prevType === 'dialogue' || prevType === 'parenthetical')) return 'cm-scf-gap-element';
-    if (currType === 'action' && prevType === 'transition') return 'cm-scf-gap-element';
-    return null;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Line Decoration Plugin
-// ═══════════════════════════════════════════════════════════════════════════
-const LINE_CLS = {
-    heading: 'cm-scf-heading', action: 'cm-scf-action', character: 'cm-scf-character',
-    dialogue: 'cm-scf-dialogue', parenthetical: 'cm-scf-parenthetical',
-    transition: 'cm-scf-transition', titlekey: 'cm-scf-titleKey', titlevalue: 'cm-scf-titleValue',
-    section: 'cm-scf-section', synopsis: 'cm-scf-synopsis', centered: 'cm-scf-centered',
-    boneyard: 'cm-scf-boneyard',
-};
 
 const LINES_PER_PAGE = 55;
 
-const lineDecorationPlugin = ViewPlugin.fromClass(class {
-    constructor(view) { this.decorations = this.build(view); }
-    update(update) { if (update.docChanged || update.viewportChanged || update.selectionSet) this.decorations = this.build(update.view); }
-    build(view) {
-        const decos = [], doc = view.state.doc;
-        const cursorLine = doc.lineAt(view.state.selection.main.head).number;
-        for (let i = 1; i <= doc.lines; i++) {
-            const classes = [];
-            if (i !== cursorLine) {
-                const type = (i - 1 < lineTypes.length) ? lineTypes[i - 1] : 'action';
-                const cls = LINE_CLS[type];
-                if (cls) classes.push(cls);
-            }
-            const currType = (i - 1 < lineTypes.length) ? lineTypes[i - 1] : 'action';
-            const prevType = (i > 1 && i - 2 < lineTypes.length) ? lineTypes[i - 2] : null;
-            const gapCls = getGapClass(currType, prevType);
-            if (gapCls) classes.push(gapCls);
-            if (i % LINES_PER_PAGE === 0 && i < doc.lines) {
-                const pageNum = i / LINES_PER_PAGE;
-                classes.push('cm-scf-pagebreak');
-                const combined = classes.join(' ');
-                decos.push(Decoration.line({ attributes: { class: combined, 'data-page': String(pageNum) } }).range(doc.line(i).from));
-                continue;
-            }
-            if (classes.length > 0) {
-                decos.push(Decoration.line({ attributes: { class: classes.join(' ') } }).range(doc.line(i).from));
-            }
-        }
-        return Decoration.set(decos, true);
+// ═══════════════════════════════════════════════════════════════════════════
+// Classifier (fallback only — used when server returns content w/o types)
+// ═══════════════════════════════════════════════════════════════════════════
+function classifyLine(trimmed, st) {
+    if (trimmed === '') { st.prevBlank = true; st.inDialogue = false; return 'blank'; }
+    if (HEADING_RE.test(trimmed)) { st.prevBlank = false; st.inDialogue = false; return 'heading'; }
+    if (st.inDialogue && PARENTHETICAL_RE.test(trimmed)) { st.prevBlank = false; return 'parenthetical'; }
+    if (st.inDialogue) { st.prevBlank = false; return 'dialogue'; }
+    if (st.prevBlank && TRANSITION_RE.test(trimmed) && trimmed.length > 2) { st.prevBlank = false; return 'transition'; }
+    if (st.prevBlank && CHARACTER_CUE_RE.test(trimmed) && trimmed.length > 1) {
+        st.prevBlank = false; st.inDialogue = true; return 'character';
     }
-}, { decorations: v => v.decorations });
+    st.prevBlank = false; st.inDialogue = false; return 'action';
+}
+function classifyAllLines(doc) {
+    const st = { prevBlank: true, inDialogue: false };
+    const out = new Array(doc.lines);
+    for (let i = 1; i <= doc.lines; i++) out[i - 1] = classifyLine(doc.line(i).text.trim(), st);
+    return out;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Prop Tags — Inline Annotations (Ctrl+P)
+// Entity Cache
 // ═══════════════════════════════════════════════════════════════════════════
-
-const propTagsChanged = StateEffect.define();
-let propTags = [];       // [{tag_id, tagged_text, prop_id, prop_name}]
-let propPopoverEl = null;
-
-async function fetchPropTags() {
-    try {
-        const res = await fetch('/api/screenplay-v2/prop-tags');
-        if (!res.ok) return;
-        propTags = await res.json();
-        // Force decoration rebuild via StateEffect
-        if (editorView) {
-            editorView.dispatch({ effects: propTagsChanged.of(null) });
-        }
-    } catch (e) { console.error('Prop tags fetch failed:', e); }
+const entityCache = new Map();
+const cacheKey = (lineType, content) => `${lineType}:${content.trim()}`;
+function cacheEntityIds(lineType, content, ids) {
+    const k = cacheKey(lineType, content);
+    entityCache.set(k, { ...(entityCache.get(k) || {}), ...ids });
 }
+const getCachedIds = (lineType, content) => entityCache.get(cacheKey(lineType, content)) || {};
 
-// ── Prop Highlight Plugin ──
-// Highlights all occurrences of tagged prop text with a dotted underline.
+// ═══════════════════════════════════════════════════════════════════════════
+// StateField — sticky line types
+// ═══════════════════════════════════════════════════════════════════════════
+const setLineTypeAtPosEffect = StateEffect.define();
+const setAllLineTypesEffect = StateEffect.define();
 
-const propHighlightPlugin = ViewPlugin.fromClass(class {
-    constructor(view) {
-        this.lastTagCount = -1;
-        this.decorations = this.build(view);
-    }
-    update(update) {
-        const effectFired = update.transactions.some(
-            t => t.effects.some(e => e.is(propTagsChanged))
-        );
-        if (update.docChanged || update.viewportChanged || effectFired) {
-            this.decorations = this.build(update.view);
-        }
-    }
-    build(view) {
-        if (!propTags.length) return Decoration.none;
-
-        // Sort longest first so "machine gun" matches before "gun"
-        const sorted = [...propTags].sort(
-            (a, b) => b.tagged_text.length - a.tagged_text.length
-        );
-        const escaped = sorted.map(
-            t => t.tagged_text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        );
-        if (!escaped.length) return Decoration.none;
-
-        const re = new RegExp('\\b(' + escaped.join('|') + ')\\b', 'gi');
-        const decos = [];
-
-        for (const { from, to } of view.visibleRanges) {
-            const text = view.state.doc.sliceString(from, to);
-            let m;
-            while ((m = re.exec(text)) !== null) {
-                const start = from + m.index;
-                const end = start + m[0].length;
-                decos.push(Decoration.mark({
-                    class: 'cm-prop-highlight',
-                }).range(start, end));
+const lineTypesField = StateField.define({
+    create(state) {
+        return new Array(state.doc.lines).fill('action');
+    },
+    update(oldTypes, tr) {
+        // (1) Authoritative bulk replacement (load) — bypass mapping.
+        for (const e of tr.effects) {
+            if (e.is(setAllLineTypesEffect)) {
+                const incoming = e.value || [];
+                const out = new Array(tr.state.doc.lines);
+                for (let i = 0; i < out.length; i++) out[i] = incoming[i] || 'action';
+                return out;
             }
         }
-        return Decoration.set(decos, true);
-    }
-}, { decorations: v => v.decorations });
 
-// ── Prop Popover UI ──
-
-function getOrCreatePropPopover() {
-    if (!propPopoverEl) {
-        propPopoverEl = document.createElement('div');
-        propPopoverEl.className = 'prop-tag-popover hidden';
-        document.body.appendChild(propPopoverEl);
-
-        // Close on outside click
-        document.addEventListener('click', (e) => {
-            if (propPopoverEl && !propPopoverEl.contains(e.target)) {
-                hidePropPopover();
-            }
-        });
-
-        // Close on Escape
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && propPopoverEl &&
-                !propPopoverEl.classList.contains('hidden')) {
-                hidePropPopover();
-                e.stopPropagation();
-            }
-        });
-    }
-    return propPopoverEl;
-}
-
-function hidePropPopover() {
-    if (propPopoverEl) {
-        propPopoverEl.classList.add('hidden');
-        propPopoverEl.innerHTML = '';
-    }
-}
-
-function isPropPopoverVisible() {
-    return propPopoverEl && !propPopoverEl.classList.contains('hidden');
-}
-
-async function showPropPopover() {
-    if (!editorView) return;
-
-    const sel = editorView.state.selection.main;
-    if (sel.empty) {
-        showToast('Select text to tag as a prop');
-        return;
-    }
-
-    const selectedText = editorView.state.doc.sliceString(sel.from, sel.to).trim();
-    if (!selectedText || selectedText.includes('\n')) {
-        showToast('Select a single word or phrase');
-        return;
-    }
-
-    const coords = editorView.coordsAtPos(sel.from);
-    if (!coords) return;
-
-    const popover = getOrCreatePropPopover();
-
-    // Check if already tagged
-    const existingTag = propTags.find(
-        t => t.tagged_text.toLowerCase() === selectedText.toLowerCase()
-    );
-
-    // Build popover content
-    let html = `<div class="prop-tag-popover-header">
-        <span>Tag prop:</span>
-        <span class="prop-tag-text">${esc(selectedText)}</span>
-    </div>`;
-
-    if (existingTag) {
-        // Already tagged — show current mapping + remove option
-        html += `<div class="screenplay-ac-item" style="color: var(--text-secondary); cursor: default;">
-            <span class="screenplay-ac-icon">🔧</span>
-            <span class="screenplay-ac-name">Tagged as: ${esc(existingTag.prop_name)}</span>
-        </div>`;
-        html += `<div class="prop-tag-remove" data-tag-id="${existingTag.tag_id}">
-            <span>✕</span> Remove tag
-        </div>`;
-    } else {
-        // Not tagged — fetch matching props
-        try {
-            const res = await fetch(
-                `/api/screenplay-v2/autocomplete-props?q=${encodeURIComponent(selectedText)}`
-            );
-            if (res.ok) {
-                const props = await res.json();
-                for (const p of props) {
-                    html += `<div class="screenplay-ac-item" data-prop-id="${p.prop_id}">
-                        <span class="screenplay-ac-icon">🔧</span>
-                        <span class="screenplay-ac-name">${esc(p.name)}</span>
-                    </div>`;
+        // (2) Map types through doc changes. Default new lines to 'action'.
+        let types;
+        if (tr.docChanged) {
+            types = new Array(tr.state.doc.lines).fill('action');
+            const oldDoc = tr.startState.doc;
+            const newDoc = tr.state.doc;
+            for (let oldNum = 1; oldNum <= oldDoc.lines; oldNum++) {
+                const oldFrom = oldDoc.line(oldNum).from;
+                let newFrom;
+                try {
+                    // assoc=-1 keeps a line's start mapping to a line start
+                    // even when a char is typed at the start of the line.
+                    newFrom = tr.changes.mapPos(oldFrom, -1);
+                } catch { continue; }
+                if (newFrom == null || newFrom < 0 || newFrom > newDoc.length) continue;
+                const newLine = newDoc.lineAt(newFrom);
+                if (newLine.from !== newFrom) continue;
+                const idx = newLine.number - 1;
+                // First-set wins on collision; explicit effects below override.
+                if (types[idx] === 'action' && oldTypes[oldNum - 1]) {
+                    types[idx] = oldTypes[oldNum - 1];
                 }
             }
-        } catch (e) { /* silent */ }
-
-        // Always show "create new" option
-        const titleCased = selectedText.split(' ')
-            .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-            .join(' ');
-        html += `<div class="screenplay-ac-new" data-create-name="${esc(titleCased)}">
-            + Create "${esc(titleCased)}" as new prop
-        </div>`;
-    }
-
-    popover.innerHTML = html;
-
-    // Position near selection
-    popover.style.left = Math.max(8, coords.left) + 'px';
-    popover.style.top = (coords.bottom + 6) + 'px';
-    popover.classList.remove('hidden');
-
-    // Bind click handlers
-    popover.querySelectorAll('.screenplay-ac-item[data-prop-id]').forEach(item => {
-        item.addEventListener('click', (e) => {
-            e.stopPropagation();
-            tagProp(selectedText, parseInt(item.dataset.propId));
-        });
-    });
-
-    popover.querySelectorAll('.screenplay-ac-new[data-create-name]').forEach(item => {
-        item.addEventListener('click', (e) => {
-            e.stopPropagation();
-            tagPropNew(selectedText, item.dataset.createName);
-        });
-    });
-
-    popover.querySelectorAll('.prop-tag-remove[data-tag-id]').forEach(item => {
-        item.addEventListener('click', (e) => {
-            e.stopPropagation();
-            untagProp(parseInt(item.dataset.tagId));
-        });
-    });
-}
-
-async function tagProp(taggedText, propId) {
-    try {
-        const res = await fetch('/api/screenplay-v2/tag-prop', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tagged_text: taggedText, prop_id: propId }),
-        });
-        if (!res.ok) throw new Error('Tag failed');
-        const data = await res.json();
-        if (data.duplicate) {
-            showToast('Already tagged');
         } else {
-            showToast(`Tagged "${taggedText}" → ${data.prop_name}`);
-            await fetchPropTags();
+            // Length defensive: stay in sync with doc even if oldTypes drifted.
+            types = oldTypes.length === tr.state.doc.lines
+                ? oldTypes
+                : new Array(tr.state.doc.lines).fill('action');
         }
-    } catch (e) {
-        showToast('Tag error: ' + e.message);
-    }
-    hidePropPopover();
-    editorView?.focus();
-}
 
-async function tagPropNew(taggedText, newName) {
-    try {
-        const res = await fetch('/api/screenplay-v2/tag-prop', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tagged_text: taggedText, new_name: newName }),
-        });
-        if (!res.ok) throw new Error('Tag failed');
-        const data = await res.json();
-        showToast(`Created prop "${data.prop_name}" and tagged`);
-        await fetchPropTags();
-    } catch (e) {
-        showToast('Tag error: ' + e.message);
-    }
-    hidePropPopover();
-    editorView?.focus();
-}
+        // (3) Per-line effects (override mapping).
+        let mutated = types !== oldTypes;
+        for (const e of tr.effects) {
+            if (!e.is(setLineTypeAtPosEffect)) continue;
+            const { pos, type } = e.value || {};
+            if (pos == null || pos < 0 || pos > tr.state.doc.length) continue;
+            const idx = tr.state.doc.lineAt(pos).number - 1;
+            if (idx < 0 || idx >= types.length) continue;
+            if (!mutated) { types = [...types]; mutated = true; }
+            types[idx] = type || 'action';
+        }
 
-async function untagProp(tagId) {
-    try {
-        const res = await fetch(`/api/screenplay-v2/tag-prop/${tagId}`, {
-            method: 'DELETE',
-        });
-        if (!res.ok) throw new Error('Untag failed');
-        showToast('Prop tag removed');
-        await fetchPropTags();
-    } catch (e) {
-        showToast('Untag error: ' + e.message);
-    }
-    hidePropPopover();
-    editorView?.focus();
-}
+        return types;
+    },
+});
+
+const getLineTypes = (state) => state.field(lineTypesField);
+const getLineType = (state, lineNum) => state.field(lineTypesField)[lineNum - 1] || 'action';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Structural Blank Stripping
-// ═══════════════════════════════════════════════════════════════════════════
-
-function stripStructuralBlanks(lines) {
-    const result = [];
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (line.content.trim() !== '') { result.push(line); continue; }
-        const prev = i > 0 ? lines[i - 1] : null;
-        const next = i < lines.length - 1 ? lines[i + 1] : null;
-        if (isStructuralBlank(prev, next)) continue;
-        result.push(line);
-    }
-    return result;
-}
-
-function isStructuralBlank(prev, next) {
-    if (!prev || !next) return false;
-    const prevEmpty = prev.content.trim() === '';
-    const nextEmpty = next.content.trim() === '';
-    if (prevEmpty || nextEmpty) return false;
-    if (prev.line_type === next.line_type) return false;
-    return true;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Mode System
+// Modes
 // ═══════════════════════════════════════════════════════════════════════════
 const MODES = ['description', 'scene', 'character', 'dialogue', 'transition'];
-const MODE_LABELS = { description: 'Description', scene: 'Scene Heading', character: 'Character', dialogue: 'Dialogue', transition: 'Transition' };
+const MODE_LABELS = {
+    description: 'Description', scene: 'Scene Heading', character: 'Character',
+    dialogue: 'Dialogue', transition: 'Transition',
+};
 let currentMode = 'description';
 
-function setMode(mode) {
+const modeToLineType = (m) => ({
+    description: 'action', scene: 'heading', character: 'character',
+    dialogue: 'dialogue', transition: 'transition',
+}[m] || 'action');
+
+const lineTypeToMode = (t) => ({
+    heading: 'scene', character: 'character', dialogue: 'dialogue',
+    parenthetical: 'dialogue', transition: 'transition', action: 'description',
+    blank: null,
+}[t] || 'description');
+
+function setModeUI(mode) {
+    if (!mode) return;
     currentMode = mode;
     if (editorView) {
         const dom = editorView.dom;
@@ -666,45 +189,74 @@ function setMode(mode) {
     if (el) el.textContent = MODE_LABELS[mode] || 'Description';
 }
 
-function handleTab() {
-    if (isAutocompleteVisible()) return false;
-    const idx = MODES.indexOf(currentMode);
-    setMode(MODES[(idx + 1) % MODES.length]);
-    return true;
+function setMode(mode, view) {
+    setModeUI(mode);
+    if (view) {
+        const pos = view.state.selection.main.head;
+        view.dispatch({ effects: setLineTypeAtPosEffect.of({ pos, type: modeToLineType(mode) }) });
+    }
 }
 
-function handleShiftTab() {
+function handleTab(view) {
     if (isAutocompleteVisible()) return false;
     const idx = MODES.indexOf(currentMode);
-    setMode(MODES[(idx - 1 + MODES.length) % MODES.length]);
+    setMode(MODES[(idx + 1) % MODES.length], view);
     return true;
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Auto-detect mode from stored line type
-// ═══════════════════════════════════════════════════════════════════════════
+function handleShiftTab(view) {
+    if (isAutocompleteVisible()) return false;
+    const idx = MODES.indexOf(currentMode);
+    setMode(MODES[(idx - 1 + MODES.length) % MODES.length], view);
+    return true;
+}
 
 function detectModeFromCursor(state) {
     const line = state.doc.lineAt(state.selection.main.head);
-    const trimmed = line.text.trim();
-    if (trimmed === '') return;
-    const idx = line.number - 1;
-    if (idx < lineTypes.length && lineTypes[idx] && lineTypes[idx] !== 'blank') {
-        const newMode = lineTypeToMode(lineTypes[idx]);
-        if (newMode && newMode !== currentMode) setMode(newMode);
-    }
+    // For empty lines, leave mode alone; the user's intent is whatever
+    // mode they're already in.
+    if (line.text === '') return;
+    const stored = getLineType(state, line.number);
+    const mode = lineTypeToMode(stored);
+    if (mode && mode !== currentMode) setModeUI(mode);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Auto-Uppercase
+// Input Handler — uppercase + first-char-on-blank type stamping
 // ═══════════════════════════════════════════════════════════════════════════
-const autoUppercaseHandler = EditorView.inputHandler.of((view, from, to, text) => {
-    if (text.length !== 1 || !/[a-z]/.test(text)) return false;
-    if (currentMode === 'scene' || currentMode === 'character' || currentMode === 'transition') {
-        view.dispatch({ changes: { from, to, insert: text.toUpperCase() }, selection: { anchor: from + 1 }, scrollIntoView: true });
-        return true;
+const inputHandler = EditorView.inputHandler.of((view, from, to, text) => {
+    if (text.length !== 1) return false;
+
+    const lineNum = view.state.doc.lineAt(from).number;
+    const line = view.state.doc.line(lineNum);
+    const lineEmpty = line.text.length === 0;
+
+    // On empty lines, the user's intent is the current mode.
+    // On non-empty lines, the type is sticky (whatever's already stored).
+    const effectiveType = lineEmpty
+        ? modeToLineType(currentMode)
+        : getLineType(view.state, lineNum);
+
+    const wantsUpper = effectiveType === 'heading'
+                    || effectiveType === 'character'
+                    || effectiveType === 'transition';
+    const isLowerLetter = /[a-z]/.test(text);
+    const insertText = (wantsUpper && isLowerLetter) ? text.toUpperCase() : text;
+
+    // If we don't need to override (no uppercase needed AND line not
+    // empty), let CodeMirror handle the input. The state field will
+    // preserve the line's type via assoc=-1 mapping.
+    if (insertText === text && !lineEmpty) return false;
+
+    const dispatch = {
+        changes: { from, to, insert: insertText },
+        selection: { anchor: from + insertText.length },
+        scrollIntoView: true,
+    };
+    if (lineEmpty) {
+        dispatch.effects = setLineTypeAtPosEffect.of({ pos: from, type: effectiveType });
     }
-    return false;
+    view.dispatch(dispatch);
+    return true;
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -759,63 +311,54 @@ function selectSuggestion(index) {
     const item = acItems[index];
     const line = editorView.state.doc.lineAt(editorView.state.selection.main.head);
 
+    let newText, type, ids = null, idCacheKey = null;
     if (acType === 'character') {
-        const newText = item.name;
-        editorView.dispatch({
-            changes: { from: line.from, to: line.to, insert: newText },
-            selection: { anchor: line.from + newText.length }
-        });
-        cacheEntityIds('character', newText, { character_id: item.character_id });
+        newText = item.name;
+        type = 'character';
+        ids = { character_id: item.character_id };
+        idCacheKey = newText;
     } else if (acType === 'location') {
         const m = line.text.match(/^(\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s*)/i);
         const prefix = m ? m[1] : '';
-        const newText = prefix + item.name.toUpperCase() + ' - ';
-        editorView.dispatch({
-            changes: { from: line.from, to: line.to, insert: newText },
-            selection: { anchor: line.from + newText.length }
-        });
-        cacheEntityIds('location_hint', item.name.toUpperCase(), { location_id: item.location_id });
+        newText = prefix + item.name.toUpperCase() + ' - ';
+        type = 'heading';
+        ids = { location_id: item.location_id };
+        idCacheKey = item.name.toUpperCase();
     } else if (acType === 'prefix') {
-        const newText = item.value;
-        editorView.dispatch({
-            changes: { from: line.from, to: line.to, insert: newText },
-            selection: { anchor: line.from + newText.length }
-        });
+        newText = item.value; type = 'heading';
     } else if (acType === 'tod') {
         const dashMatch = line.text.match(/^(.+\s-\s*)/);
         const beforeTod = dashMatch ? dashMatch[1] : line.text;
-        const newText = beforeTod + item.value;
-        editorView.dispatch({
-            changes: { from: line.from, to: line.to, insert: newText },
-            selection: { anchor: line.from + newText.length }
-        });
-    }
+        newText = beforeTod + item.value;
+        type = 'heading';
+    } else { hideAutocomplete(); return; }
+
+    editorView.dispatch({
+        changes: { from: line.from, to: line.to, insert: newText },
+        selection: { anchor: line.from + newText.length },
+        effects: setLineTypeAtPosEffect.of({ pos: line.from, type }),
+    });
+    if (ids && idCacheKey) cacheEntityIds(type === 'character' ? 'character' : 'location_hint', idCacheKey, ids);
+    setModeUI(lineTypeToMode(type));
     hideAutocomplete();
     editorView.focus();
 }
 
 const HEADING_PREFIXES = [
-    { name: 'INT.',      value: 'INT. ' },
-    { name: 'EXT.',      value: 'EXT. ' },
+    { name: 'INT.', value: 'INT. ' },
+    { name: 'EXT.', value: 'EXT. ' },
     { name: 'INT./EXT.', value: 'INT./EXT. ' },
 ];
 
 const TIME_OF_DAY_OPTIONS = [
-    { name: 'DAY',            value: 'DAY' },
-    { name: 'NIGHT',          value: 'NIGHT' },
-    { name: 'MORNING',        value: 'MORNING' },
-    { name: 'AFTERNOON',      value: 'AFTERNOON' },
-    { name: 'EVENING',        value: 'EVENING' },
-    { name: 'DAWN',           value: 'DAWN' },
-    { name: 'DUSK',           value: 'DUSK' },
-    { name: 'SUNSET',         value: 'SUNSET' },
-    { name: 'SUNRISE',        value: 'SUNRISE' },
-    { name: 'TWILIGHT',       value: 'TWILIGHT' },
-    { name: 'MIDDAY',         value: 'MIDDAY' },
-    { name: 'CONTINUOUS',     value: 'CONTINUOUS' },
-    { name: 'LATER',          value: 'LATER' },
-    { name: 'MOMENTS LATER',  value: 'MOMENTS LATER' },
-    { name: 'SAME TIME',      value: 'SAME TIME' },
+    { name: 'DAY', value: 'DAY' }, { name: 'NIGHT', value: 'NIGHT' },
+    { name: 'MORNING', value: 'MORNING' }, { name: 'AFTERNOON', value: 'AFTERNOON' },
+    { name: 'EVENING', value: 'EVENING' }, { name: 'DAWN', value: 'DAWN' },
+    { name: 'DUSK', value: 'DUSK' }, { name: 'SUNSET', value: 'SUNSET' },
+    { name: 'SUNRISE', value: 'SUNRISE' }, { name: 'TWILIGHT', value: 'TWILIGHT' },
+    { name: 'MIDDAY', value: 'MIDDAY' }, { name: 'CONTINUOUS', value: 'CONTINUOUS' },
+    { name: 'LATER', value: 'LATER' }, { name: 'MOMENTS LATER', value: 'MOMENTS LATER' },
+    { name: 'SAME TIME', value: 'SAME TIME' },
 ];
 
 const HEADING_READY_FOR_TOD_RE = /^\.?(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\/EXT\.|EXT\/INT\.|INT\.|EXT\.|EST\.|I\/E\.?)\s+.+\s-\s*/i;
@@ -854,7 +397,6 @@ function checkAutocompleteContext() {
         const prefixMatches = HEADING_PREFIXES.filter(p => p.value.toUpperCase().startsWith(upper) || p.name.startsWith(upper));
         if (prefixMatches.length > 0 && trimmed.length < 10) { showStaticAutocomplete(prefixMatches, 'prefix'); return; }
     }
-
     hideAutocomplete();
 }
 
@@ -912,7 +454,199 @@ const autocompleteKeymap = keymap.of([
 ]);
 
 // ═══════════════════════════════════════════════════════════════════════════
-// State
+// Decorations — line classes + structural gaps + page breaks
+// ═══════════════════════════════════════════════════════════════════════════
+const LINE_CLS = {
+    heading: 'cm-scf-heading', action: 'cm-scf-action', character: 'cm-scf-character',
+    dialogue: 'cm-scf-dialogue', parenthetical: 'cm-scf-parenthetical',
+    transition: 'cm-scf-transition',
+};
+
+function getGapClass(currType, prevType) {
+    if (!prevType) return null;
+    if (currType === 'heading') return 'cm-scf-gap-scene';
+    if (currType === 'character' && prevType !== 'blank') return 'cm-scf-gap-block';
+    if (currType === 'transition') return 'cm-scf-gap-element';
+    if (currType === 'action' && (prevType === 'dialogue' || prevType === 'parenthetical' || prevType === 'transition')) return 'cm-scf-gap-element';
+    return null;
+}
+
+const lineDecorationPlugin = ViewPlugin.fromClass(class {
+    constructor(view) { this.decorations = this.build(view); }
+    update(update) {
+        const fieldChanged = update.startState.field(lineTypesField, false)
+                          !== update.state.field(lineTypesField, false);
+        if (update.docChanged || update.viewportChanged || update.selectionSet || fieldChanged) {
+            this.decorations = this.build(update.view);
+        }
+    }
+    build(view) {
+        const decos = [];
+        const doc = view.state.doc;
+        const types = view.state.field(lineTypesField);
+        const cursorLine = doc.lineAt(view.state.selection.main.head).number;
+
+        // Effective type per line: if line text is empty, treat as 'blank'
+        // for visual purposes (no class, no gap implications).
+        const eff = new Array(doc.lines);
+        for (let i = 1; i <= doc.lines; i++) {
+            eff[i - 1] = doc.line(i).text === '' ? 'blank' : (types[i - 1] || 'action');
+        }
+
+        for (let i = 1; i <= doc.lines; i++) {
+            const classes = [];
+            const effType = eff[i - 1];
+            if (i !== cursorLine) {
+                const cls = LINE_CLS[effType];
+                if (cls) classes.push(cls);
+            }
+            const prevEff = i > 1 ? eff[i - 2] : null;
+            const gapCls = getGapClass(effType, prevEff);
+            if (gapCls) classes.push(gapCls);
+            if (i % LINES_PER_PAGE === 0 && i < doc.lines) {
+                classes.push('cm-scf-pagebreak');
+                decos.push(Decoration.line({ attributes: { class: classes.join(' '), 'data-page': String(i / LINES_PER_PAGE) } }).range(doc.line(i).from));
+                continue;
+            }
+            if (classes.length > 0) {
+                decos.push(Decoration.line({ attributes: { class: classes.join(' ') } }).range(doc.line(i).from));
+            }
+        }
+        return Decoration.set(decos, true);
+    }
+}, { decorations: v => v.decorations });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Prop Tags
+// ═══════════════════════════════════════════════════════════════════════════
+const propTagsChanged = StateEffect.define();
+let propTags = [];
+let propPopoverEl = null;
+
+async function fetchPropTags() {
+    try {
+        const res = await fetch('/api/screenplay-v2/prop-tags');
+        if (!res.ok) return;
+        propTags = await res.json();
+        if (editorView) editorView.dispatch({ effects: propTagsChanged.of(null) });
+    } catch (e) { console.error('Prop tags fetch failed:', e); }
+}
+
+const propHighlightPlugin = ViewPlugin.fromClass(class {
+    constructor(view) { this.decorations = this.build(view); }
+    update(update) {
+        const effectFired = update.transactions.some(t => t.effects.some(e => e.is(propTagsChanged)));
+        if (update.docChanged || update.viewportChanged || effectFired) {
+            this.decorations = this.build(update.view);
+        }
+    }
+    build(view) {
+        if (!propTags.length) return Decoration.none;
+        const sorted = [...propTags].sort((a, b) => b.tagged_text.length - a.tagged_text.length);
+        const escaped = sorted.map(t => t.tagged_text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        if (!escaped.length) return Decoration.none;
+        const re = new RegExp('\\b(' + escaped.join('|') + ')\\b', 'gi');
+        const decos = [];
+        for (const { from, to } of view.visibleRanges) {
+            const text = view.state.doc.sliceString(from, to);
+            let m;
+            while ((m = re.exec(text)) !== null) {
+                const start = from + m.index;
+                const end = start + m[0].length;
+                decos.push(Decoration.mark({ class: 'cm-prop-highlight' }).range(start, end));
+            }
+        }
+        return Decoration.set(decos, true);
+    }
+}, { decorations: v => v.decorations });
+
+function getOrCreatePropPopover() {
+    if (!propPopoverEl) {
+        propPopoverEl = document.createElement('div');
+        propPopoverEl.className = 'prop-tag-popover hidden';
+        document.body.appendChild(propPopoverEl);
+        document.addEventListener('click', (e) => {
+            if (propPopoverEl && !propPopoverEl.contains(e.target)) hidePropPopover();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && propPopoverEl && !propPopoverEl.classList.contains('hidden')) {
+                hidePropPopover(); e.stopPropagation();
+            }
+        });
+    }
+    return propPopoverEl;
+}
+function hidePropPopover() {
+    if (propPopoverEl) { propPopoverEl.classList.add('hidden'); propPopoverEl.innerHTML = ''; }
+}
+async function showPropPopover() {
+    if (!editorView) return;
+    const sel = editorView.state.selection.main;
+    if (sel.empty) { showToast('Select text to tag as a prop'); return; }
+    const selectedText = editorView.state.doc.sliceString(sel.from, sel.to).trim();
+    if (!selectedText || selectedText.includes('\n')) { showToast('Select a single word or phrase'); return; }
+    const coords = editorView.coordsAtPos(sel.from);
+    if (!coords) return;
+    const popover = getOrCreatePropPopover();
+    const existingTag = propTags.find(t => t.tagged_text.toLowerCase() === selectedText.toLowerCase());
+    let html = `<div class="prop-tag-popover-header"><span>Tag prop:</span><span class="prop-tag-text">${esc(selectedText)}</span></div>`;
+    if (existingTag) {
+        html += `<div class="screenplay-ac-item" style="color: var(--text-secondary); cursor: default;"><span class="screenplay-ac-icon">🔧</span><span class="screenplay-ac-name">Tagged as: ${esc(existingTag.prop_name)}</span></div>`;
+        html += `<div class="prop-tag-remove" data-tag-id="${existingTag.tag_id}"><span>✕</span> Remove tag</div>`;
+    } else {
+        try {
+            const res = await fetch(`/api/screenplay-v2/autocomplete-props?q=${encodeURIComponent(selectedText)}`);
+            if (res.ok) {
+                const props = await res.json();
+                for (const p of props) html += `<div class="screenplay-ac-item" data-prop-id="${p.prop_id}"><span class="screenplay-ac-icon">🔧</span><span class="screenplay-ac-name">${esc(p.name)}</span></div>`;
+            }
+        } catch (e) { /* silent */ }
+        const titleCased = selectedText.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+        html += `<div class="screenplay-ac-new" data-create-name="${esc(titleCased)}">+ Create "${esc(titleCased)}" as new prop</div>`;
+    }
+    popover.innerHTML = html;
+    popover.style.left = Math.max(8, coords.left) + 'px';
+    popover.style.top = (coords.bottom + 6) + 'px';
+    popover.classList.remove('hidden');
+    popover.querySelectorAll('.screenplay-ac-item[data-prop-id]').forEach(item => {
+        item.addEventListener('click', (e) => { e.stopPropagation(); tagProp(selectedText, parseInt(item.dataset.propId)); });
+    });
+    popover.querySelectorAll('.screenplay-ac-new[data-create-name]').forEach(item => {
+        item.addEventListener('click', (e) => { e.stopPropagation(); tagPropNew(selectedText, item.dataset.createName); });
+    });
+    popover.querySelectorAll('.prop-tag-remove[data-tag-id]').forEach(item => {
+        item.addEventListener('click', (e) => { e.stopPropagation(); untagProp(parseInt(item.dataset.tagId)); });
+    });
+}
+async function tagProp(taggedText, propId) {
+    try {
+        const res = await fetch('/api/screenplay-v2/tag-prop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tagged_text: taggedText, prop_id: propId }) });
+        if (!res.ok) throw new Error('Tag failed');
+        const data = await res.json();
+        if (data.duplicate) showToast('Already tagged'); else { showToast(`Tagged "${taggedText}" → ${data.prop_name}`); await fetchPropTags(); }
+    } catch (e) { showToast('Tag error: ' + e.message); }
+    hidePropPopover(); editorView?.focus();
+}
+async function tagPropNew(taggedText, newName) {
+    try {
+        const res = await fetch('/api/screenplay-v2/tag-prop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tagged_text: taggedText, new_name: newName }) });
+        if (!res.ok) throw new Error('Tag failed');
+        const data = await res.json();
+        showToast(`Created prop "${data.prop_name}" and tagged`); await fetchPropTags();
+    } catch (e) { showToast('Tag error: ' + e.message); }
+    hidePropPopover(); editorView?.focus();
+}
+async function untagProp(tagId) {
+    try {
+        const res = await fetch(`/api/screenplay-v2/tag-prop/${tagId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Untag failed');
+        showToast('Prop tag removed'); await fetchPropTags();
+    } catch (e) { showToast('Untag error: ' + e.message); }
+    hidePropPopover(); editorView?.focus();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Module State & Helpers
 // ═══════════════════════════════════════════════════════════════════════════
 let editorView = null;
 let unsaved = false, saving = false, savedTimeout = null;
@@ -920,13 +654,10 @@ let navScenes = [], navCharacters = [], navLocations = [];
 let activeFilter = null;
 let loadedTitlePage = [];
 let lastEnterTime = 0;
-let pendingMergeType = null;
-let isLoading = false;
 
 function showToast(msg) {
     const t = document.createElement('div');
-    t.className = 'toast';
-    t.textContent = msg;
+    t.className = 'toast'; t.textContent = msg;
     document.body.appendChild(t);
     setTimeout(() => t.remove(), 2500);
 }
@@ -941,8 +672,77 @@ function showSyncToast(summary) {
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Load
+// Load / Save
 // ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Drop any line whose content is empty. Whatever the server sent — legacy
+ * structural blanks, synthesized blanks during save processing, anything —
+ * gets filtered. The editor's doc only contains real content lines.
+ */
+function filterEmptyLines(lines) {
+    return lines.filter(l => (l.content || '').trim() !== '');
+}
+
+function applyLoadedData(data, preserveCursorPos = null) {
+    entityCache.clear();
+    for (const line of data.lines || []) {
+        const ids = {};
+        if (line.scene_id) ids.scene_id = line.scene_id;
+        if (line.character_id) ids.character_id = line.character_id;
+        if (line.location_id) ids.location_id = line.location_id;
+        if (Object.keys(ids).length > 0) cacheEntityIds(line.line_type, line.content, ids);
+    }
+    loadedTitlePage = data.title_page || [];
+
+    const contentLines = filterEmptyLines(data.lines || []);
+
+    // If the server returned content but no types, fall back to classifier.
+    const hasMissingTypes = contentLines.some(l => !l.line_type || l.line_type === 'blank');
+    let types;
+    if (hasMissingTypes && contentLines.length > 0) {
+        console.warn('[SCF-v3] Server returned content with missing/blank types; running fallback classifier.');
+        const tempDoc = { lines: contentLines.length, line: (n) => ({ text: contentLines[n - 1].content }) };
+        const classified = classifyAllLines(tempDoc);
+        types = contentLines.map((l, i) => (l.line_type && l.line_type !== 'blank') ? l.line_type : classified[i]);
+    } else {
+        types = contentLines.map(l => l.line_type || 'action');
+    }
+
+    const text = contentLines.map(l => l.content).join('\n');
+    // CodeMirror's empty doc has 1 line. Keep types in sync.
+    if (text === '') types = ['action'];
+
+    // Length safety: doc.split('\n').length must equal types.length.
+    const expectedLines = text === '' ? 1 : text.split('\n').length;
+    if (types.length !== expectedLines) {
+        console.warn(`[SCF-v3] applyLoadedData: types.length=${types.length} but doc will have ${expectedLines} lines. Padding/truncating.`);
+        if (types.length < expectedLines) {
+            types = [...types, ...new Array(expectedLines - types.length).fill('action')];
+        } else {
+            types = types.slice(0, expectedLines);
+        }
+    }
+
+    if (!editorView) return;
+    const anchor = preserveCursorPos != null
+        ? Math.max(0, Math.min(preserveCursorPos, text.length))
+        : 0;
+
+    editorView.dispatch({
+        changes: { from: 0, to: editorView.state.doc.length, insert: text },
+        effects: setAllLineTypesEffect.of(types),
+        selection: { anchor },
+    });
+
+    // Sync mode UI to first non-blank type
+    for (const t of types) {
+        if (t && t !== 'blank') {
+            const m = lineTypeToMode(t);
+            if (m) { setModeUI(m); break; }
+        }
+    }
+}
 
 async function loadScreenplay() {
     if (!editorView) return;
@@ -950,55 +750,18 @@ async function loadScreenplay() {
         const res = await fetch('/api/screenplay-v2/load');
         if (!res.ok) throw new Error('Failed to load');
         const data = await res.json();
-
-        if (!data.has_content) {
-            setSaveStatus('Empty', '');
-            return;
-        }
-
-        loadedTitlePage = data.title_page || [];
-
-        entityCache.clear();
-        for (const line of data.lines) {
-            const ids = {};
-            if (line.scene_id) ids.scene_id = line.scene_id;
-            if (line.character_id) ids.character_id = line.character_id;
-            if (line.location_id) ids.location_id = line.location_id;
-            if (Object.keys(ids).length > 0) {
-                cacheEntityIds(line.line_type, line.content, ids);
-            }
-        }
-
-        const contentLines = stripStructuralBlanks(data.lines);
-        initLineTypesFromServer(contentLines);
-        const text = contentLines.map(l => l.content).join('\n');
-
-        isLoading = true;
-        editorView.dispatch({
-            changes: { from: 0, to: editorView.state.doc.length, insert: text }
-        });
-        isLoading = false;
-
-        if (lineTypes.length > 0 && lineTypes[0] && lineTypes[0] !== 'blank') {
-            setMode(lineTypeToMode(lineTypes[0]));
-        }
-
+        if (!data.has_content) { setSaveStatus('Empty', ''); return; }
+        applyLoadedData(data);
         unsaved = false;
         setSaveStatus('Loaded ✓', 'var(--success)');
         savedTimeout = setTimeout(() => setSaveStatus('Ready', ''), 2000);
-
         fetchNavigatorData();
         fetchPropTags();
-
     } catch (e) {
         console.error('Load failed:', e);
         setSaveStatus('Load failed', 'var(--warning)');
     }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Save
-// ═══════════════════════════════════════════════════════════════════════════
 
 async function saveScreenplay() {
     if (!editorView || saving) return;
@@ -1007,62 +770,53 @@ async function saveScreenplay() {
     hidePropPopover();
 
     try {
-        rebuildLineTypes(editorView.state);
-
         const doc = editorView.state.doc;
+        const types = getLineTypes(editorView.state);
+
+        if (types.length !== doc.lines) {
+            console.warn(`[SCF-v3] saveScreenplay: types.length=${types.length} doc.lines=${doc.lines}`);
+        }
+
         const lines = [];
         for (let i = 0; i < doc.lines; i++) {
             const content = doc.line(i + 1).text.trim();
-            const lineType = (i < lineTypes.length) ? lineTypes[i] : 'action';
+            // Defensive: empty lines (which shouldn't be in the editor in
+            // the first place) are typed 'blank'. The server can drop or
+            // keep them; on next load we'll filter them out either way.
+            let lineType = content === '' ? 'blank' : (types[i] || 'action');
             const cached = getCachedIds(lineType, content);
             lines.push({
                 line_type: lineType,
-                content: content,
+                content,
                 scene_id: cached.scene_id || null,
                 character_id: cached.character_id || null,
                 location_id: cached.location_id || null,
             });
         }
 
-        const payload = { title_page: loadedTitlePage, lines: lines };
-
+        const payload = { title_page: loadedTitlePage, lines };
         const res = await fetch('/api/screenplay-v2/save', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
         });
-
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
             throw new Error(err.detail || 'Save failed');
         }
-
         const data = await res.json();
         markSaved();
-
         if (data.summary) showSyncToast(data.summary);
         fetchNavigatorData();
         fetchPropTags();
 
+        // Reload to pick up server-resolved entity IDs.
+        const cursorPos = editorView.state.selection.main.head;
         const reloadRes = await fetch('/api/screenplay-v2/load');
         if (reloadRes.ok) {
             const reloaded = await reloadRes.json();
-            entityCache.clear();
-            for (const line of reloaded.lines) {
-                const ids = {};
-                if (line.scene_id) ids.scene_id = line.scene_id;
-                if (line.character_id) ids.character_id = line.character_id;
-                if (line.location_id) ids.location_id = line.location_id;
-                if (Object.keys(ids).length > 0) {
-                    cacheEntityIds(line.line_type, line.content, ids);
-                }
-            }
-            loadedTitlePage = reloaded.title_page || [];
-
-            const contentLines = stripStructuralBlanks(reloaded.lines);
-            initLineTypesFromServer(contentLines);
+            applyLoadedData(reloaded, cursorPos);
         }
-
     } catch (e) {
         markSaveFailed();
         showToast(`Save error: ${e.message}`);
@@ -1117,12 +871,8 @@ async function fetchNavigatorData() {
         if (sr.ok) navScenes = await sr.json();
         if (cr.ok) navCharacters = await cr.json();
         if (lr.ok) navLocations = await lr.json();
-    } catch (e) {
-        console.error('Navigator fetch failed:', e);
-    }
-    renderScenes();
-    renderCharacters();
-    renderLocations();
+    } catch (e) { console.error('Navigator fetch failed:', e); }
+    renderScenes(); renderCharacters(); renderLocations();
 }
 
 function renderScenes() {
@@ -1136,43 +886,31 @@ function renderScenes() {
         item.className = 'nav-item nav-scene-item';
         item.dataset.lineNumber = sc.line_number;
         item.dataset.sceneNumber = sc.scene_number;
-
         const charNames = (sc.characters || []).map(ch => (ch.name || '').toUpperCase());
         item.dataset.characters = charNames.join(',');
-
         const num = document.createElement('span');
-        num.className = 'nav-scene-num';
-        num.textContent = `#${sc.scene_number}`;
-
+        num.className = 'nav-scene-num'; num.textContent = `#${sc.scene_number}`;
         const name = document.createElement('span');
-        name.className = 'nav-item-name';
-        name.textContent = sc.heading;
-        name.title = sc.heading;
-
-        item.appendChild(num);
-        item.appendChild(name);
+        name.className = 'nav-item-name'; name.textContent = sc.heading; name.title = sc.heading;
+        item.appendChild(num); item.appendChild(name);
         if (sc.character_count > 0) {
             const bg = document.createElement('span');
-            bg.className = 'nav-item-badge';
-            bg.textContent = sc.character_count;
+            bg.className = 'nav-item-badge'; bg.textContent = sc.character_count;
             item.appendChild(bg);
         }
         if (sc.scene_id) {
             const lk = document.createElement('a');
             lk.className = 'nav-item-link';
             lk.href = `/browse?entity_type=scene&entity_id=${sc.scene_id}`;
-            lk.textContent = '→';
-            lk.title = 'Open in Entity Browser';
+            lk.textContent = '→'; lk.title = 'Open in Entity Browser';
             lk.addEventListener('click', e => e.stopPropagation());
             item.appendChild(lk);
         }
         item.addEventListener('click', () => scrollToLine(sc.line_number));
         f.appendChild(item);
     }
-    c.innerHTML = '';
-    c.appendChild(f);
-    applyFilter();
-    updateCurrentScene();
+    c.innerHTML = ''; c.appendChild(f);
+    applyFilter(); updateCurrentScene();
 }
 
 function renderCharacters() {
@@ -1190,16 +928,14 @@ function renderCharacters() {
             const lk = document.createElement('a');
             lk.className = 'nav-item-link';
             lk.href = `/browse?entity_type=character&entity_id=${ch.character_id}`;
-            lk.textContent = '→';
-            lk.title = 'Open in Entity Browser';
+            lk.textContent = '→'; lk.title = 'Open in Entity Browser';
             lk.addEventListener('click', e => e.stopPropagation());
             item.appendChild(lk);
         }
         item.addEventListener('click', () => toggleFilter('character', ch.name.toUpperCase()));
         f.appendChild(item);
     }
-    c.innerHTML = '';
-    c.appendChild(f);
+    c.innerHTML = ''; c.appendChild(f);
     applyFilterHighlight();
 }
 
@@ -1218,23 +954,20 @@ function renderLocations() {
             const lk = document.createElement('a');
             lk.className = 'nav-item-link';
             lk.href = `/browse?entity_type=location&entity_id=${loc.location_id}`;
-            lk.textContent = '→';
-            lk.title = 'Open in Entity Browser';
+            lk.textContent = '→'; lk.title = 'Open in Entity Browser';
             lk.addEventListener('click', e => e.stopPropagation());
             item.appendChild(lk);
         }
         item.addEventListener('click', () => toggleFilter('location', loc.name.toUpperCase()));
         f.appendChild(item);
     }
-    c.innerHTML = '';
-    c.appendChild(f);
+    c.innerHTML = ''; c.appendChild(f);
     applyFilterHighlight();
 }
 
 function toggleFilter(type, name) {
     activeFilter = (activeFilter && activeFilter.type === type && activeFilter.name === name) ? null : { type, name };
-    applyFilter();
-    applyFilterHighlight();
+    applyFilter(); applyFilterHighlight();
 }
 
 function applyFilter() {
@@ -1284,7 +1017,7 @@ function updateCurrentScene() {
     if (se) se.textContent = idx >= 0 ? `Sc ${navScenes[idx].scene_number}/${navScenes.length}` : `Sc —/${navScenes.length}`;
     const charsEl = document.getElementById('status-chars');
     if (charsEl) {
-        if (idx < 0 || !navScenes[idx]) { charsEl.textContent = ''; }
+        if (idx < 0 || !navScenes[idx]) charsEl.textContent = '';
         else {
             const chars = (navScenes[idx].characters || []).map(c => c.name || '');
             const tc = s => s.split(' ').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
@@ -1296,7 +1029,7 @@ function updateCurrentScene() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Status
+// Status Bar
 // ═══════════════════════════════════════════════════════════════════════════
 function updateCursorStatus(state) {
     const line = state.doc.lineAt(state.selection.main.head);
@@ -1321,101 +1054,131 @@ function markSaving() { saving = true; setSaveStatus('Saving…', ''); }
 function markSaveFailed() { saving = false; setSaveStatus('Save failed', 'var(--warning)'); }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CodeMirror Editor
+// Keymap Handlers
 // ═══════════════════════════════════════════════════════════════════════════
 
+function handleBackspace(view) {
+    const { head, empty } = view.state.selection.main;
+    if (!empty) return false;
+    const line = view.state.doc.lineAt(head);
+    if (head !== line.from) return false;
+    if (line.number === 1) return false;
+
+    const prevLine = view.state.doc.line(line.number - 1);
+    const prevType = getLineType(view.state, prevLine.number);
+    const currType = getLineType(view.state, line.number);
+    const currText = line.text.trim();
+    // Text-having side wins. Empty current line → prev wins.
+    const winType = (currText === '') ? prevType : currType;
+
+    setModeUI(lineTypeToMode(winType));
+    view.dispatch({
+        changes: { from: prevLine.to, to: line.from },
+        selection: { anchor: prevLine.to },
+        effects: setLineTypeAtPosEffect.of({ pos: prevLine.from, type: winType }),
+    });
+    return true;
+}
+
+function handleDelete(view) {
+    const { head, empty } = view.state.selection.main;
+    if (!empty) return false;
+    const line = view.state.doc.lineAt(head);
+    if (head !== line.to) return false;
+    if (line.number === view.state.doc.lines) return false;
+
+    const nextLine = view.state.doc.line(line.number + 1);
+    const currType = getLineType(view.state, line.number);
+    const nextType = getLineType(view.state, nextLine.number);
+    const currText = line.text.trim();
+    const winType = (currText === '') ? nextType : currType;
+
+    setModeUI(lineTypeToMode(winType));
+    view.dispatch({
+        changes: { from: line.to, to: nextLine.from },
+        effects: setLineTypeAtPosEffect.of({ pos: line.from, type: winType }),
+    });
+    return true;
+}
+
+/**
+ * Enter: insert newline + set new line's type based on mode transition.
+ *   scene     → description
+ *   character → dialogue
+ *   dialogue  → character
+ *   else      → same mode
+ *
+ * Double-Enter (two presses within 350ms) promotes to scene mode without
+ * inserting an extra newline.
+ */
+function handleEnter(view) {
+    if (isAutocompleteVisible() && acItems.length > 0 && acHighlight >= 0) return false;
+    hideAutocomplete();
+
+    const now = Date.now();
+    const dt = now - lastEnterTime;
+    lastEnterTime = now;
+
+    if (dt < 350 && dt > 30) {
+        setMode('scene', view);
+        return true;
+    }
+
+    let newMode = currentMode;
+    if (currentMode === 'scene') newMode = 'description';
+    else if (currentMode === 'character') newMode = 'dialogue';
+    else if (currentMode === 'dialogue') newMode = 'character';
+
+    const newType = modeToLineType(newMode);
+    setModeUI(newMode);
+
+    const { from, to } = view.state.selection.main;
+    const newCursorPos = from + 1;
+    view.dispatch({
+        changes: { from, to, insert: '\n' },
+        selection: { anchor: newCursorPos },
+        effects: setLineTypeAtPosEffect.of({ pos: newCursorPos, type: newType }),
+        scrollIntoView: true,
+    });
+    return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CodeMirror Editor
+// ═══════════════════════════════════════════════════════════════════════════
 function createEditor(container) {
     return new EditorView({
         state: EditorState.create({
             doc: '',
             extensions: [
-                fountainLanguage, history(), drawSelection(), highlightActiveLine(), EditorView.lineWrapping,
+                lineTypesField,                  // must come before plugins that read it
+                history(),
+                drawSelection(),
+                highlightActiveLine(),
+                EditorView.lineWrapping,
                 placeholder('Start writing your screenplay…'),
                 lineDecorationPlugin,
                 propHighlightPlugin,
-                autoUppercaseHandler,
+                inputHandler,
                 autocompleteKeymap,
+
                 keymap.of([
                     { key: 'Tab', run: handleTab },
                     { key: 'Shift-Tab', run: handleShiftTab },
-
-                    { key: 'Backspace', run(view) {
-                        const { head, empty } = view.state.selection.main;
-                        if (!empty) return false;
-                        const line = view.state.doc.lineAt(head);
-                        if (head !== line.from) return false;
-                        if (line.number === 1) return false;
-                        const prevLine = view.state.doc.line(line.number - 1);
-                        const prevIdx = prevLine.number - 1;
-                        const prevType = (prevIdx < lineTypes.length) ? lineTypes[prevIdx] : 'action';
-                        const currIdx = line.number - 1;
-                        const currType = (currIdx < lineTypes.length) ? lineTypes[currIdx] : 'action';
-                        const winType = (prevType === 'blank') ? currType : prevType;
-                        pendingMergeType = winType;
-                        setMode(lineTypeToMode(winType));
-                        view.dispatch({
-                            changes: { from: prevLine.to, to: line.from },
-                            selection: { anchor: prevLine.to },
-                        });
-                        return true;
-                    }},
-
-                    { key: 'Delete', run(view) {
-                        const { head, empty } = view.state.selection.main;
-                        if (!empty) return false;
-                        const line = view.state.doc.lineAt(head);
-                        if (head !== line.to) return false;
-                        if (line.number === view.state.doc.lines) return false;
-                        const currIdx = line.number - 1;
-                        const currType = (currIdx < lineTypes.length) ? lineTypes[currIdx] : 'action';
-                        const nextLine = view.state.doc.line(line.number + 1);
-                        const nextIdx = nextLine.number - 1;
-                        const nextType = (nextIdx < lineTypes.length) ? lineTypes[nextIdx] : 'action';
-                        const winType = (currType === 'blank') ? nextType : currType;
-                        pendingMergeType = winType;
-                        setMode(lineTypeToMode(winType));
-                        view.dispatch({
-                            changes: { from: line.to, to: nextLine.from },
-                        });
-                        return true;
-                    }},
-
-                    { key: 'Enter', run(view) {
-                        if (isAutocompleteVisible() && acItems.length > 0 && acHighlight >= 0) return false;
-                        hideAutocomplete();
-
-                        const now = Date.now();
-                        const timeSinceLast = now - lastEnterTime;
-                        lastEnterTime = now;
-
-                        if (timeSinceLast < 350 && timeSinceLast > 30) {
-                            setMode('scene');
-                            return true;
-                        }
-
-                        const modeBeforeEnter = currentMode;
-                        if (modeBeforeEnter === 'scene') setMode('description');
-                        else if (modeBeforeEnter === 'character') setMode('dialogue');
-                        else if (modeBeforeEnter === 'dialogue') setMode('character');
-
-                        const { from, to } = view.state.selection.main;
-                        view.dispatch({
-                            changes: { from, to, insert: '\n' },
-                            selection: { anchor: from + 1 },
-                            scrollIntoView: true,
-                        });
-                        return true;
-                    }},
+                    { key: 'Backspace', run: handleBackspace },
+                    { key: 'Delete', run: handleDelete },
+                    { key: 'Enter', run: handleEnter },
                 ]),
                 keymap.of([
                     { key: 'Mod-s', run() { saveScreenplay(); return true; } },
                     { key: 'Mod-p', run() { showPropPopover(); return true; } },
-                    ...defaultKeymap, ...historyKeymap,
+                    ...defaultKeymap,
+                    ...historyKeymap,
                 ]),
+
                 EditorView.updateListener.of((update) => {
                     if (update.selectionSet || update.docChanged) updateCursorStatus(update.state);
                     if (update.docChanged) {
-                        rebuildLineTypes(update.state);
                         markUnsaved();
                         checkAutocompleteContext();
                     }
@@ -1442,7 +1205,6 @@ function createEditor(container) {
 // ═══════════════════════════════════════════════════════════════════════════
 // Init
 // ═══════════════════════════════════════════════════════════════════════════
-
 const container = document.getElementById('screenplay-panel');
 if (container) {
     editorView = createEditor(container);
@@ -1451,7 +1213,7 @@ if (container) {
     loadScreenplay();
     document.getElementById('btn-save-screenplay')?.addEventListener('click', saveScreenplay);
     window.addEventListener('beforeunload', (e) => { if (unsaved) { e.preventDefault(); e.returnValue = ''; } });
-    setMode('description');
+    setModeUI('description');
 }
 
 export { editorView, saveScreenplay };
