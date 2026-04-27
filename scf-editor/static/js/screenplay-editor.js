@@ -513,6 +513,119 @@ const autocompleteKeymap = keymap.of([
 ]);
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Clipboard — preserve line types on copy/cut/paste within the editor
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Line types live in the StateField, not in the document text, so a default
+// copy/paste loses formatting. We attach a JSON sidecar (custom MIME type) on
+// copy. On paste, if our sidecar is present, we restore types directly. If
+// not (paste from external app), CM's default insertion runs and the
+// StateField update's classifier fallback handles the new lines.
+//
+// Mid-line paste rule: the first and/or last pasted segment merges with
+// surrounding existing content. Those merged-edge lines keep their original
+// type — applying a copied type to "OriginalText" + "PastedSegment" merged
+// together would be visually wrong.
+
+const SCF_TYPES_MIME = 'application/x-scf-line-types';
+
+function copyOrCut(view, event, isCut) {
+    const sel = view.state.selection;
+    if (sel.ranges.length > 1) return false;  // multi-range: let CM default handle
+    const range = sel.main;
+    if (range.empty) return false;
+
+    const text = view.state.doc.sliceString(range.from, range.to);
+    const fromLineNum = view.state.doc.lineAt(range.from).number;
+    const toLineNum = view.state.doc.lineAt(range.to).number;
+    const types = [];
+    for (let ln = fromLineNum; ln <= toLineNum; ln++) {
+        types.push(getLineType(view.state, ln));
+    }
+
+    if (!event.clipboardData) return false;
+    event.clipboardData.setData('text/plain', text);
+    try {
+        event.clipboardData.setData(SCF_TYPES_MIME, JSON.stringify(types));
+    } catch { /* some browsers reject custom MIME — text/plain is enough */ }
+
+    event.preventDefault();
+
+    if (isCut) {
+        view.dispatch({
+            changes: { from: range.from, to: range.to, insert: '' },
+            selection: { anchor: range.from },
+            scrollIntoView: true,
+        });
+    }
+    return true;
+}
+
+function handlePaste(view, event) {
+    const cb = event.clipboardData;
+    if (!cb) return false;
+
+    const typesJson = cb.getData(SCF_TYPES_MIME);
+    const rawText = cb.getData('text/plain');
+    if (!typesJson || !rawText) return false;  // external paste — let default handle
+
+    let typeArr;
+    try {
+        typeArr = JSON.parse(typesJson);
+        if (!Array.isArray(typeArr)) return false;
+    } catch { return false; }
+
+    // Normalize line endings; CM's doc uses \n internally.
+    const text = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const pastedLines = text.split('\n');
+    const N = pastedLines.length;
+
+    // Defensive: if counts don't match, abort to default. The classifier
+    // fallback in the StateField update will type the new lines best-effort.
+    if (typeArr.length !== N) return false;
+
+    const sel = view.state.selection.main;
+    const fromLine = view.state.doc.lineAt(sel.from);
+    const toLine = view.state.doc.lineAt(sel.to);
+    const atLineStart = sel.from === fromLine.from;
+    const atLineEnd = sel.to === toLine.to;
+
+    // Compute post-paste line start positions in the NEW doc.
+    // The first new line begins at fromLine.from (unchanged prefix). Each
+    // subsequent line begins after its predecessor's content + a newline.
+    const linePositions = [fromLine.from];
+    let pos = fromLine.from;
+    for (let k = 0; k < N - 1; k++) {
+        const lineLen = (k === 0)
+            ? (sel.from - fromLine.from) + pastedLines[0].length
+            : pastedLines[k].length;
+        pos += lineLen + 1;  // +1 for newline
+        linePositions.push(pos);
+    }
+
+    // Apply types, skipping merged-edge lines (they keep their existing type).
+    const effects = [];
+    for (let k = 0; k < N; k++) {
+        const isFirstMerged = (k === 0) && !atLineStart;
+        const isLastMerged = (k === N - 1) && !atLineEnd;
+        if (isFirstMerged || isLastMerged) continue;
+        effects.push(setLineTypeAtPosEffect.of({
+            pos: linePositions[k],
+            type: typeArr[k] || 'action',
+        }));
+    }
+
+    view.dispatch({
+        changes: { from: sel.from, to: sel.to, insert: text },
+        effects,
+        selection: { anchor: sel.from + text.length },
+        scrollIntoView: true,
+    });
+    event.preventDefault();
+    return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Decorations — line classes + structural gaps + page breaks
 // ═══════════════════════════════════════════════════════════════════════════
 const LINE_CLS = {
@@ -1263,7 +1376,12 @@ function createEditor(container) {
                         checkAutocompleteContext();
                     }
                 }),
-                EditorView.domEventHandlers({ blur() { setTimeout(hideAutocomplete, 150); } }),
+                EditorView.domEventHandlers({
+                    blur() { setTimeout(hideAutocomplete, 150); },
+                    copy(event, view) { return copyOrCut(view, event, false); },
+                    cut(event, view)  { return copyOrCut(view, event, true);  },
+                    paste(event, view) { return handlePaste(view, event); },
+                }),
                 EditorView.theme({
                     '&': { backgroundColor: 'var(--bg-base)', color: 'var(--text-primary)', fontFamily: "'Courier Prime', 'Courier New', Courier, monospace", fontSize: '15px', lineHeight: '1.5', flex: '1' },
                     '.cm-content': { caretColor: 'var(--accent)' },
