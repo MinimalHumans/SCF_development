@@ -107,27 +107,75 @@ const lineTypesField = StateField.define({
             }
         }
 
-        // (2) Map types through doc changes. Default new lines to 'action'.
+        // (2) Map types through doc changes using text-match scoring.
+        // Unmapped new lines (e.g. from paste) get classifier types.
         let types;
         if (tr.docChanged) {
-            types = new Array(tr.state.doc.lines).fill('action');
             const oldDoc = tr.startState.doc;
             const newDoc = tr.state.doc;
+            const newLineCount = newDoc.lines;
+
+            // For each new line, find the best-scoring old line whose `from`
+            // mapped to this new line's start. Text match wins over position
+            // collision — e.g. when a multi-line range is deleted, all the
+            // deleted-range old lines map to the same new position; scoring
+            // by text content picks the one that actually survived.
+            const bestMatch = new Array(newLineCount).fill(null);
+
             for (let oldNum = 1; oldNum <= oldDoc.lines; oldNum++) {
                 const oldFrom = oldDoc.line(oldNum).from;
                 let newFrom;
                 try {
-                    // assoc=-1 keeps a line's start mapping to a line start
-                    // even when a char is typed at the start of the line.
+                    // assoc=-1: typing at line start keeps that position
+                    // mapped to the same line start.
                     newFrom = tr.changes.mapPos(oldFrom, -1);
                 } catch { continue; }
                 if (newFrom == null || newFrom < 0 || newFrom > newDoc.length) continue;
                 const newLine = newDoc.lineAt(newFrom);
                 if (newLine.from !== newFrom) continue;
+
                 const idx = newLine.number - 1;
-                // First-set wins on collision; explicit effects below override.
-                if (types[idx] === 'action' && oldTypes[oldNum - 1]) {
-                    types[idx] = oldTypes[oldNum - 1];
+                const oldText = oldDoc.line(oldNum).text;
+                const newText = newLine.text;
+                const oldType = oldTypes[oldNum - 1];
+
+                // Score:
+                //   4 = exact text match (line shifted but content identical)
+                //   3 = trimmed match (whitespace edits)
+                //   2 = old line had a special type and both have content
+                //       (catches typing edits on character/heading/etc lines)
+                //   1 = both have content but text differs
+                //   0 = blank ↔ blank or other
+                let score;
+                if (oldText === newText) score = 4;
+                else if (oldText.trim() === newText.trim()) score = 3;
+                else if (oldType && oldType !== 'action' && oldType !== 'blank'
+                         && oldText.trim() !== '' && newText.trim() !== '') score = 2;
+                else if (oldText.trim() !== '' && newText.trim() !== '') score = 1;
+                else score = 0;
+
+                if (!bestMatch[idx] || score > bestMatch[idx].score) {
+                    bestMatch[idx] = { oldNum, score };
+                }
+            }
+
+            // Detect "structural" changes (unmapped new lines = paste, complex
+            // multi-line replacements). For those, classifier fills the gaps.
+            let needsClassifier = false;
+            for (let i = 0; i < newLineCount; i++) {
+                if (!bestMatch[i]) { needsClassifier = true; break; }
+            }
+            const classified = needsClassifier ? classifyAllLines(newDoc) : null;
+
+            types = new Array(newLineCount);
+            for (let i = 0; i < newLineCount; i++) {
+                if (bestMatch[i]) {
+                    const oldType = oldTypes[bestMatch[i].oldNum - 1];
+                    types[i] = oldType || 'action';
+                } else if (classified) {
+                    types[i] = classified[i] || 'action';
+                } else {
+                    types[i] = 'action';
                 }
             }
         } else {
@@ -191,10 +239,21 @@ function setModeUI(mode) {
 
 function setMode(mode, view) {
     setModeUI(mode);
-    if (view) {
-        const pos = view.state.selection.main.head;
-        view.dispatch({ effects: setLineTypeAtPosEffect.of({ pos, type: modeToLineType(mode) }) });
+    if (!view) return;
+    const sel = view.state.selection.main;
+    const lineType = modeToLineType(mode);
+    // If the selection spans multiple lines, set every line's type. Otherwise
+    // just the cursor's line. Multi-line is useful for fixing pasted blocks.
+    const startLineNum = view.state.doc.lineAt(sel.from).number;
+    const endLineNum = view.state.doc.lineAt(sel.to).number;
+    const effects = [];
+    for (let i = startLineNum; i <= endLineNum; i++) {
+        effects.push(setLineTypeAtPosEffect.of({
+            pos: view.state.doc.line(i).from,
+            type: lineType,
+        }));
     }
+    view.dispatch({ effects });
 }
 
 function handleTab(view) {
@@ -654,6 +713,10 @@ let navScenes = [], navCharacters = [], navLocations = [];
 let activeFilter = null;
 let loadedTitlePage = [];
 let lastEnterTime = 0;
+// Set to true around programmatic dispatches that change the doc but
+// shouldn't be treated as user edits (load, save reload). The
+// updateListener checks this before calling markUnsaved.
+let suppressUnsaved = false;
 
 function showToast(msg) {
     const t = document.createElement('div');
@@ -729,17 +792,30 @@ function applyLoadedData(data, preserveCursorPos = null) {
         ? Math.max(0, Math.min(preserveCursorPos, text.length))
         : 0;
 
-    editorView.dispatch({
-        changes: { from: 0, to: editorView.state.doc.length, insert: text },
-        effects: setAllLineTypesEffect.of(types),
-        selection: { anchor },
-    });
+    // Suppress markUnsaved for this programmatic dispatch — it's a load,
+    // not a user edit.
+    suppressUnsaved = true;
+    try {
+        editorView.dispatch({
+            changes: { from: 0, to: editorView.state.doc.length, insert: text },
+            effects: setAllLineTypesEffect.of(types),
+            selection: { anchor },
+        });
+    } finally {
+        suppressUnsaved = false;
+    }
 
-    // Sync mode UI to first non-blank type
-    for (const t of types) {
-        if (t && t !== 'blank') {
-            const m = lineTypeToMode(t);
-            if (m) { setModeUI(m); break; }
+    // Sync mode to the cursor's actual line. If cursor is on an empty line,
+    // detectModeFromCursor leaves currentMode alone — so fall back to the
+    // first non-blank line's type as a reasonable default.
+    detectModeFromCursor(editorView.state);
+    const cursorLine = editorView.state.doc.lineAt(editorView.state.selection.main.head);
+    if (cursorLine.text === '') {
+        for (const t of types) {
+            if (t && t !== 'blank') {
+                const m = lineTypeToMode(t);
+                if (m) { setModeUI(m); break; }
+            }
         }
     }
 }
@@ -1178,7 +1254,7 @@ function createEditor(container) {
 
                 EditorView.updateListener.of((update) => {
                     if (update.selectionSet || update.docChanged) updateCursorStatus(update.state);
-                    if (update.docChanged) {
+                    if (update.docChanged && !suppressUnsaved) {
                         markUnsaved();
                         checkAutocompleteContext();
                     }
