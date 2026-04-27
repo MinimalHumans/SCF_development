@@ -321,6 +321,68 @@ register(EntityDef(
 ))
 
 # ---------------------------------------------------------------------------
+# Act (Story Structure)
+# ---------------------------------------------------------------------------
+register(EntityDef(
+    name="act",
+    label="Act",
+    label_plural="Acts",
+    icon="🎭",
+    category="Story Structure",
+    sort_order=30,
+    description="A major structural division of the story.",
+    fields=[
+        FieldDef("name", "Act Name", required=True,
+                 placeholder="e.g. Act One, The Setup, Episode 1 Act A"),
+        FieldDef("act_number", "Act Number", "integer",
+                 placeholder="Position in the structure: 1, 2, 3..."),
+        FieldDef("function", "Function", "textarea",
+                 placeholder="What does this act do in the story?"),
+        FieldDef("dramatic_question", "Dramatic Question", "textarea",
+                 placeholder="The central question this act poses"),
+        FieldDef("shift", "Shift", "textarea",
+                 placeholder="What changes from the start to the end of this act?"),
+        FieldDef("summary", "Summary", "textarea"),
+        FieldDef("status", "Status", "select", options=[
+            "Outline", "Draft", "Revised", "Locked"
+        ], default="Outline"),
+        FieldDef("notes", "Notes", "textarea", tab="Notes"),
+    ],
+))
+
+# ---------------------------------------------------------------------------
+# Sequence (Story Structure)
+# ---------------------------------------------------------------------------
+register(EntityDef(
+    name="sequence",
+    label="Sequence",
+    label_plural="Sequences",
+    icon="📑",
+    category="Story Structure",
+    sort_order=35,
+    description="A group of related scenes forming a narrative unit.",
+    fields=[
+        FieldDef("name", "Sequence Name", required=True, placeholder="e.g. The Heist"),
+        FieldDef("sequence_number", "Sequence Number", "integer"),
+        FieldDef("act_id", "Act", "reference", reference_entity="act"),
+        FieldDef("summary", "Summary", "textarea"),
+        FieldDef("goal", "Goal", "textarea",
+                 placeholder="What is being pursued in this sequence?"),
+        FieldDef("conflict", "Conflict", "textarea",
+                 placeholder="What stands in the way?"),
+        FieldDef("outcome", "Outcome / Resolution", "textarea",
+                 placeholder="How does the sequence resolve — success, failure, complication?"),
+        FieldDef("purpose", "Dramatic Purpose", "textarea"),
+        FieldDef("turning_point", "Turning Point", "textarea",
+                 placeholder="What changes by the end of this sequence?"),
+        FieldDef("status", "Status", "select", options=[
+            "Outline", "Draft", "Revised", "Locked"
+        ], default="Outline"),
+        FieldDef("notes", "Notes", "textarea", tab="Notes"),
+    ],
+))
+
+# ---------------------------------------------------------------------------
 # Scene
 # ---------------------------------------------------------------------------
 register(EntityDef(
@@ -384,6 +446,42 @@ register(EntityDef(
 ))
 
 # ---------------------------------------------------------------------------
+# Story Beat (Story Structure — sub-scene)
+# ---------------------------------------------------------------------------
+register(EntityDef(
+    name="story_beat",
+    label="Story Beat",
+    label_plural="Story Beats",
+    icon="🎯",
+    category="Story Structure",
+    sort_order=42,
+    description="A discrete narrative unit within a scene — a moment of change.",
+    fields=[
+        FieldDef("name", "Beat Name", required=True,
+                 placeholder="e.g. Eleanor finds the letter"),
+        FieldDef("scene_id", "Scene", "reference",
+                 reference_entity="scene",
+                 help_text="Required to be useful — assign before saving."),
+        FieldDef("beat_order", "Order in Scene", "integer",
+                 placeholder="1, 2, 3..."),
+        FieldDef("beat_type", "Beat Type", "select", options=[
+            "Setup", "Action", "Reaction", "Decision",
+            "Discovery", "Revelation", "Reversal", "Payoff", "Other"
+        ]),
+        FieldDef("description", "Description", "textarea",
+                 placeholder="What happens in this beat?"),
+        FieldDef("purpose", "Purpose", "textarea",
+                 placeholder="Why does this beat exist? What does it accomplish?"),
+        FieldDef("value_shift", "Value Shift", "text",
+                 placeholder="e.g. Hope → Despair, Trust → Doubt"),
+        FieldDef("pov_character_id", "POV Character", "reference",
+                 reference_entity="character",
+                 help_text="Whose perspective is this beat from? (optional)"),
+        FieldDef("notes", "Notes", "textarea"),
+    ],
+))
+
+# ---------------------------------------------------------------------------
 # Theme (Vision Layer)
 # ---------------------------------------------------------------------------
 register(EntityDef(
@@ -406,32 +504,6 @@ register(EntityDef(
                  placeholder="Scenes where this theme is most prominent"),
         FieldDef("evolution", "Thematic Evolution", "textarea",
                  placeholder="How does this theme develop across the story?"),
-        FieldDef("notes", "Notes", "textarea", tab="Notes"),
-    ],
-))
-
-# ---------------------------------------------------------------------------
-# Sequence (Story Structure)
-# ---------------------------------------------------------------------------
-register(EntityDef(
-    name="sequence",
-    label="Sequence",
-    label_plural="Sequences",
-    icon="📑",
-    category="Story Structure",
-    sort_order=35,
-    description="A group of related scenes forming a narrative unit.",
-    fields=[
-        FieldDef("name", "Sequence Name", required=True, placeholder="e.g. The Heist"),
-        FieldDef("sequence_number", "Sequence Number", "integer"),
-        FieldDef("act", "Act", "select", options=["Act 1", "Act 2A", "Act 2B", "Act 3"]),
-        FieldDef("summary", "Summary", "textarea"),
-        FieldDef("purpose", "Dramatic Purpose", "textarea"),
-        FieldDef("turning_point", "Turning Point", "textarea",
-                 placeholder="What changes by the end of this sequence?"),
-        FieldDef("status", "Status", "select", options=[
-            "Outline", "Draft", "Revised", "Locked"
-        ], default="Outline"),
         FieldDef("notes", "Notes", "textarea", tab="Notes"),
     ],
 ))
@@ -3124,6 +3196,7 @@ register(EntityDef(
 # Tier 1 = schema-defined, visible but marked as "in development"
 _TIER_0_ENTITIES = {
     "project", "character", "location", "prop", "scene", "theme", "sequence",
+    "act", "story_beat",
     "scene_character", "scene_prop", "scene_sequence",
 }
 for _name, _entity in ENTITY_REGISTRY.items():

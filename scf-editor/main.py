@@ -99,8 +99,11 @@ def _get_relationship_data(db_path: Path, entity_type: str, entity_id: int):
         if entity_type == "scene":
             linked_data["characters"] = _query_links(conn, "scene", entity_id, "characters")
             linked_data["props"] = _query_links(conn, "scene", entity_id, "props")
+            linked_data["story_beats"] = _query_links(conn, "scene", entity_id, "story_beats")
         elif entity_type == "sequence":
             linked_data["scenes"] = _query_links(conn, "sequence", entity_id, "scenes")
+        elif entity_type == "act":
+            linked_data["sequences"] = _query_links(conn, "act", entity_id, "sequences")
         elif entity_type == "character":
             reverse_links = _query_links(conn, "character", entity_id, "scenes")
         elif entity_type == "prop":
@@ -797,6 +800,25 @@ def _query_links(conn, parent_type: str, parent_id: int, link_type: str) -> list
             FROM scene s
             WHERE s.location_id = ?
             ORDER BY s.scene_number ASC, s.id ASC
+        """, (parent_id,)).fetchall()
+        return [{"link_id": None, **dict(r)} for r in rows]
+
+    elif parent_type == "act" and link_type == "sequences":
+        rows = conn.execute("""
+            SELECT s.id AS entity_id, s.name AS entity_name, s.sequence_number
+            FROM sequence s
+            WHERE s.act_id = ?
+            ORDER BY s.sequence_number ASC, s.id ASC
+        """, (parent_id,)).fetchall()
+        return [{"link_id": None, **dict(r)} for r in rows]
+
+    elif parent_type == "scene" and link_type == "story_beats":
+        rows = conn.execute("""
+            SELECT sb.id AS entity_id, sb.name AS entity_name,
+                   sb.beat_order, sb.beat_type
+            FROM story_beat sb
+            WHERE sb.scene_id = ?
+            ORDER BY sb.beat_order ASC, sb.id ASC
         """, (parent_id,)).fetchall()
         return [{"link_id": None, **dict(r)} for r in rows]
 

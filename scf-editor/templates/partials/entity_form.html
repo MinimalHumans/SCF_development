@@ -225,6 +225,13 @@
         {% set current_links = linked_data.get("props", []) if linked_data is defined else [] %}
         {% include "partials/link_panel.html" %}
 
+        {# Story Beats in this scene (reverse FK) #}
+        {% set reverse_label = "Story Beats" %}
+        {% set reverse_meta_field = "beat_type" %}
+        {% set reverse_link_type = "story_beat" %}
+        {% set reverse_links = linked_data.get("story_beats", []) %}
+        {% include "partials/reverse_links.html" %}
+
     {% elif entity_type == "sequence" %}
         {# Scenes in this sequence #}
         {% set link_label = "Scenes in Sequence" %}
@@ -237,6 +244,14 @@
         {% set show_order = true %}
         {% set current_links = linked_data.get("scenes", []) if linked_data is defined else [] %}
         {% include "partials/link_panel.html" %}
+
+    {% elif entity_type == "act" %}
+        {# Sequences in this act (reverse FK) #}
+        {% set reverse_label = "Sequences in this Act" %}
+        {% set reverse_meta_field = "" %}
+        {% set reverse_link_type = "sequence" %}
+        {% set reverse_links = linked_data.get("sequences", []) %}
+        {% include "partials/reverse_links.html" %}
 
     {% elif entity_type == "character" %}
         {% set reverse_label = "Appears In" %}

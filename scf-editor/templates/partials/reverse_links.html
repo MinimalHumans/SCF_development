@@ -1,19 +1,25 @@
-{# Read-only "Appears In" section for character, prop, location editors.
+{# Read-only "Appears In" section for character, prop, location, act, and scene editors.
    Parameters (set before including):
-     reverse_label     — e.g. "Appears In", "Scenes at this Location"
-     reverse_links     — list of dicts with entity_id, entity_name, scene_number, + optional meta
-     reverse_meta_field — optional: which meta field to show as badge (e.g. "role_in_scene", "significance")
+     reverse_label     — e.g. "Appears In", "Scenes at this Location", "Story Beats"
+     reverse_links     — list of dicts with entity_id, entity_name, + optional meta
+                         and an optional ordering field (scene_number, beat_order, sequence_number)
+     reverse_meta_field — optional: which meta field to show as badge (e.g. "role_in_scene", "significance", "beat_type")
+     reverse_link_type — optional: target entity type for the link (defaults to "scene")
+                         use "story_beat" for scene→beats, "sequence" for act→sequences
 #}
+
+{% set _link_type = reverse_link_type | default("scene") %}
 
 {% if reverse_links is defined and reverse_links|length > 0 %}
 <div class="appears-in">
     <div class="appears-in-header">{{ reverse_label }}</div>
     <div class="appears-in-list">
         {% for item in reverse_links %}
-        <a href="/browse?entity_type=scene&entity_id={{ item.entity_id }}"
+        <a href="/browse?entity_type={{ _link_type }}&entity_id={{ item.entity_id }}"
            class="appears-in-item">
             <span class="appears-in-number">
-                {% if item.scene_number %}#{{ item.scene_number }}{% else %}—{% endif %}
+                {% set num = item.scene_number or item.beat_order or item.sequence_number %}
+                {% if num %}#{{ num }}{% else %}—{% endif %}
             </span>
             <span class="appears-in-name">{{ item.entity_name }}</span>
             {% if reverse_meta_field is defined and item.get(reverse_meta_field) %}
@@ -26,6 +32,6 @@
 {% elif reverse_links is defined %}
 <div class="appears-in">
     <div class="appears-in-header">{{ reverse_label }}</div>
-    <div class="appears-in-empty">No linked scenes yet.</div>
+    <div class="appears-in-empty">Nothing linked yet.</div>
 </div>
 {% endif %}
