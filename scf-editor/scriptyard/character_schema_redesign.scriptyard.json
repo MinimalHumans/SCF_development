@@ -1,0 +1,691 @@
+{
+  "schemaVersion": 1,
+  "boardId": "snQlpbvkZ88ctYRtdnbZp",
+  "name": "Character Schema Redesign",
+  "createdAt": "2026-05-11T10:54:35.232Z",
+  "updatedAt": "2026-05-12T16:41:22.536Z",
+  "viewport": {
+    "x": 1406.25885173472,
+    "y": 2489.3151156309773,
+    "zoom": 0.3345251945788071
+  },
+  "cards": [
+    {
+      "id": "6cDRE6TOKdwcbjyblESdi",
+      "entityId": "sW3voj0SSlcMxqlyrRSdT",
+      "type": "Thought",
+      "position": {
+        "x": 3390.3269454431297,
+        "y": 3333.5402809673974
+      },
+      "rotation": 0,
+      "color": "sky",
+      "zIndex": 1017,
+      "noteRaw": "Project level value - if one were to be using shot reference for either using directly or using to drive generations.",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "Performance-first"
+    },
+    {
+      "id": "BNLRcMRX3sPHap0SIFq_D",
+      "entityId": "o8WIe7PwP2BPGNG__Z45V",
+      "type": "Thought",
+      "position": {
+        "x": 3788.811844738388,
+        "y": 3334.455476399564
+      },
+      "rotation": 0,
+      "color": "amber",
+      "zIndex": 1020,
+      "noteRaw": "Project level value - if one were planning to generate the film using SCF",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "Generation-first"
+    },
+    {
+      "id": "0OeGhlJnzh0RudtgoVkgg",
+      "entityId": "r4prr_9U7y51ttH07G9S-",
+      "type": "Thought",
+      "position": {
+        "x": 4844.377976480097,
+        "y": 3643.9905965802423
+      },
+      "rotation": 0,
+      "color": "wine",
+      "zIndex": 1008,
+      "noteRaw": "might contain a LoRA for example",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "visual_indentity"
+    },
+    {
+      "id": "iCHdWxsp0iOxiHl1WByS0",
+      "entityId": "DmO_IwOTUrSPsRb4dFauV",
+      "type": "Thought",
+      "position": {
+        "x": 4845.096225894205,
+        "y": 3758.4317223631947
+      },
+      "rotation": 0,
+      "color": "rust",
+      "zIndex": 1011,
+      "noteRaw": "might contain an ElevenLabs voice",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "voice_indentity"
+    },
+    {
+      "id": "LWy3TBAexPDT93KF1T317",
+      "entityId": "pY80yGCsqHlA9NHc1GfO9",
+      "type": "Thought",
+      "position": {
+        "x": 4850.198496108027,
+        "y": 3889.7933096972074
+      },
+      "rotation": 0,
+      "color": "rose",
+      "zIndex": 1013,
+      "noteRaw": "might contain mocap FBX",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "motion_behavior"
+    },
+    {
+      "id": "RCupAl8QgCAWtfuYAcGUo",
+      "entityId": "ChVMBVlOwtiwimdGswDdU",
+      "type": "Thought",
+      "position": {
+        "x": 4274.205262514194,
+        "y": 3324.9689084764987
+      },
+      "rotation": 0,
+      "color": "mauve",
+      "zIndex": 1026,
+      "noteRaw": "A character is not a specific visual because it could be the character as a child or as an elderly person, before the accident and after etc.",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "Conditional Binding"
+    },
+    {
+      "id": "wh0DRHOsAil-pegEg5LWn",
+      "entityId": "sX8KibF-KT8L6Az_-Y3Q_",
+      "type": "Thought",
+      "position": {
+        "x": 3395.0729088172816,
+        "y": 3524.5580301978266
+      },
+      "rotation": 0,
+      "color": "sky",
+      "zIndex": 1025,
+      "noteRaw": "when present, becomes Canonical, superseding the need for for other designed reference.",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "Performance Corpus"
+    },
+    {
+      "id": "jltsZoTq6FN5denTK0IID",
+      "entityId": "Al1-_yyHQN2dHmtsI2atl",
+      "type": "Thought",
+      "position": {
+        "x": 3548.5382202650803,
+        "y": 3044.4259256096025
+      },
+      "rotation": 0,
+      "color": "emerald",
+      "zIndex": 1029,
+      "noteRaw": "One can define the intended workflow at the top of the project which defines the preferences, but exceptions can explicitly made. A performance ref for a generation-first project and vice versa.",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "Workflow declared, exceptions explicit."
+    },
+    {
+      "id": "e3WEQYISFhfX0LVY-L81p",
+      "entityId": "CYmjKKC-rGm48YwvFtcNS",
+      "type": "Thought",
+      "position": {
+        "x": 4284.221570982985,
+        "y": 3528.8634668831114
+      },
+      "rotation": 0,
+      "color": "fog",
+      "zIndex": 1030,
+      "noteRaw": "Workflows should be non-destructive (within the format). Sources stay intact and modifications are a layer (such as a crop or a frame extraction from an image sequence).",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "Preserve information (inputs), never destroy"
+    },
+    {
+      "id": "aqAHpZgbCtib9gsxubCgV",
+      "entityId": "4E6GEZ1RPeEe8VXddjI93",
+      "type": "Thought",
+      "position": {
+        "x": 4595.673869167562,
+        "y": 3035.7703264916095
+      },
+      "rotation": 0,
+      "color": "emerald",
+      "zIndex": 1032,
+      "noteRaw": "This is largely for the character bundle pattern but it should be generalized enough to allow other entities to use it later in the design process.",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "Universal Bundle Pattern"
+    },
+    {
+      "id": "_LbryJVONXTyiQvyhj4GN",
+      "entityId": "k2XvXh_DQ5MmCf9X2Rgxn",
+      "type": "Thought",
+      "position": {
+        "x": 4087.399981899437,
+        "y": 3034.005676155431
+      },
+      "rotation": 0,
+      "color": "emerald",
+      "zIndex": 1034,
+      "noteRaw": "This is not a format production tracking, this is for narrative element collection only. Upstream tools like Ftrack or OMC",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "Story First Approach"
+    },
+    {
+      "id": "fk3tmeTaVkB0WT2mC7EmA",
+      "entityId": "cPVJWqjb5ofVwVyffex5h",
+      "type": "Thought",
+      "position": {
+        "x": 2899.018673956545,
+        "y": 4074.655240943661
+      },
+      "rotation": 0,
+      "color": "sage",
+      "zIndex": 1035,
+      "noteRaw": "slimmed down from current implementation, aspects are split out into the tier 2 description entities.",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "character"
+    },
+    {
+      "id": "6O3OQCjJjalhE-VK4jvm_",
+      "entityId": "6hI7lXVDGRIUUA6ffgae7",
+      "type": "Thought",
+      "position": {
+        "x": 2901.951212721214,
+        "y": 4242.910294408613
+      },
+      "rotation": 0,
+      "color": "sage",
+      "zIndex": 1037,
+      "noteRaw": "already exists in the schema for a variety of uses.",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "character_variant"
+    },
+    {
+      "id": "wmVNXE-K8DAqePxn9QrMn",
+      "entityId": "va5KO0w7_ckFU4yglmsTo",
+      "type": "Thought",
+      "position": {
+        "x": 3260.4554778474303,
+        "y": 4076.8546534072552
+      },
+      "rotation": 0,
+      "color": "sky",
+      "zIndex": 1039,
+      "noteRaw": "physical_character_profile, \nvocal_profile, delivery_profile, \nfacial_expression_profile, \ncharacter_appearance_profile, costume, \ncostume_progression, \nmakeup_hair_design, \ncharacter_color_identity, \nphysical_habit, \ncharacter_relationship",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "Tier 2 Entities"
+    },
+    {
+      "id": "zoK5msYbPLsPNbcRalAu3",
+      "entityId": "eR2uxZ57RUJyZ8iPULDcI",
+      "type": "Thought",
+      "position": {
+        "x": 3774.5632956609857,
+        "y": 4057.75497554445
+      },
+      "rotation": 0,
+      "color": "crimson",
+      "zIndex": 1041,
+      "noteRaw": "named, intent-typed collection of assets (versionable)",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "bundle"
+    },
+    {
+      "id": "pO2oUgCsWtJFE3vWZ9MT2",
+      "entityId": "WxF5ORfR4yHQZhIzunNIu",
+      "type": "Thought",
+      "position": {
+        "x": 3776.7507876382324,
+        "y": 4227.827269891607
+      },
+      "rotation": 0,
+      "color": "emerald",
+      "zIndex": 1043,
+      "noteRaw": "junction linking assets into a bundle with role and order",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "bundle_asset"
+    },
+    {
+      "id": "4oMJEJ9gtl7SebsWo5Nxp",
+      "entityId": "b-MGg5tnh629F_Bdfvq3l",
+      "type": "Thought",
+      "position": {
+        "x": 4161.190837217038,
+        "y": 4056.661279622018
+      },
+      "rotation": 0,
+      "color": "cobalt",
+      "zIndex": 1045,
+      "noteRaw": " applies a bundle to a character under specific conditions\n",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "character_asset_binding"
+    },
+    {
+      "id": "ZR5AOqlw8Kb8W7nBBE7Ke",
+      "entityId": "_nZ-BxKze_ribH7sHtxAg",
+      "type": "Thought",
+      "position": {
+        "x": 4167.7530127516375,
+        "y": 4229.467938940733
+      },
+      "rotation": 0,
+      "color": "gold",
+      "zIndex": 1047,
+      "noteRaw": "known-good single-frame canonical references for QA and locking",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "indentity_anchor"
+    },
+    {
+      "id": "LZnjF3OHowWwKYIXRSI2X",
+      "entityId": "0srNxxcZdUkJfWjJFToh4",
+      "type": "Thought",
+      "position": {
+        "x": 2941.1542859545834,
+        "y": 4608.986381901683
+      },
+      "rotation": 0,
+      "color": "coral",
+      "zIndex": 1063,
+      "noteRaw": "project-level singleton describing the body of capture",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "performance_corpus"
+    },
+    {
+      "id": "JD3L1PbwWPQue2HKDe4qH",
+      "entityId": "laSjfyYgwNJpa2G_Bty7-",
+      "type": "Thought",
+      "position": {
+        "x": 2579.682301342586,
+        "y": 4775.777488349159
+      },
+      "rotation": 0,
+      "color": "teal",
+      "zIndex": 1051,
+      "noteRaw": "project-level minimal entity, seperate from character because mukiple actors can play the same character (young, old etc.)",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "actor"
+    },
+    {
+      "id": "vZuZokYNcTR3ajrJlJEWI",
+      "entityId": "r2XHzdYX2Xh7_kepSS9zG",
+      "type": "Thought",
+      "position": {
+        "x": 2582.4166162479546,
+        "y": 4950.771539512742
+      },
+      "rotation": 0,
+      "color": "teal",
+      "zIndex": 1053,
+      "noteRaw": "junction (actors and characters with role context)",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "actor_character_role"
+    },
+    {
+      "id": "ezQ3fzL5mM1ENqgS6VtS6",
+      "entityId": "gpMSIkG2_YYYTRFxzZduM",
+      "type": "Thought",
+      "position": {
+        "x": 2946.6229157653192,
+        "y": 4784.527155861007
+      },
+      "rotation": 0,
+      "color": "pine",
+      "zIndex": 1058,
+      "noteRaw": "a single recorded take",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "take"
+    },
+    {
+      "id": "n6jxu3ATWZQU_d4A14tV5",
+      "entityId": "D0AkFsyj8sd4s-Wzt7mwu",
+      "type": "Thought",
+      "position": {
+        "x": 2954.2172265978706,
+        "y": 4949.616082701067
+      },
+      "rotation": 0,
+      "color": "pine",
+      "zIndex": 1057,
+      "noteRaw": " junction (takes can cross scenes)",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "take_scene"
+    },
+    {
+      "id": "C_U1zwBNXJjR-wQ5xR9eB",
+      "entityId": "A5CUehJFHt4bUxVXnN9oj",
+      "type": "Thought",
+      "position": {
+        "x": 3310.282292222183,
+        "y": 4787.261470766374
+      },
+      "rotation": 0,
+      "color": "rust",
+      "zIndex": 1060,
+      "noteRaw": "a meaningful within-scene segment of a take",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "clip"
+    },
+    {
+      "id": "wPq7XJ1u7WbpI3PfMG6Wx",
+      "entityId": "JK9cWVO2dlYe5O_qvz8il",
+      "type": "Thought",
+      "position": {
+        "x": 3318.9702489109773,
+        "y": 4943.6007300945885
+      },
+      "rotation": 0,
+      "color": "rust",
+      "zIndex": 1062,
+      "noteRaw": " junction (which characters appear in which clips)",
+      "instanceNote": "",
+      "isFlipped": false,
+      "title": "clip_character"
+    }
+  ],
+  "entities": [
+    {
+      "id": "sW3voj0SSlcMxqlyrRSdT",
+      "type": "Thought",
+      "title": "Performance-first",
+      "noteRaw": "Project level value - if one were to be using shot reference for either using directly or using to drive generations.",
+      "attributes": {}
+    },
+    {
+      "id": "o8WIe7PwP2BPGNG__Z45V",
+      "type": "Thought",
+      "title": "Generation-first",
+      "noteRaw": "Project level value - if one were planning to generate the film using SCF",
+      "attributes": {}
+    },
+    {
+      "id": "r4prr_9U7y51ttH07G9S-",
+      "type": "Thought",
+      "title": "visual_indentity",
+      "noteRaw": "might contain a LoRA for example",
+      "attributes": {}
+    },
+    {
+      "id": "DmO_IwOTUrSPsRb4dFauV",
+      "type": "Thought",
+      "title": "voice_indentity",
+      "noteRaw": "might contain an ElevenLabs voice",
+      "attributes": {}
+    },
+    {
+      "id": "pY80yGCsqHlA9NHc1GfO9",
+      "type": "Thought",
+      "title": "motion_behavior",
+      "noteRaw": "might contain mocap FBX",
+      "attributes": {}
+    },
+    {
+      "id": "ChVMBVlOwtiwimdGswDdU",
+      "type": "Thought",
+      "title": "Conditional Binding",
+      "noteRaw": "A character is not a specific visual because it could be the character as a child or as an elderly person, before the accident and after etc.",
+      "attributes": {}
+    },
+    {
+      "id": "sX8KibF-KT8L6Az_-Y3Q_",
+      "type": "Thought",
+      "title": "Performance Corpus",
+      "noteRaw": "when present, becomes Canonical, superseding the need for for other designed reference.",
+      "attributes": {}
+    },
+    {
+      "id": "Al1-_yyHQN2dHmtsI2atl",
+      "type": "Thought",
+      "title": "Workflow declared, exceptions explicit.",
+      "noteRaw": "One can define the intended workflow at the top of the project which defines the preferences, but exceptions can explicitly made. A performance ref for a generation-first project and vice versa.",
+      "attributes": {}
+    },
+    {
+      "id": "CYmjKKC-rGm48YwvFtcNS",
+      "type": "Thought",
+      "title": "Preserve information (inputs), never destroy",
+      "noteRaw": "Workflows should be non-destructive (within the format). Sources stay intact and modifications are a layer (such as a crop or a frame extraction from an image sequence).",
+      "attributes": {}
+    },
+    {
+      "id": "4E6GEZ1RPeEe8VXddjI93",
+      "type": "Thought",
+      "title": "Universal Bundle Pattern",
+      "noteRaw": "This is largely for the character bundle pattern but it should be generalized enough to allow other entities to use it later in the design process.",
+      "attributes": {}
+    },
+    {
+      "id": "k2XvXh_DQ5MmCf9X2Rgxn",
+      "type": "Thought",
+      "title": "Story First Approach",
+      "noteRaw": "This is not a format production tracking, this is for narrative element collection only. Upstream tools like Ftrack or OMC",
+      "attributes": {}
+    },
+    {
+      "id": "cPVJWqjb5ofVwVyffex5h",
+      "type": "Thought",
+      "title": "character",
+      "noteRaw": "slimmed down from current implementation, aspects are split out into the tier 2 description entities.",
+      "attributes": {}
+    },
+    {
+      "id": "6hI7lXVDGRIUUA6ffgae7",
+      "type": "Thought",
+      "title": "character_variant",
+      "noteRaw": "already exists in the schema for a variety of uses.",
+      "attributes": {}
+    },
+    {
+      "id": "va5KO0w7_ckFU4yglmsTo",
+      "type": "Thought",
+      "title": "Tier 2 Entities",
+      "noteRaw": "physical_character_profile, \nvocal_profile, delivery_profile, \nfacial_expression_profile, \ncharacter_appearance_profile, costume, \ncostume_progression, \nmakeup_hair_design, \ncharacter_color_identity, \nphysical_habit, \ncharacter_relationship",
+      "attributes": {}
+    },
+    {
+      "id": "eR2uxZ57RUJyZ8iPULDcI",
+      "type": "Thought",
+      "title": "bundle",
+      "noteRaw": "named, intent-typed collection of assets (versionable)",
+      "attributes": {}
+    },
+    {
+      "id": "WxF5ORfR4yHQZhIzunNIu",
+      "type": "Thought",
+      "title": "bundle_asset",
+      "noteRaw": "junction linking assets into a bundle with role and order",
+      "attributes": {}
+    },
+    {
+      "id": "b-MGg5tnh629F_Bdfvq3l",
+      "type": "Thought",
+      "title": "character_asset_binding",
+      "noteRaw": " applies a bundle to a character under specific conditions\n",
+      "attributes": {}
+    },
+    {
+      "id": "_nZ-BxKze_ribH7sHtxAg",
+      "type": "Thought",
+      "title": "indentity_anchor",
+      "noteRaw": "known-good single-frame canonical references for QA and locking",
+      "attributes": {}
+    },
+    {
+      "id": "0srNxxcZdUkJfWjJFToh4",
+      "type": "Thought",
+      "title": "performance_corpus",
+      "noteRaw": "project-level singleton describing the body of capture",
+      "attributes": {}
+    },
+    {
+      "id": "laSjfyYgwNJpa2G_Bty7-",
+      "type": "Thought",
+      "title": "actor",
+      "noteRaw": "project-level minimal entity, seperate from character because mukiple actors can play the same character (young, old etc.)",
+      "attributes": {}
+    },
+    {
+      "id": "r2XHzdYX2Xh7_kepSS9zG",
+      "type": "Thought",
+      "title": "actor_character_role",
+      "noteRaw": "junction (actors and characters with role context)",
+      "attributes": {}
+    },
+    {
+      "id": "gpMSIkG2_YYYTRFxzZduM",
+      "type": "Thought",
+      "title": "take",
+      "noteRaw": "a single recorded take",
+      "attributes": {}
+    },
+    {
+      "id": "D0AkFsyj8sd4s-Wzt7mwu",
+      "type": "Thought",
+      "title": "take_scene",
+      "noteRaw": " junction (takes can cross scenes)",
+      "attributes": {}
+    },
+    {
+      "id": "A5CUehJFHt4bUxVXnN9oj",
+      "type": "Thought",
+      "title": "clip",
+      "noteRaw": "a meaningful within-scene segment of a take",
+      "attributes": {}
+    },
+    {
+      "id": "JK9cWVO2dlYe5O_qvz8il",
+      "type": "Thought",
+      "title": "clip_character",
+      "noteRaw": " junction (which characters appear in which clips)",
+      "attributes": {}
+    }
+  ],
+  "backdrops": [
+    {
+      "note": "",
+      "id": "khb2u8nH8CWPx10rboq2O",
+      "type": "Custom",
+      "title": "Tool Agnostic Media Bundles",
+      "position": {
+        "x": 4781.404252022296,
+        "y": 3486.9517799465852
+      },
+      "size": {
+        "width": 644.666748046875,
+        "height": 752
+      },
+      "color": "emerald",
+      "zIndex": 50,
+      "attributes": {
+        "description": "a bundle might contain sub-bundles declaring intent for the related content. "
+      }
+    },
+    {
+      "note": "",
+      "id": "cMzIxBEdkri89tVAKrzm9",
+      "type": "Custom",
+      "title": "Layer 1 — Identity (description only)",
+      "position": {
+        "x": 2801.5567797653266,
+        "y": 3931.505952137427
+      },
+      "size": {
+        "width": 907.2951027108606,
+        "height": 516.5716050485211
+      },
+      "color": "amber",
+      "zIndex": 50,
+      "attributes": {
+        "description": "What the character is, narratively and personally. No media, no presentation specifics."
+      }
+    },
+    {
+      "note": "",
+      "id": "Hti8HaMtZWZQI-7CuOSQc",
+      "type": "Custom",
+      "title": "Layer 2 — Asset reference (the bundle pattern)",
+      "position": {
+        "x": 3748.8518824761873,
+        "y": 3931.505952137427
+      },
+      "size": {
+        "width": 907.2951027108606,
+        "height": 516.5716050485211
+      },
+      "color": "violet",
+      "zIndex": 50,
+      "attributes": {
+        "description": "Tool-agnostic mechanism for attaching media to characters under conditions."
+      }
+    },
+    {
+      "note": "",
+      "id": "tf7F2H7uxb9bOa_LIbhTN",
+      "type": "Custom",
+      "title": "Layer 3 — Performance corpus",
+      "position": {
+        "x": 2549.188995963731,
+        "y": 4477.268578485352
+      },
+      "size": {
+        "width": 1155.5679321998405,
+        "height": 663.1291616993178
+      },
+      "color": "rose",
+      "zIndex": 50,
+      "attributes": {
+        "description": "Project-level index of captured footage. Only populated when shooting happens, but always queryable."
+      }
+    },
+    {
+      "note": "",
+      "id": "47qazKbn1seIRrRz3DVRT",
+      "type": "Custom",
+      "title": "Layer 2 — Asset reference (the bundle pattern)",
+      "position": {
+        "x": 3747.8981513085027,
+        "y": 4480.549716318843
+      },
+      "size": {
+        "width": 907.2951027108606,
+        "height": 516.5716050485211
+      },
+      "color": "violet",
+      "zIndex": 50,
+      "attributes": {
+        "description": "Tool-agnostic mechanism for attaching media to characters under conditions."
+      }
+    }
+  ],
+  "projectInfo": {
+    "credit": "Minimal Humans"
+  }
+}
