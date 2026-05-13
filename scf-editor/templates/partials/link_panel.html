@@ -33,8 +33,7 @@
         {% for link in current_links %}
         <div class="link-chip" data-link-id="{{ link.link_id }}">
             <a href="/browse?entity_type={{ link_entity_type }}&entity_id={{ link.entity_id }}"
-               class="link-chip-name">{{ link.entity_name }}</a>
-
+                class="link-chip-name">{{ link.entity_name or ('Scene #' + (link.scene_number|string) if link.scene_number else '#' + (link.entity_id|string)) }}</a>
             {% if show_order is defined and show_order %}
             <input type="number"
                    class="link-chip-order"
