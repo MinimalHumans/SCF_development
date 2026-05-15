@@ -1,6 +1,6 @@
 # SCF Schema Snapshot
 
-*Compact reference for orientation. Auto-generated from `entity_registry.py` on 2026-05-13 UTC. For full field-level detail, see `schema_reference.md`.*
+*Compact reference for orientation. Auto-generated from `entity_registry.py` on 2026-05-15 UTC. For full field-level detail, see `schema_reference.md`.*
 
 ## What SCF is
 
@@ -84,7 +84,12 @@ Tools query the axis relevant to their job. Compressing axes into a single field
 
 ### Casing convention
 
-**All enum values across the schema are lowercase.** Display layers may capitalize for UI; the stored value is canonical lowercase. This sidesteps "is this a display label or a value?" comparison bugs across tools.
+**All enum values across the schema are lowercase**, with two carve-outs for legibility:
+
+- **Acronyms stay uppercase.** Camera framing acronyms (`EWS`, `WS`, `MS`, `MCU`, `CU`, `ECU`, `OTS`, `POV`), color spaces (`Rec.709`, `DCI-P3`), standards (`ACES`, `DCP`, `BVH`), resolution tokens (`2K`, `4K`, `8K`), mixed-case proper nouns (`ProRes`, `ARRIRAW`, `REDCODE`, `ARRI`, `Dolby`, `Atmos`, `Stereo`). The principle: when a token is a domain acronym or proper noun that everyone in film/VFX writes a specific way, we honor that — strict lowercase would harm legibility (`mcu` reads worse than `MCU`).
+- **Embedded punctuation and numerics preserved.** Slashes (`int/ext`, `mentor/mentee`), hyphens (`pre-production`, `actor-focused`), parens with technical content (`1.85:1 (flat)`, `intimate (0-18in)`) — only descriptive words inside are lowercased; technical content stays intact.
+
+Display layers may capitalize for UI; the stored value is canonical lowercase (with the acronym carve-outs). This sidesteps "is this a display label or a value?" comparison bugs across tools.
 
 Field names use `snake_case`. Entity names use `snake_case`. Reference fields are named `<entity>_id` (e.g. `character_id`, `scene_id`, `bundle_id`).
 
@@ -234,18 +239,27 @@ Tiers describe the natural order of population. Tier 0 entities are the structur
 
 ### Tier 0
 
-*12 entities*
+*21 entities*
 
 **Connections**
 - 🔗 **`scene_character`** — Links a character to a scene with role information.
 - 🔗 **`scene_prop`** — Links a prop to a scene with usage details.
 - 🔗 **`scene_sequence`** — Links a scene to a sequence with ordering.
+- 🔗 **`costume_scene`** — Links a costume to the scenes where it appears.
+- 🔗 **`visual_motif_appearance`** — Where a visual motif manifests (in a location, prop, costume, or scene).
+- 🔗 **`motif_manifestation`** — Where a conceptual motif manifests in the story.
+- 🔗 **`action_sequence_character`** — Links a character to an action sequence.
+- 🔗 **`asset_relationship`** — Links an asset to any entity in the project.
+- 🔗 **`bundle_asset`** — Junction: assets that compose a bundle.
+- 🔗 **`actor_character_role`** — Junction: actor + character + role type. Handles all combinations: one actor playing multiple characters, multiple actors playing one character (principal, body double, voice double, ADR, mocap).
+- 🔗 **`take_scene`** — Junction: scenes covered by a take. Takes can cross scenes.
+- 🔗 **`clip_character`** — Junction: characters present in a clip with their role.
 
 **Project**
 - 🎬 **`project`** — The root container for an SCF story project.
 
 **Story Entities**
-- 👤 **`character`** — A character in the story.
+- 👤 **`character`** — A character in the story. Identity and narrative function only — physical/vocal/wardrobe details live in Tier 2 description entities.
 - 📍 **`location`** — A location where story events take place.
 - 🔧 **`prop`** — A significant object in the story.
 
@@ -261,30 +275,10 @@ Tiers describe the natural order of population. Tier 0 entities are the structur
 
 ### Tier 1
 
-*86 entities*
-
-**Character Depth**
-- 🤝 **`character_relationship`** — Relationship between two characters with dynamics and evolution.
-- 🎨 **`character_color_identity`** — Signature color language for a character.
-- 🏃 **`physical_character_profile`** — Baseline physical existence — posture, movement, tension, energy.
-- 🗣️ **`vocal_profile`** — Baseline vocal identity — how a character sounds.
-- 🎭 **`delivery_profile`** — How a character generally delivers lines — style, access, subtext.
-- 😐 **`facial_expression_profile`** — Face as performance instrument — baseline expressions, eye/mouth behavior.
-- 👤 **`character_appearance_profile`** — Complete visual design — silhouette, distinction, evolution.
-- 👔 **`costume`** — A specific wardrobe look for a character.
-- 📈 **`costume_progression`** — How wardrobe evolves through the story arc.
-- 💇 **`makeup_hair_design`** — Non-costume appearance: makeup, hair, prosthetics.
-- 🔀 **`character_variant`** — Specific state or version of a character (e.g. Young Eleanor, Angry Marcus).
-
-**Connections**
-- 🔗 **`costume_scene`** — Links a costume to the scenes where it appears.
-- 🔗 **`visual_motif_appearance`** — Where a visual motif manifests (in a location, prop, costume, or scene).
-- 🔗 **`motif_manifestation`** — Where a conceptual motif manifests in the story.
-- 🔗 **`action_sequence_character`** — Links a character to an action sequence.
-- 🔗 **`asset_relationship`** — Links an asset to any entity in the project.
+*20 entities*
 
 **Creative Direction**
-- 🔭 **`project_vision`** — Overarching creative intent — why this story, what it means, what it should accomplish.
+- 🔭 **`project_vision`** — Overarching creative intent.
 - 🎯 **`directorial_philosophy`** — The director's approach to filmmaking on this project.
 - ⚙️ **`technical_specs`** — Technical format specifications for the project.
 - 👁️ **`visual_identity`** — Overarching aesthetic vision — the film's visual DNA.
@@ -302,16 +296,95 @@ Tiers describe the natural order of population. Tier 0 entities are the structur
 - 🪨 **`texture_philosophy`** — Approach to surface quality throughout the film.
 - 🌡️ **`color_temperature_strategy`** — Warm/cool distribution across the story.
 
+**Metadata**
+- ⚖️ **`creative_decision`** — Documented rationale for a creative choice.
+- 📝 **`collaboration_note`** — Director's guidance to specific collaborators or domains.
+- 📎 **`asset`** — External file reference — image, model, audio, document.
+
+
+### Tier 2
+
+*24 entities*
+
+**Asset Reference**
+- 📦 **`bundle`** — Named, intent-typed collection of assets. Tool-agnostic media reference primitive used by the character cluster (and later by props and locations). Versionable — participates in linear version chains.
+- 🎚️ **`character_asset_binding`** — Applies a bundle to a character under specific conditions. Tools walk the resolution cascade and use bindings to find the right media for a given character in a given scene/state.
+- 📍 **`identity_anchor`** — Known-good single frame, audio segment, or motion sample marked as canonical reference for a character. Used for both ID-locking inputs and output verification. Points into source assets without modifying them.
+
+**Character Depth**
+- 🤝 **`character_relationship`** — Relationship between two characters with dynamics and evolution.
+- 🏃 **`physical_character_profile`** — Baseline physical existence — posture, movement, tension, energy.
+- 🗣️ **`vocal_profile`** — Baseline vocal identity — how a character sounds.
+- 🎭 **`delivery_profile`** — How a character generally delivers lines.
+- 😐 **`facial_expression_profile`** — Face as performance instrument.
+- 👤 **`character_appearance_profile`** — Complete visual design — silhouette, distinction, evolution.
+- 👔 **`costume`** — A specific wardrobe look for a character.
+- 📈 **`costume_progression`** — How wardrobe evolves through the story arc.
+- 💇 **`makeup_hair_design`** — Non-costume appearance: makeup, hair, prosthetics.
+- 🔀 **`character_variant`** — Specific state or version of a character (e.g. Young Eleanor, Angry Marcus). The previous duration_type field has been removed; the variant's purpose lives in its name, context, and physical_differences fields.
+- ✋ **`physical_habit`** — Recurring physical behavior — gesture, tic, comfort behavior.
+
 **Location Depth**
 - 🏗️ **`location_design`** — Detailed visual design — architecture, materials, spatial layout.
 - 🔀 **`location_variant`** — Modified state of a location (e.g. Night version, After fire).
 - 🎨 **`location_color_scheme`** — Color palette and atmosphere for a specific location.
 - 🔉 **`location_sound_profile`** — Acoustic identity of a place — room tone, ambience, character.
 
-**Metadata**
-- ⚖️ **`creative_decision`** — Documented rationale for a creative choice.
-- 📝 **`collaboration_note`** — Director's guidance to specific collaborators or domains.
-- 📎 **`asset`** — External file reference — image, model, audio, document.
+**Performance Corpus**
+- 🎞️ **`performance_corpus`** — Project-level index of captured footage. Singleton per project. Only populated when shooting happens, but always queryable.
+- 🎭 **`actor`** — Minimal actor entity. SCF is story-first, not a casting tracker — this entity captures only what the story format needs.
+- 🎬 **`take`** — A single recorded take. May cross scenes (via take_scene junction).
+- ✂️ **`clip`** — A meaningful within-scene segment of a take. Clips are by definition within-scene; cross-scene takes get cut into multiple clips.
+
+**Workflow State**
+- 📊 **`shot_coverage`** — Production state of each shot. Multiple records per shot, ordered by status_date, give a production timeline. Most recent is canonical.
+- 🎛️ **`character_shot_override`** — Per-character deviation from the cascade for a specific shot. Versionable: only one active record per (shot, character). Multiple intents compose into a single record via override_types multiselect and the delta fields.
+
+
+### Tier 3
+
+*7 entities*
+
+**Scene Detail**
+- 💗 **`scene_emotional_target`** — Specific emotional goal and function for a scene.
+- 🎨 **`scene_color_palette`** — Specific color design for a scene.
+- 💡 **`lighting_design`** — Illumination approach for a scene.
+- 🎶 **`scene_music_design`** — Music approach for a specific scene.
+- 🏷️ **`tone_marker`** — Scene-specific tonal quality and atmosphere.
+- 🛋️ **`set_dressing`** — Objects and arrangement populating a scene's location.
+- 🎙️ **`dialogue_sound_design`** — How dialogue sounds in the world — recording aesthetic, processing.
+
+
+### Tier 4
+
+*9 entities*
+
+**Thematic Tracking**
+- 🔷 **`visual_motif`** — Recurring visual element that carries meaning.
+- 🔔 **`sonic_motif`** — Recurring sound that carries meaning.
+- 🔮 **`symbol`** — Object, image, sound, or action carrying meaning beyond the literal.
+- 💭 **`conceptual_motif`** — Recurring idea, behavior, or verbal pattern that carries thematic weight.
+- 🧊 **`subtext`** — Underlying meaning beneath surface action or dialogue.
+- 🔗 **`thematic_connection`** — How a specific element connects to a theme.
+- 🌈 **`color_symbolism`** — Thematic meanings assigned to specific colors in this story.
+- 🎞️ **`color_script`** — Visual map of color progression through the story.
+- 🎨 **`character_color_identity`** — Signature color language for a character. A directorial choice about how the character manifests visually — thematic, not fundamental.
+
+
+### Tier 5
+
+*4 entities*
+
+**Thematic Tracking**
+- 📈 **`emotional_arc`** — Overall emotional trajectory for the audience across the project.
+- 💓 **`emotional_beat`** — Specific point on the audience emotional journey.
+- 🧩 **`information_strategy`** — What the audience knows vs what characters know.
+- 🪞 **`identification_strategy`** — How the audience relates to and identifies with characters.
+
+
+### Tier 6
+
+*26 entities*
 
 **Production**
 - 📷 **`shot`** — Specific camera setup within a scene.
@@ -325,14 +398,13 @@ Tiers describe the natural order of population. Tier 0 entities are the structur
 - 🤕 **`physical_state`** — Character's physical condition at a specific story point.
 - 🗣️ **`vocal_state`** — Character's vocal condition at a specific story point.
 - 🎭 **`physical_performance_beat`** — Specific physical moment or action in a performance.
-- 🎤 **`vocal_beat`** — Specific vocal moment — a pause, sigh, voice break, volume shift.
+- 🎤 **`vocal_beat`** — Specific vocal moment.
 - 📜 **`line_delivery`** — Specific delivery instructions for a line of dialogue.
 - 🥁 **`dialogue_rhythm`** — The musicality of conversation between characters in a scene.
 - 😤 **`emotional_physicality`** — How a specific emotion manifests physically for a character.
-- ✋ **`physical_habit`** — Recurring physical behavior — gesture, tic, comfort behavior.
 - 😏 **`microexpression`** — Fleeting facial expression that reveals hidden emotion.
 - 🏠 **`character_environment_physicality`** — How a character physically inhabits a specific location.
-- 🤲 **`physical_relationship`** — How two characters physically relate — distance, touch, mirroring, power.
+- 🤲 **`physical_relationship`** — How two characters physically relate.
 - 📊 **`physical_relationship_evolution`** — How a physical relationship between characters changes at a specific scene.
 - 💃 **`movement_choreography`** — Designed movement patterns — dance, ritual, work, sport.
 - 🎼 **`musical_theme`** — Recurring melodic or harmonic idea — leitmotif.
@@ -342,35 +414,24 @@ Tiers describe the natural order of population. Tier 0 entities are the structur
 - 📢 **`voiceover_design`** — Non-diegetic or semi-diegetic speech design.
 - 🔀 **`music_sound_relationship`** — How score and sound design interact.
 
-**Scene Detail**
-- 💗 **`scene_emotional_target`** — Specific emotional goal and function for a scene.
-- 🎨 **`scene_color_palette`** — Specific color design for a scene.
-- 💡 **`lighting_design`** — Illumination approach for a scene.
-- 🎶 **`scene_music_design`** — Music approach for a specific scene.
-- 🏷️ **`tone_marker`** — Scene-specific tonal quality and atmosphere.
-- 🛋️ **`set_dressing`** — Objects and arrangement populating a scene's location.
-- 🎙️ **`dialogue_sound_design`** — How dialogue sounds in the world — recording aesthetic, processing.
 
-**Thematic Tracking**
-- 🔷 **`visual_motif`** — Recurring visual element that carries meaning (shape, pattern, material, object).
-- 🔔 **`sonic_motif`** — Recurring sound that carries meaning.
-- 🔮 **`symbol`** — Object, image, sound, or action carrying meaning beyond the literal.
-- 💭 **`conceptual_motif`** — Recurring idea, behavior, or verbal pattern that carries thematic weight.
-- 🧊 **`subtext`** — Underlying meaning beneath surface action or dialogue.
-- 🔗 **`thematic_connection`** — How a specific element connects to a theme.
-- 🌈 **`color_symbolism`** — Thematic meanings assigned to specific colors in this story.
-- 🎞️ **`color_script`** — Visual map of color progression through the story.
-- 📈 **`emotional_arc`** — Overall emotional trajectory for the audience across the project.
-- 💓 **`emotional_beat`** — Specific point on the audience emotional journey.
-- 🧩 **`information_strategy`** — What the audience knows vs what characters know — suspense and surprise.
-- 🪞 **`identification_strategy`** — How the audience relates to and identifies with characters.
+---
 
+## Schema conventions at a glance
+
+Counts of which entities opt into the framework-standard flags. These flags inject standard fields (Lifecycle, External tabs) — see `schema_reference.md` for the per-entity breakdown.
+
+| Flag | Entities | Injected fields |
+|---|---|---|
+| `versionable` (Versionable) | 2 | `parent_id`, `version_label`, `superseded_at`, `superseded_by_id` |
+| `has_lifecycle_status` (Has lifecycle status) | 100 | `lifecycle_status` |
+| `has_external_id` (Has external ID) | 8 | `external_id`, `external_id_namespace` |
 
 ---
 
 ## Entity reference graph
 
-Which entities hold foreign keys to which. Useful for understanding the schema's connectivity at a glance.
+Which entities hold foreign keys to which. Self-references created by injected versionable fields (`parent_id`, `superseded_by_id`) are omitted — every versionable entity has them, so they're structural rather than semantic connectivity.
 
 | Entity | Field | References |
 |---|---|---|
@@ -380,16 +441,35 @@ Which entities hold foreign keys to which. Useful for understanding the schema's
 | `action_sequence` | `scene_id` | `scene` |
 | `action_sequence_character` | `action_sequence_id` | `action_sequence` |
 | `action_sequence_character` | `character_id` | `character` |
+| `actor_character_role` | `actor_id` | `actor` |
+| `actor_character_role` | `character_id` | `character` |
 | `asset_relationship` | `asset_id` | `asset` |
 | `blocking_beat` | `character_id` | `character` |
 | `blocking_beat` | `scene_blocking_id` | `scene_blocking` |
+| `bundle_asset` | `asset_id` | `asset` |
+| `bundle_asset` | `bundle_id` | `bundle` |
 | `character_appearance_profile` | `character_id` | `character` |
+| `character_asset_binding` | `act_id` | `act` |
+| `character_asset_binding` | `bundle_id` | `bundle` |
+| `character_asset_binding` | `character_id` | `character` |
+| `character_asset_binding` | `scene_range_end_id` | `scene` |
+| `character_asset_binding` | `scene_range_start_id` | `scene` |
+| `character_asset_binding` | `variant_id` | `character_variant` |
 | `character_color_identity` | `character_id` | `character` |
 | `character_environment_physicality` | `character_id` | `character` |
 | `character_environment_physicality` | `location_id` | `location` |
 | `character_relationship` | `character_a_id` | `character` |
 | `character_relationship` | `character_b_id` | `character` |
+| `character_shot_override` | `bundle_override_id` | `bundle` |
+| `character_shot_override` | `character_id` | `character` |
+| `character_shot_override` | `shot_id` | `shot` |
+| `character_shot_override` | `variant_target_id` | `character_variant` |
 | `character_variant` | `character_id` | `character` |
+| `clip` | `beat_id` | `story_beat` |
+| `clip` | `scene_id` | `scene` |
+| `clip` | `take_id` | `take` |
+| `clip_character` | `character_id` | `character` |
+| `clip_character` | `clip_id` | `clip` |
 | `costume` | `character_id` | `character` |
 | `costume_progression` | `character_id` | `character` |
 | `costume_scene` | `costume_id` | `costume` |
@@ -405,6 +485,9 @@ Which entities hold foreign keys to which. Useful for understanding the schema's
 | `emotional_physicality` | `character_id` | `character` |
 | `facial_expression_profile` | `character_id` | `character` |
 | `identification_strategy` | `primary_identification_character_id` | `character` |
+| `identity_anchor` | `asset_id` | `asset` |
+| `identity_anchor` | `character_id` | `character` |
+| `identity_anchor` | `variant_id` | `character_variant` |
 | `information_strategy` | `scene_id` | `scene` |
 | `lighting_design` | `scene_id` | `scene` |
 | `lighting_design` | `shot_id` | `shot` |
@@ -453,6 +536,9 @@ Which entities hold foreign keys to which. Useful for understanding the schema's
 | `set_dressing` | `location_id` | `location` |
 | `set_dressing` | `scene_id` | `scene` |
 | `shot` | `scene_id` | `scene` |
+| `shot_coverage` | `shot_id` | `shot` |
+| `shot_coverage` | `source_clip_id` | `clip` |
+| `shot_coverage` | `source_take_id` | `take` |
 | `shot_design` | `shot_id` | `shot` |
 | `shot_language` | `shot_id` | `shot` |
 | `sonic_motif` | `first_appearance_scene_id` | `scene` |
@@ -465,6 +551,10 @@ Which entities hold foreign keys to which. Useful for understanding the schema's
 | `story_beat` | `scene_id` | `scene` |
 | `subtext` | `scene_id` | `scene` |
 | `symbol` | `first_appearance_scene_id` | `scene` |
+| `take` | `corpus_id` | `performance_corpus` |
+| `take` | `shot_id` | `shot` |
+| `take_scene` | `scene_id` | `scene` |
+| `take_scene` | `take_id` | `take` |
 | `thematic_connection` | `theme_id` | `theme` |
 | `tone_marker` | `scene_id` | `scene` |
 | `tone_marker` | `sequence_id` | `sequence` |
@@ -475,6 +565,8 @@ Which entities hold foreign keys to which. Useful for understanding the schema's
 | `vocal_state` | `character_id` | `character` |
 | `vocal_state` | `scene_id` | `scene` |
 | `voiceover_design` | `character_id` | `character` |
+
+*4 injected self-references omitted: `bundle.parent_id`, `bundle.superseded_by_id`, `character_shot_override.parent_id`, `character_shot_override.superseded_by_id`.*
 
 ---
 
