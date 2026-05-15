@@ -125,6 +125,14 @@ def init_database(db_path: str | Path) -> None:
         conn.close()
 
 
+def _q(identifier: str) -> str:
+    """Quote a SQL identifier so reserved words (order, group, key, etc.) work
+    as table or column names. Uses standard SQL double-quoting; embedded
+    double quotes are doubled per spec. Applied universally rather than
+    selectively so the registry doesn't have to avoid every SQL keyword."""
+    return '"' + identifier.replace('"', '""') + '"'
+
+
 def _create_entity_table(conn: sqlite3.Connection, entity_def: EntityDef) -> None:
     """Create a table for an entity type if it doesn't exist."""
     columns = [
@@ -134,30 +142,34 @@ def _create_entity_table(conn: sqlite3.Connection, entity_def: EntityDef) -> Non
     ]
 
     for f in entity_def.fields:
-        col = f"{f.name} {f.get_sql_type()}"
+        col = f"{_q(f.name)} {f.get_sql_type()}"
         if f.required:
             col += " NOT NULL"
         if f.default is not None:
             if isinstance(f.default, str):
-                col += f" DEFAULT '{f.default}'"
+                # Escape embedded single-quotes in string defaults
+                safe_default = f.default.replace("'", "''")
+                col += f" DEFAULT '{safe_default}'"
             else:
                 col += f" DEFAULT {f.default}"
         columns.append(col)
 
-    sql = f"CREATE TABLE IF NOT EXISTS {entity_def.name} (\n  "
+    sql = f"CREATE TABLE IF NOT EXISTS {_q(entity_def.name)} (\n  "
     sql += ",\n  ".join(columns)
     sql += "\n)"
 
     conn.execute(sql)
 
-    # Check for missing columns (simple migration)
-    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({entity_def.name})")}
+    # Check for missing columns (simple migration). PRAGMA table_info takes
+    # an unquoted name inside the parens — it's not standard SQL syntax.
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({_q(entity_def.name)})")}
     for f in entity_def.fields:
         if f.name not in existing:
-            alter = f"ALTER TABLE {entity_def.name} ADD COLUMN {f.name} {f.get_sql_type()}"
+            alter = f"ALTER TABLE {_q(entity_def.name)} ADD COLUMN {_q(f.name)} {f.get_sql_type()}"
             if f.default is not None:
                 if isinstance(f.default, str):
-                    alter += f" DEFAULT '{f.default}'"
+                    safe_default = f.default.replace("'", "''")
+                    alter += f" DEFAULT '{safe_default}'"
                 else:
                     alter += f" DEFAULT {f.default}"
             conn.execute(alter)
@@ -179,14 +191,14 @@ def create_entity(db_path: str | Path, entity_type: str, data: dict) -> int:
     if not filtered:
         raise ValueError("No valid fields provided")
 
-    cols = ", ".join(filtered.keys())
+    cols = ", ".join(_q(k) for k in filtered.keys())
     placeholders = ", ".join(["?"] * len(filtered))
     values = list(filtered.values())
 
     conn = get_connection(db_path)
     try:
         cursor = conn.execute(
-            f"INSERT INTO {entity_type} ({cols}) VALUES ({placeholders})",
+            f"INSERT INTO {_q(entity_type)} ({cols}) VALUES ({placeholders})",
             values
         )
         conn.commit()
@@ -204,7 +216,7 @@ def get_entity_by_id(db_path: str | Path, entity_type: str, entity_id: int) -> d
     conn = get_connection(db_path)
     try:
         row = conn.execute(
-            f"SELECT * FROM {entity_type} WHERE id = ?", (entity_id,)
+            f"SELECT * FROM {_q(entity_type)} WHERE id = ?", (entity_id,)
         ).fetchone()
         return dict(row) if row else None
     finally:
@@ -221,11 +233,11 @@ def list_entities(db_path: str | Path, entity_type: str,
     conn = get_connection(db_path)
     try:
         name_field = entity_def.name_field
-        sql = f"SELECT * FROM {entity_type}"
+        sql = f"SELECT * FROM {_q(entity_type)}"
         params = []
 
         if search:
-            sql += f" WHERE {name_field} LIKE ?"
+            sql += f" WHERE {_q(name_field)} LIKE ?"
             params.append(f"%{search}%")
 
         sql += f" ORDER BY id ASC LIMIT ? OFFSET ?"
@@ -251,13 +263,13 @@ def update_entity(db_path: str | Path, entity_type: str, entity_id: int, data: d
     if not filtered:
         return False
 
-    set_clause = ", ".join(f"{k} = ?" for k in filtered.keys())
+    set_clause = ", ".join(f"{_q(k)} = ?" for k in filtered.keys())
     values = list(filtered.values()) + [entity_id]
 
     conn = get_connection(db_path)
     try:
         conn.execute(
-            f"UPDATE {entity_type} SET {set_clause} WHERE id = ?",
+            f"UPDATE {_q(entity_type)} SET {set_clause} WHERE id = ?",
             values
         )
         conn.commit()
@@ -275,7 +287,7 @@ def delete_entity(db_path: str | Path, entity_type: str, entity_id: int) -> bool
     conn = get_connection(db_path)
     try:
         cursor = conn.execute(
-            f"DELETE FROM {entity_type} WHERE id = ?", (entity_id,)
+            f"DELETE FROM {_q(entity_type)} WHERE id = ?", (entity_id,)
         )
         conn.commit()
         return cursor.rowcount > 0
@@ -287,7 +299,7 @@ def count_entities(db_path: str | Path, entity_type: str) -> int:
     """Count entities of a type."""
     conn = get_connection(db_path)
     try:
-        row = conn.execute(f"SELECT COUNT(*) as cnt FROM {entity_type}").fetchone()
+        row = conn.execute(f"SELECT COUNT(*) as cnt FROM {_q(entity_type)}").fetchone()
         return row["cnt"]
     finally:
         conn.close()
@@ -322,7 +334,7 @@ def batch_entity_counts(db_path: str | Path) -> dict[str, int]:
         counts = {}
         for name in get_all_entities():
             try:
-                row = conn.execute(f"SELECT COUNT(*) as cnt FROM {name}").fetchone()
+                row = conn.execute(f"SELECT COUNT(*) as cnt FROM {_q(name)}").fetchone()
                 counts[name] = row["cnt"]
             except Exception:
                 counts[name] = 0
@@ -345,7 +357,7 @@ def list_entities_batch(db_path: str | Path, entity_names: list[str],
                 continue
             try:
                 rows = conn.execute(
-                    f"SELECT * FROM {name} ORDER BY id ASC LIMIT ?", (limit,)
+                    f"SELECT * FROM {_q(name)} ORDER BY id ASC LIMIT ?", (limit,)
                 ).fetchall()
                 result[name] = [dict(r) for r in rows]
             except Exception:

@@ -52,21 +52,29 @@ _HEADING_RE = re.compile(
     re.IGNORECASE
 )
 
+# Phase 1C: lowercase enum values to match the redesigned location.location_type
 _INT_EXT_MAP = {
-    "INT": "Interior", "EXT": "Exterior", "I/E": "Int/Ext",
-    "INT./EXT": "Int/Ext", "EXT./INT": "Int/Ext",
-    "INT/EXT": "Int/Ext", "EXT/INT": "Int/Ext",
-    "EST": "Exterior",
+    "INT": "interior", "EXT": "exterior", "I/E": "int/ext",
+    "INT./EXT": "int/ext", "EXT./INT": "int/ext",
+    "INT/EXT": "int/ext", "EXT/INT": "int/ext",
+    "EST": "exterior",
 }
 
+# Phase 1C: rewritten against the redesigned scene.time_of_day enum
+#   (dawn | morning | midday | afternoon | dusk | night | continuous)
+# Notes:
+#   - DAY → midday (there is no "day" value)
+#   - EVENING / TWILIGHT / SUNSET → dusk
+#   - SUNRISE → dawn
+#   - LATER / MOMENTS LATER / SAME TIME → continuous
 _TIME_MAP = {
-    "DAY": "Midday", "NIGHT": "Night", "MORNING": "Morning",
-    "EVENING": "Dusk", "DAWN": "Dawn", "DUSK": "Dusk",
-    "AFTERNOON": "Afternoon", "MIDDAY": "Midday",
-    "CONTINUOUS": "Continuous", "LATER": "Continuous",
-    "MOMENTS LATER": "Continuous", "MOMENT LATER": "Continuous",
-    "SAME TIME": "Continuous", "TWILIGHT": "Dusk",
-    "SUNSET": "Dusk", "SUNRISE": "Dawn",
+    "DAY": "midday", "NIGHT": "night", "MORNING": "morning",
+    "EVENING": "dusk", "DAWN": "dawn", "DUSK": "dusk",
+    "AFTERNOON": "afternoon", "MIDDAY": "midday",
+    "CONTINUOUS": "continuous", "LATER": "continuous",
+    "MOMENTS LATER": "continuous", "MOMENT LATER": "continuous",
+    "SAME TIME": "continuous", "TWILIGHT": "dusk",
+    "SUNSET": "dusk", "SUNRISE": "dawn",
 }
 
 # For bare headings without INT/EXT — strips trailing time-of-day
@@ -77,11 +85,11 @@ _BARE_TOD_RE = re.compile(
     re.IGNORECASE
 )
 
-# Confidence → scene_prop significance mapping
+# Phase 1C: lowercase to match scene_prop.significance enum
 _CONFIDENCE_TO_SIGNIFICANCE = {
-    "high": "Key",
-    "medium": "Present",
-    "low": "Background",
+    "high": "key",
+    "medium": "present",
+    "low": "background",
 }
 
 
@@ -535,13 +543,18 @@ def parse_heading(text: str) -> dict:
         result["location_name"] = _smart_title(m.group("location").strip().rstrip("-."))
         tod = m.group("tod")
         if tod:
-            result["time_of_day"] = _TIME_MAP.get(tod.upper(), tod.title())
+            # Phase 1C: fallback lowercases instead of title-casing
+            result["time_of_day"] = _TIME_MAP.get(tod.upper(), tod.lower())
         return result
 
     loc = raw
     tod_match = _BARE_TOD_RE.search(loc)
     if tod_match:
-        result["time_of_day"] = _TIME_MAP.get(tod_match.group(1).upper(), tod_match.group(1).title())
+        # Phase 1C: fallback lowercases instead of title-casing
+        result["time_of_day"] = _TIME_MAP.get(
+            tod_match.group(1).upper(),
+            tod_match.group(1).lower(),
+        )
         loc = loc[:tod_match.start()].strip().rstrip("-. ")
 
     loc = loc.lstrip(".").strip()
@@ -683,7 +696,8 @@ def _rebuild_junctions(conn) -> int:
             (scene_id,)
         ).fetchone()[0]
 
-        role = "Featured" if char_count <= 3 else "Supporting"
+        # Phase 1C: lowercase to match the redesigned scene_character.role_in_scene enum
+        role = "featured" if char_count <= 3 else "supporting"
 
         conn.execute(
             """INSERT INTO scene_character (scene_id, character_id, role_in_scene, name)
@@ -899,13 +913,15 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
         for row in conn.execute("SELECT id, name FROM location").fetchall():
             loc_map[row["name"].lower()] = row["id"]
 
-        # Create entities from parsed data
+        # Create entities from parsed data.
+        # Phase 1C: dropped `hair` from the character INSERT — it lives in
+        # character_appearance_profile (Tier 2) under the redesigned schema.
         for char in parsed.characters:
             key = char.name.lower()
             if key not in char_map:
                 cursor = conn.execute(
-                    "INSERT INTO character (name, summary, hair) VALUES (?, ?, ?)",
-                    (char.name, char.description or None, char.hair or None)
+                    "INSERT INTO character (name, summary) VALUES (?, ?)",
+                    (char.name, char.description or None)
                 )
                 char_map[key] = cursor.lastrowid
                 summary["characters_created"] += 1
@@ -915,7 +931,12 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
             if key not in loc_map:
                 has_int = any("INT" in h.upper().split('.')[0] for h in loc.raw_headings)
                 has_ext = any("EXT" in h.upper().split('.')[0] for h in loc.raw_headings)
-                loc_type = "Int/Ext" if (has_int and has_ext) else ("Interior" if has_int else ("Exterior" if has_ext else None))
+                # Phase 1C: lowercase to match location.location_type enum
+                loc_type = (
+                    "int/ext" if (has_int and has_ext)
+                    else ("interior" if has_int
+                          else ("exterior" if has_ext else None))
+                )
                 cursor = conn.execute(
                     "INSERT INTO location (name, location_type) VALUES (?, ?)",
                     (loc.name, loc_type)
@@ -989,7 +1010,8 @@ def import_fountain_to_lines(db_path: Path, fountain_text: str) -> dict:
             if (scene_id, prop_id) in existing_sp:
                 continue
 
-            significance = _CONFIDENCE_TO_SIGNIFICANCE.get(prop.confidence, "Present")
+            # Phase 1C: _CONFIDENCE_TO_SIGNIFICANCE now returns lowercase values
+            significance = _CONFIDENCE_TO_SIGNIFICANCE.get(prop.confidence, "present")
             conn.execute(
                 """INSERT INTO scene_prop (scene_id, prop_id, name, significance)
                    VALUES (?, ?, '', ?)""",

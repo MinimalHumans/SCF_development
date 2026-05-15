@@ -1340,8 +1340,7 @@ select option {
 }
 
 /* ==========================================================================
-   Tree Enhancements — Category collapse, placeholder entities, controls
-   APPEND this to the end of static/css/style.css
+   Tree Enhancements — Category collapse + controls
    ========================================================================== */
 
 /* -- Tree toolbar (Collapse / Expand buttons) ------------------------------ */
@@ -1389,39 +1388,4 @@ select option {
 
 .tree-category.cat-collapsed .tree-category-body {
     display: none;
-}
-
-/* -- Placeholder categories (all-tier-1) ----------------------------------- */
-.tree-category-placeholder .tree-category-label {
-    opacity: 0.55;
-}
-.tree-category-placeholder .tree-category-label:hover {
-    opacity: 0.8;
-}
-
-/* -- Placeholder entity groups (tier > 0) ---------------------------------- */
-.tree-entity-placeholder .tree-group-header .label {
-    color: var(--text-muted);
-}
-.tree-entity-placeholder .tree-group-header .icon {
-    opacity: 0.45;
-}
-.tree-entity-placeholder .tree-group-header .count {
-    opacity: 0.5;
-}
-
-/* -- "Schema Only" badge on placeholder categories ------------------------- */
-.tree-dev-badge {
-    font-family: var(--font-mono);
-    font-size: 9px;
-    font-weight: 500;
-    color: var(--text-muted);
-    background: var(--bg-base);
-    border: 1px solid var(--border-subtle);
-    padding: 1px 6px;
-    border-radius: 8px;
-    margin-left: auto;
-    letter-spacing: 0.03em;
-    white-space: nowrap;
-    opacity: 0.7;
 }

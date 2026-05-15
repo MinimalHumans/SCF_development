@@ -118,7 +118,7 @@ def scene_context(db_path: str | Path, scene_id: int) -> dict:
         else:
             result["location"] = None
 
-        # Characters (ordered by role importance)
+        # Characters (ordered by role importance — lowercase enum values)
         chars = conn.execute("""
             SELECT c.id, c.name, c.role, c.archetype,
                    sc.role_in_scene, sc.notes AS link_notes
@@ -127,11 +127,11 @@ def scene_context(db_path: str | Path, scene_id: int) -> dict:
             WHERE sc.scene_id = ?
             ORDER BY
                 CASE sc.role_in_scene
-                    WHEN 'Featured' THEN 1
-                    WHEN 'Supporting' THEN 2
-                    WHEN 'Background' THEN 3
-                    WHEN 'Mentioned' THEN 4
-                    WHEN 'Voiceover' THEN 5
+                    WHEN 'featured' THEN 1
+                    WHEN 'supporting' THEN 2
+                    WHEN 'background' THEN 3
+                    WHEN 'mentioned' THEN 4
+                    WHEN 'voiceover' THEN 5
                     ELSE 6
                 END
         """, (scene_id,)).fetchall()

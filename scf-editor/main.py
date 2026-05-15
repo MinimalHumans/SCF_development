@@ -47,6 +47,103 @@ app = FastAPI(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
+
+# =============================================================================
+# Enum label display helpers (Phase 1C)
+# =============================================================================
+# Lowercase storage values get rendered as human-readable labels in selects.
+# Acronyms preserve their canonical case. Certain pairs hyphenate
+# (pre_production → Pre-Production). Slash-separated values and
+# parenthesized portions are handled segment-by-segment.
+
+_LABEL_ACRONYMS = {
+    "ews": "EWS", "ws": "WS", "mws": "MWS", "ms": "MS",
+    "mcu": "MCU", "cu": "CU", "ecu": "ECU", "ots": "OTS", "pov": "POV",
+    "aces": "ACES", "dcp": "DCP", "bvh": "BVH",
+    "arri": "ARRI", "arriraw": "ARRIRAW", "redcode": "REDCODE",
+    "prores": "ProRes", "dolby": "Dolby", "atmos": "Atmos", "stereo": "Stereo",
+    "2k": "2K", "4k": "4K", "6k": "6K", "8k": "8K",
+    "2.8k": "2.8K", "3.4k": "3.4K", "4.6k": "4.6K", "5.7k": "5.7K", "6.5k": "6.5K",
+    "rec.709": "Rec.709", "rec.2020": "Rec.2020", "dci-p3": "DCI-P3",
+    "fps": "fps",
+}
+
+_LABEL_SMALL_WORDS = {
+    "a", "an", "the", "as", "of", "in", "on", "at",
+    "for", "and", "or", "to", "but",
+}
+
+_LABEL_SPECIAL = {
+    "pre_production": "Pre-Production",
+    "post_production": "Post-Production",
+}
+
+
+def _word_titlecase(word: str, position: int = 0) -> str:
+    """Title-case a single word with acronym + small-word handling."""
+    if not word:
+        return word
+    low = word.lower()
+    if low in _LABEL_ACRONYMS:
+        return _LABEL_ACRONYMS[low]
+    if position > 0 and low in _LABEL_SMALL_WORDS:
+        return low
+    return word[0].upper() + word[1:].lower()
+
+
+def display_label(value):
+    """Render a lowercase enum value as a human-readable display label.
+
+    Rules:
+      - Whole-value specials win first (e.g. pre_production → Pre-Production).
+      - Whole-value acronyms next (ecu → ECU, 4k → 4K).
+      - Leading text + trailing (…) chunk → handled separately; parens
+        content is title-cased only if it starts with a letter, so
+        '1.85:1 (flat)' → '1.85:1 (Flat)' and 'intimate (0-18in)' →
+        'Intimate (0-18in)'.
+      - '/' separator → each segment processed independently
+        ('int/ext' → 'Int/Ext').
+      - Otherwise: underscores → spaces, words title-cased per the
+        small-word and acronym rules
+        ('actor_as_character' → 'Actor as Character').
+    """
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        return str(value)
+    if not value.strip():
+        return value
+
+    if value in _LABEL_SPECIAL:
+        return _LABEL_SPECIAL[value]
+
+    if value.lower() in _LABEL_ACRONYMS:
+        return _LABEL_ACRONYMS[value.lower()]
+
+    # Handle leading text + trailing (...) chunk.
+    paren_idx = value.find("(")
+    if paren_idx > 0:
+        head = value[:paren_idx].rstrip()
+        tail = value[paren_idx:]
+        inner = tail[1:-1] if tail.endswith(")") else tail[1:]
+        if inner and inner[0].isalpha():
+            rendered_tail = "(" + display_label(inner) + ")"
+        else:
+            rendered_tail = tail
+        return display_label(head) + " " + rendered_tail
+
+    # Slash-separated segments.
+    if "/" in value:
+        return "/".join(display_label(part) for part in value.split("/"))
+
+    # Default: underscores → spaces, title-case each word.
+    words = value.replace("_", " ").split()
+    return " ".join(_word_titlecase(w, i) for i, w in enumerate(words))
+
+
+templates.env.filters["display_label"] = display_label
+
+
 # Mount v2 screenplay API BEFORE generic CRUD routes
 app.include_router(screenplay_router)
 # Mount entity images API
@@ -83,11 +180,46 @@ def _require_project(request: Request) -> Path:
 
 
 # -- Junction entity auto-naming --
+# Phase 1C: extended with the new character-cluster junctions. The
+# entity_type/entity_id-driven junctions (visual_motif_appearance,
+# motif_manifestation, asset_relationship) are intentionally omitted —
+# their second "ref" is a polymorphic (entity_type, entity_id) pair that
+# doesn't fit this simple resolver, and they're auto-named elsewhere.
 _JUNCTION_NAME_PARTS = {
     "scene_character": [("character_id", "character"), ("scene_id", "scene")],
     "scene_prop": [("prop_id", "prop"), ("scene_id", "scene")],
     "scene_sequence": [("scene_id", "scene"), ("sequence_id", "sequence")],
+    "costume_scene": [("costume_id", "costume"), ("scene_id", "scene")],
+    "action_sequence_character": [
+        ("action_sequence_id", "action_sequence"),
+        ("character_id", "character"),
+    ],
+    "bundle_asset": [("bundle_id", "bundle"), ("asset_id", "asset")],
+    "take_scene": [("take_id", "take"), ("scene_id", "scene")],
+    "clip_character": [("clip_id", "clip"), ("character_id", "character")],
+    "actor_character_role": [("actor_id", "actor"), ("character_id", "character")],
 }
+
+
+def _build_reference_options(db_path: Path, entity_def, entity_type, entity_id):
+    """Build the reference_options dict for an entity's reference fields.
+
+    Phase 1C: filters out the entity's own ID from any reference field that
+    points back to its own type (e.g. bundle.parent_id shouldn't list the
+    current bundle as a valid parent).
+    """
+    reference_options = {}
+    for f in entity_def.fields:
+        if f.field_type == "reference" and f.reference_entity:
+            ref_def = get_entity(f.reference_entity)
+            if ref_def:
+                ref_items = db.list_entities(db_path, f.reference_entity)
+                reference_options[f.name] = [
+                    {"id": item["id"], "name": item.get(ref_def.name_field, f"#{item['id']}")}
+                    for item in ref_items
+                    if not (f.reference_entity == entity_type and item["id"] == entity_id)
+                ]
+    return reference_options
 
 
 def _get_relationship_data(db_path: Path, entity_type: str, entity_id: int):
@@ -304,15 +436,9 @@ async def browse(request: Request, entity_type: str = None, entity_id: int = Non
 
     reference_options = {}
     if selected_def:
-        for f in selected_def.fields:
-            if f.field_type == "reference" and f.reference_entity:
-                ref_def = get_entity(f.reference_entity)
-                if ref_def:
-                    ref_items = db.list_entities(db_path, f.reference_entity)
-                    reference_options[f.name] = [
-                        {"id": item["id"], "name": item.get(ref_def.name_field, f"#{item['id']}")}
-                        for item in ref_items
-                    ]
+        reference_options = _build_reference_options(
+            db_path, selected_def, entity_type, entity_id
+        )
 
     linked_data = {}
     reverse_links = []
@@ -383,16 +509,9 @@ async def htmx_entity_form(request: Request, entity_type: str, entity_id: int):
     if not entity_data:
         raise HTTPException(status_code=404, detail="Entity not found")
 
-    reference_options = {}
-    for f in entity_def.fields:
-        if f.field_type == "reference" and f.reference_entity:
-            ref_def = get_entity(f.reference_entity)
-            if ref_def:
-                ref_items = db.list_entities(db_path, f.reference_entity)
-                reference_options[f.name] = [
-                    {"id": item["id"], "name": item.get(ref_def.name_field, f"#{item['id']}")}
-                    for item in ref_items
-                ]
+    reference_options = _build_reference_options(
+        db_path, entity_def, entity_type, entity_id
+    )
 
     linked_data, reverse_links = _get_relationship_data(db_path, entity_type, entity_id)
 
@@ -476,16 +595,9 @@ async def api_update(request: Request, entity_type: str, entity_id: int):
 
     if request.headers.get("HX-Request"):
         entity_data = db.get_entity_by_id(db_path, entity_type, entity_id)
-        reference_options = {}
-        for f in entity_def.fields:
-            if f.field_type == "reference" and f.reference_entity:
-                ref_def = get_entity(f.reference_entity)
-                if ref_def:
-                    ref_items = db.list_entities(db_path, f.reference_entity)
-                    reference_options[f.name] = [
-                        {"id": item["id"], "name": item.get(ref_def.name_field, f"#{item['id']}")}
-                        for item in ref_items
-                    ]
+        reference_options = _build_reference_options(
+            db_path, entity_def, entity_type, entity_id
+        )
         linked_data, reverse_links = _get_relationship_data(db_path, entity_type, entity_id)
         return templates.TemplateResponse("partials/entity_form.html", {
             "request": request,

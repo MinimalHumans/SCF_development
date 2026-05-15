@@ -22,6 +22,10 @@ images_router = APIRouter(tags=["images"])
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 IMAGES_SUBDIR = Path("sourcefiles") / "images"
 
+# Entity types that support reference image uploads.
+# Phase 1C: added actor, costume, bundle to back the character cluster redesign.
+IMAGE_ENTITY_TYPES = ("character", "location", "prop", "actor", "costume", "bundle")
+
 
 def _require_project(request: Request) -> tuple[Path, Path]:
     """Returns (scf_path, project_dir)."""
@@ -104,8 +108,11 @@ async def upload_image(
 ):
     """Upload an image for an entity."""
     # Validate entity type
-    if entity_type not in ("character", "location", "prop"):
-        raise HTTPException(status_code=400, detail="Images only supported for character, location, prop")
+    if entity_type not in IMAGE_ENTITY_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Images only supported for: {', '.join(IMAGE_ENTITY_TYPES)}",
+        )
 
     # Validate file extension
     if not file.filename:
