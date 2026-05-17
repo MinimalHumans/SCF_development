@@ -68,7 +68,30 @@
                     {% if field.required %}<span class="required">*</span>{% endif %}
                 </label>
 
-                {% if field.field_type == "text" %}
+                {# ============================================================ #}
+                {# Phase 1D: entity_anchor polymorphic picker                   #}
+                {# ============================================================ #}
+                {# subject_id and subject_variant_id are integer FKs to a       #}
+                {# polymorphic target (character | prop | location). Generic    #}
+                {# integer rendering would produce useless number inputs, so    #}
+                {# we render them as <select> elements that JS populates based  #}
+                {# on the chosen subject_type. See app.js initEntityAnchorPicker. #}
+                {% if entity_type == 'entity_anchor' and field.name in ('subject_id', 'subject_variant_id') %}
+                    {% set current_val = entity_data.get(field.name) %}
+                    {% set current_val_str = current_val | string if current_val is not none else '' %}
+                    <select id="field-{{ field.name }}"
+                            name="{{ field.name }}"
+                            class="{% if field.name == 'subject_id' %}anchor-subject-picker{% else %}anchor-variant-picker{% endif %}"
+                            data-current-value="{{ current_val_str }}"
+                            {% if field.required %}required{% endif %}>
+                        {% if field.name == 'subject_id' %}
+                        <option value="">— Choose Subject Type first —</option>
+                        {% else %}
+                        <option value="">— Optional / Baseline —</option>
+                        {% endif %}
+                    </select>
+
+                {% elif field.field_type == "text" %}
                     <input type="text"
                            id="field-{{ field.name }}"
                            name="{{ field.name }}"
@@ -114,7 +137,32 @@
                         {% for opt in field.options %}
                         <option value="{{ opt }}"
                                 {% if entity_data.get(field.name) == opt %}selected{% endif %}>
-                            {{ opt }}
+                            {{ opt | display_label }}
+                        </option>
+                        {% endfor %}
+                        {% endif %}
+                    </select>
+
+                {# ============================================================ #}
+                {# Phase 1D: multiselect rendering                              #}
+                {# ============================================================ #}
+                {# Stored as JSON-array text. Parse to list, pre-select matches. #}
+                {# Form submission posts repeated key=value pairs which main.py   #}
+                {# rebuilds via _coerce_multiselect_fields(). Hold Cmd/Ctrl to    #}
+                {# select multiple options.                                       #}
+                {% elif field.field_type == "multiselect" %}
+                    {% set selected_vals = entity_data.get(field.name, '') | parse_multiselect %}
+                    {% set opt_count = (field.options | length) if field.options else 0 %}
+                    <select id="field-{{ field.name }}"
+                            name="{{ field.name }}"
+                            multiple
+                            size="{{ [opt_count, 8] | min if opt_count > 0 else 5 }}"
+                            {% if field.required %}required{% endif %}>
+                        {% if field.options %}
+                        {% for opt in field.options %}
+                        <option value="{{ opt }}"
+                                {% if opt in selected_vals %}selected{% endif %}>
+                            {{ opt | display_label }}
                         </option>
                         {% endfor %}
                         {% endif %}
@@ -151,6 +199,8 @@
 
                 {% if field.help_text %}
                 <div class="field-help">{{ field.help_text }}</div>
+                {% elif field.field_type == "multiselect" %}
+                <div class="field-help">Hold Cmd (Mac) or Ctrl (Win/Linux) to select multiple.</div>
                 {% endif %}
             </div>
             {% endif %}

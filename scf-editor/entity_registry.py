@@ -15,9 +15,15 @@ Entity categories use functional groupings for the editor sidebar.
 Field types: text, textarea, integer, float, select, multiselect, boolean,
              json, reference, timestamp
 
-PHASE 1B (current): foundation infrastructure + character cluster redesign.
-Phase 1C will follow with the schema-wide cleanup (lowercase normalization,
-status field renames, external_id propagation, cut additions, etc.)
+PHASE 1B: foundation infrastructure + character cluster redesign.
+PHASE 1C: schema-wide cleanup (lowercase normalization, status field renames,
+          external_id propagation, cut additions, etc.)
+PHASE 1D (current): prop & location cluster redesign — slim prop and location,
+          add prop_surface_profile / prop_variant / prop_asset_binding /
+          prop_shot_override / location_asset_binding / location_shot_override /
+          clip_prop, generalize identity_anchor → entity_anchor with constrained
+          polymorphism, add `acoustic` bundle intent, structure location_variant
+          state axes.
 """
 
 from dataclasses import dataclass, field
@@ -28,9 +34,6 @@ from typing import Any
 # Standard enums — shared across the schema
 # =============================================================================
 
-# The cross-cutting "is this record current?" axis. Applied to versionable
-# entities (where it also drives the active/superseded distinction) and to
-# any entity where lifecycle state is the relevant axis.
 LIFECYCLE_STATUS_OPTIONS = [
     "active",        # current, in use
     "draft",         # work in progress, not yet promoted
@@ -40,7 +43,6 @@ LIFECYCLE_STATUS_OPTIONS = [
     "archived",      # historical, not actively maintained
 ]
 
-# Project-level production phase axis. Only used on the project entity.
 PRODUCTION_STATUS_OPTIONS = [
     "development",
     "pre_production",
@@ -49,7 +51,6 @@ PRODUCTION_STATUS_OPTIONS = [
     "complete",
 ]
 
-# Writing-process axis. Used on scene, act, sequence.
 WRITING_STATUS_OPTIONS = [
     "outline",
     "draft",
@@ -58,7 +59,6 @@ WRITING_STATUS_OPTIONS = [
     "cut",
 ]
 
-# Standard tab names for auto-injected fields.
 LIFECYCLE_TAB = "Lifecycle"
 EXTERNAL_TAB = "External"
 
@@ -82,9 +82,6 @@ class FieldDef:
     help_text: str = ""
     hidden: bool = False
     sql_type: str | None = None
-    # Marks fields injected by EntityDef flags rather than authored explicitly.
-    # Tools (doc generator, editor) can use this to render auto-injected
-    # fields with a "system" indicator or different style.
     auto_injected: bool = False
 
     def get_sql_type(self) -> str:
@@ -100,7 +97,7 @@ class FieldDef:
             "boolean": "INTEGER",
             "json": "TEXT",
             "reference": "INTEGER",
-            "timestamp": "TEXT",  # ISO 8601 stored as text, SQLite has no native timestamp
+            "timestamp": "TEXT",
         }.get(self.field_type, "TEXT")
 
 
@@ -115,10 +112,6 @@ class EntityDef:
       - has_lifecycle_status: adds the lifecycle_status field (default True;
         opt-out for junctions and entities that don't track lifecycle state)
       - has_external_id: adds external_id + external_id_namespace fields
-        (for entities that may bridge to OMC, EIDR, production databases)
-
-    Auto-injection happens at __post_init__ and is invisible to consumers
-    reading `entity.fields` — the field list looks complete.
     """
     name: str
     label: str
@@ -133,13 +126,11 @@ class EntityDef:
     sort_order: int = 0
     tier: int = 0
 
-    # Auto-injection flags
     versionable: bool = False
     has_lifecycle_status: bool = True
     has_external_id: bool = False
 
     def __post_init__(self) -> None:
-        """Auto-inject standard fields based on flags. Order matters for tabs."""
         if self.has_lifecycle_status:
             self._inject_lifecycle_status()
         if self.versionable:
@@ -149,7 +140,7 @@ class EntityDef:
 
     def _inject_lifecycle_status(self) -> None:
         if any(f.name == "lifecycle_status" for f in self.fields):
-            return  # author provided their own — don't duplicate
+            return
         self.fields.append(FieldDef(
             name="lifecycle_status",
             label="Lifecycle Status",
@@ -245,10 +236,6 @@ class EntityDef:
         return self.versionable
 
 
-# =============================================================================
-# REGISTRY
-# =============================================================================
-
 ENTITY_REGISTRY: dict[str, EntityDef] = {}
 
 
@@ -258,17 +245,9 @@ def register(entity: EntityDef):
 
 
 # #############################################################################
-#
 #  TIER 0 — STRUCTURAL FOUNDATION
-#
 # #############################################################################
 
-# ---------------------------------------------------------------------------
-# Project (root entity)
-# ---------------------------------------------------------------------------
-# NOTE: Phase 1C will rename `status` → `production_status`. For now the
-# field stays in place; updating it is part of the schema-wide sweep, not
-# the character redesign.
 register(EntityDef(
     name="project",
     label="Project",
@@ -292,49 +271,24 @@ register(EntityDef(
         FieldDef("target_runtime", "Target Runtime (minutes)", "integer"),
         FieldDef("project_format", "Format", "select", options=[
             "feature", "series", "short", "commercial", "other"
-        ], help_text="The form factor of the project"),
+        ]),
         FieldDef("production_status", "Production Status", "select", options=[
             "development", "pre_production", "production",
             "post_production", "complete"
         ], default="development",
-                 help_text="Project-level production phase axis. Distinct from "
-                           "lifecycle_status and from scene/act/sequence writing-process status."),
-        # NEW in character redesign: workflow_mode
+                 help_text="Project-level production phase axis."),
         FieldDef("workflow_mode", "Workflow Mode", "select", options=[
             "performance_first", "generation_first", "hybrid"
         ], default="generation_first",
-                 help_text="Dominant production workflow stance for this project. "
-                           "performance_first = footage-driven (Rango-style); "
-                           "generation_first = synthesis-driven; hybrid = mixed."),
+                 help_text="Dominant production workflow stance."),
         FieldDef("notes", "Notes", "textarea", tab="Notes"),
-        # Vision layer
-        FieldDef("vision_statement", "Vision Statement", "textarea", tab="Vision",
-                 help_text="The director's overarching vision for this project"),
+        FieldDef("vision_statement", "Vision Statement", "textarea", tab="Vision"),
         FieldDef("creative_philosophy", "Creative Philosophy", "textarea", tab="Vision"),
         FieldDef("themes", "Core Themes", "json", tab="Vision",
-                 placeholder='["redemption", "identity", "power"]',
-                 help_text="JSON array of thematic keywords"),
+                 placeholder='["redemption", "identity", "power"]'),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Character (SLIMMED — Phase 1B redesign)
-# ---------------------------------------------------------------------------
-# Removed (now lives in Tier 2 description entities):
-#   - height, build, hair, eyes, distinguishing_features, movement_style,
-#     physical_notes → physical_character_profile and character_appearance_profile
-#   - voice_quality, speech_pattern, accent, vocal_habits → vocal_profile
-#   - default_wardrobe, wardrobe_notes → costume
-#   - color_associations → character_color_identity (moved to Tier 4)
-#   - relationships_json → character_relationship
-# Removed (replaced by auto-injected lifecycle_status):
-#   - status (Active/Draft/Cut/Archived)
-# Added:
-#   - casting_status — signals whether this character has a real-world
-#     actor anchor at all; drives downstream expectations
-# Auto-injected:
-#   - lifecycle_status (default active)
-#   - external_id, external_id_namespace (for OMC bridge)
 register(EntityDef(
     name="character",
     label="Character",
@@ -347,7 +301,6 @@ register(EntityDef(
                 "physical/vocal/wardrobe details live in Tier 2 description entities.",
     has_external_id=True,
     fields=[
-        # General tab — identity and narrative function only
         FieldDef("name", "Character Name", required=True, placeholder="e.g. Eleanor Vance"),
         FieldDef("role", "Role", "select", options=[
             "protagonist", "antagonist", "supporting", "minor", "background", "narrator"
@@ -364,31 +317,30 @@ register(EntityDef(
                            "Drives downstream tool expectations."),
         FieldDef("summary", "Character Summary", "textarea",
                  placeholder="Brief description of who this character is"),
-
-        # Backstory tab — narrative function
-        FieldDef("backstory", "Backstory", "textarea", tab="Backstory",
-                 placeholder="Key events and history that shaped this character"),
+        FieldDef("backstory", "Backstory", "textarea", tab="Backstory"),
         FieldDef("motivation", "Core Motivation", "textarea", tab="Backstory"),
         FieldDef("flaw", "Fatal Flaw", "text", tab="Backstory"),
-        FieldDef("arc_description", "Character Arc", "textarea", tab="Backstory",
-                 help_text="How does this character change throughout the story?"),
-        FieldDef("internal_goal", "Internal Goal", "textarea", tab="Backstory",
-                 placeholder="What does the character need emotionally/psychologically?"),
-        FieldDef("external_goal", "External Goal", "textarea", tab="Backstory",
-                 placeholder="What is the character actively trying to achieve?"),
+        FieldDef("arc_description", "Character Arc", "textarea", tab="Backstory"),
+        FieldDef("internal_goal", "Internal Goal", "textarea", tab="Backstory"),
+        FieldDef("external_goal", "External Goal", "textarea", tab="Backstory"),
         FieldDef("greatest_fear", "Greatest Fear", "textarea", tab="Backstory"),
-        FieldDef("core_belief", "Core Belief", "textarea", tab="Backstory",
-                 placeholder="The fundamental belief this character operates from"),
+        FieldDef("core_belief", "Core Belief", "textarea", tab="Backstory"),
         FieldDef("education_level", "Education Level", "text", tab="Backstory"),
         FieldDef("skills_abilities", "Skills & Abilities", "textarea", tab="Backstory"),
     ],
 ))
 
 # ---------------------------------------------------------------------------
-# Location
+# Location (Phase 1D — aggressively slimmed)
 # ---------------------------------------------------------------------------
-# UNCHANGED in Phase 1B. Phase 1C will rename status → lifecycle_status
-# values to lowercase. has_external_id will be added in 1C as well.
+# Removed (now lives in existing Tier 2 entities):
+#   - mood, lighting, color_palette → location_design + location_color_scheme
+#   - time_of_day, weather → moved to location_variant as state axes
+#   - ambient_sound, sound_notes → location_sound_profile
+#   - props_present → scene_prop junction and set_dressing
+# Added:
+#   - realization_status
+# Auto-injected via has_external_id=True: external_id, external_id_namespace
 register(EntityDef(
     name="location",
     label="Location",
@@ -397,46 +349,45 @@ register(EntityDef(
     category="Story Entities",
     sort_order=20,
     tier=0,
-    description="A location where story events take place.",
+    description="A location where story events take place. Identity and narrative "
+                "function only — architectural/visual detail lives in location_design, "
+                "color in location_color_scheme, sound in location_sound_profile, and "
+                "state variation (time-of-day, weather, post-event) in location_variant.",
+    has_external_id=True,
     fields=[
         FieldDef("name", "Location Name", required=True, placeholder="e.g. The Old Mill"),
         FieldDef("location_type", "Type", "select", options=[
             "interior", "exterior", "int/ext", "virtual", "abstract"
         ]),
         FieldDef("setting", "Setting Description", "textarea",
-                 placeholder="What does this place look and feel like?"),
+                 placeholder="What does this place look and feel like? (narrative-level)"),
         FieldDef("time_period", "Time Period", "text"),
         FieldDef("geography", "Geography / Region", "text",
                  placeholder="e.g. Northern California coast"),
-
-        # Atmosphere tab
-        FieldDef("mood", "Mood / Atmosphere", "textarea", tab="Atmosphere",
-                 placeholder="What feeling does this place evoke?"),
-        FieldDef("lighting", "Lighting", "textarea", tab="Atmosphere",
-                 placeholder="e.g. Harsh fluorescent, Dappled sunlight through canopy"),
-        FieldDef("color_palette", "Color Palette", "text", tab="Atmosphere",
-                 placeholder="e.g. Warm ambers, desaturated greens"),
-        FieldDef("time_of_day", "Typical Time of Day", "select", tab="Atmosphere",
-                 options=["dawn", "morning", "midday", "afternoon", "dusk", "night", "varies"]),
-        FieldDef("weather", "Weather", "text", tab="Atmosphere"),
-
-        # Sound tab
-        FieldDef("ambient_sound", "Ambient Sound", "textarea", tab="Sound",
-                 placeholder="e.g. Distant traffic, birdsong, mechanical hum"),
-        FieldDef("sound_notes", "Sound Design Notes", "textarea", tab="Sound"),
-
-        # Details tab
+        FieldDef("realization_status", "Realization Status", "select", options=[
+            "tbd", "real_location", "built", "plate_captured",
+            "virtual_set", "hybrid", "generated_only"
+        ], default="tbd",
+                 help_text="How this location is realized in production. "
+                           "real_location = found and shot in-camera; built = constructed set; "
+                           "plate_captured = photographic plate only; virtual_set = LED wall / "
+                           "volumetric; hybrid = combined methods (practical + extension etc.); "
+                           "generated_only = fully synthetic."),
         FieldDef("key_features", "Key Features", "textarea", tab="Details",
-                 placeholder="Notable objects, architecture, landmarks within this location"),
-        FieldDef("props_present", "Props Typically Present", "textarea", tab="Details"),
+                 placeholder="Notable objects, architecture, landmarks. "
+                             "Specific dressing belongs in set_dressing."),
         FieldDef("notes", "Notes", "textarea", tab="Details"),
     ],
 ))
 
 # ---------------------------------------------------------------------------
-# Prop
+# Prop (Phase 1D — slimmed, option c)
 # ---------------------------------------------------------------------------
-# UNCHANGED in Phase 1B.
+# Removed (now lives in prop_surface_profile):
+#   - material, size, color, condition, physical_notes
+# Added:
+#   - realization_status
+# Auto-injected via has_external_id=True: external_id, external_id_namespace
 register(EntityDef(
     name="prop",
     label="Prop",
@@ -445,7 +396,10 @@ register(EntityDef(
     category="Story Entities",
     sort_order=30,
     tier=0,
-    description="A significant object in the story.",
+    description="A significant object in the story. Identity, narrative function, "
+                "and story moments — surface/material detail lives in prop_surface_profile, "
+                "state variation (clean/damaged/symbolic) in prop_variant.",
+    has_external_id=True,
     fields=[
         FieldDef("name", "Prop Name", required=True, placeholder="e.g. The Silver Compass"),
         FieldDef("prop_type", "Type", "select", options=[
@@ -454,6 +408,14 @@ register(EntityDef(
         ]),
         FieldDef("description", "Description", "textarea",
                  placeholder="What does this prop look like?"),
+        FieldDef("realization_status", "Realization Status", "select", options=[
+            "tbd", "sourced", "built", "scanned", "hybrid", "generated_only"
+        ], default="tbd",
+                 help_text="How this prop is realized in production. "
+                           "sourced = found / purchased real object; built = fabricated; "
+                           "scanned = real object digitally captured; hybrid = combined "
+                           "methods (practical + VFX, sourced + CG damage, plate replacement, "
+                           "miniature, etc.); generated_only = fully synthetic."),
         FieldDef("narrative_significance", "Narrative Significance", "textarea",
                  placeholder="Why does this prop matter to the story?"),
         FieldDef("story_function", "Story Function", "select", options=[
@@ -461,31 +423,13 @@ register(EntityDef(
         ]),
         FieldDef("associated_character", "Primary Character", "reference",
                  reference_entity="character"),
-
-        # Physical tab
-        FieldDef("material", "Material", "text", tab="Physical",
-                 placeholder="e.g. Tarnished silver, worn leather"),
-        FieldDef("size", "Size", "text", tab="Physical",
-                 placeholder="e.g. Palm-sized, 6 feet tall"),
-        FieldDef("color", "Color", "text", tab="Physical"),
-        FieldDef("condition", "Condition", "text", tab="Physical",
-                 placeholder="e.g. Pristine, battle-worn, ancient"),
-        FieldDef("physical_notes", "Physical Notes", "textarea", tab="Physical"),
-
-        # Story tab
-        FieldDef("first_appearance", "First Appearance", "textarea", tab="Story",
-                 placeholder="When/where does this prop first appear?"),
-        FieldDef("key_moments", "Key Moments", "textarea", tab="Story",
-                 placeholder="Important scenes involving this prop"),
+        FieldDef("first_appearance", "First Appearance", "textarea", tab="Story"),
+        FieldDef("key_moments", "Key Moments", "textarea", tab="Story"),
         FieldDef("symbolism", "Symbolism", "textarea", tab="Story"),
         FieldDef("notes", "Notes", "textarea", tab="Notes"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Act (Story Structure)
-# ---------------------------------------------------------------------------
-# UNCHANGED in Phase 1B. Phase 1C will lowercase status values and add `cut`.
 register(EntityDef(
     name="act",
     label="Act",
@@ -496,16 +440,11 @@ register(EntityDef(
     tier=0,
     description="A major structural division of the story.",
     fields=[
-        FieldDef("name", "Act Name", required=True,
-                 placeholder="e.g. Act One, The Setup, Episode 1 Act A"),
-        FieldDef("act_number", "Act Number", "integer",
-                 placeholder="Position in the structure: 1, 2, 3..."),
-        FieldDef("function", "Function", "textarea",
-                 placeholder="What does this act do in the story?"),
-        FieldDef("dramatic_question", "Dramatic Question", "textarea",
-                 placeholder="The central question this act poses"),
-        FieldDef("shift", "Shift", "textarea",
-                 placeholder="What changes from the start to the end of this act?"),
+        FieldDef("name", "Act Name", required=True),
+        FieldDef("act_number", "Act Number", "integer"),
+        FieldDef("function", "Function", "textarea"),
+        FieldDef("dramatic_question", "Dramatic Question", "textarea"),
+        FieldDef("shift", "Shift", "textarea"),
         FieldDef("summary", "Summary", "textarea"),
         FieldDef("status", "Status", "select", options=[
             "outline", "draft", "revised", "locked", "cut"
@@ -515,9 +454,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Sequence
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="sequence",
     label="Sequence",
@@ -528,7 +464,7 @@ register(EntityDef(
     tier=0,
     description="A group of related scenes forming a narrative unit.",
     fields=[
-        FieldDef("name", "Sequence Name", required=True, placeholder="e.g. The Heist"),
+        FieldDef("name", "Sequence Name", required=True),
         FieldDef("sequence_number", "Sequence Number", "integer"),
         FieldDef("act_id", "Act", "reference", reference_entity="act"),
         FieldDef("summary", "Summary", "textarea"),
@@ -544,9 +480,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Scene
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="scene",
     label="Scene",
@@ -558,8 +491,7 @@ register(EntityDef(
     description="A single scene in the story.",
     has_external_id=True,
     fields=[
-        FieldDef("name", "Scene Name / Slug", required=True,
-                 placeholder="e.g. INT. COFFEE SHOP - MORNING"),
+        FieldDef("name", "Scene Name / Slug", required=True),
         FieldDef("scene_number", "Scene Number", "integer"),
         FieldDef("int_ext", "Int/Ext", "select", options=[
             "interior", "exterior", "int/ext"
@@ -577,31 +509,21 @@ register(EntityDef(
         FieldDef("status", "Status", "select", options=[
             "outline", "draft", "revised", "locked", "cut"
         ], default="outline"),
-
-        # Characters tab
         FieldDef("characters_present", "Characters Present", "json", tab="Characters",
                  hidden=True),
         FieldDef("character_dynamics", "Character Dynamics", "textarea", tab="Characters"),
-
-        # Emotional tab
         FieldDef("emotional_beat", "Emotional Beat", "textarea", tab="Emotional"),
         FieldDef("tone", "Tone", "text", tab="Emotional"),
         FieldDef("tension_level", "Tension Level (1-10)", "integer", tab="Emotional"),
         FieldDef("thematic_connection", "Thematic Connection", "textarea", tab="Emotional"),
-
-        # Technical tab
         FieldDef("visual_style", "Visual Style Notes", "textarea", tab="Technical"),
         FieldDef("sound_design", "Sound Design Notes", "textarea", tab="Technical"),
         FieldDef("music_notes", "Music Notes", "textarea", tab="Technical"),
         FieldDef("estimated_duration", "Estimated Duration (seconds)", "integer", tab="Technical"),
-
         FieldDef("notes", "Notes", "textarea", tab="Notes"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Story Beat
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="story_beat",
     label="Story Beat",
@@ -621,17 +543,13 @@ register(EntityDef(
         ]),
         FieldDef("description", "Description", "textarea"),
         FieldDef("purpose", "Purpose", "textarea"),
-        FieldDef("value_shift", "Value Shift", "text",
-                 placeholder="e.g. Hope → Despair, Trust → Doubt"),
+        FieldDef("value_shift", "Value Shift", "text"),
         FieldDef("pov_character_id", "POV Character", "reference",
                  reference_entity="character"),
         FieldDef("notes", "Notes", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Theme
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="theme",
     label="Theme",
@@ -653,7 +571,7 @@ register(EntityDef(
 ))
 
 # ---------------------------------------------------------------------------
-# Junctions: Scene-Character, Scene-Prop, Scene-Sequence
+# Junction entities (Tier 0 Connections)
 # ---------------------------------------------------------------------------
 register(EntityDef(
     name="scene_character",
@@ -664,7 +582,7 @@ register(EntityDef(
     sort_order=60,
     tier=0,
     description="Links a character to a scene with role information.",
-    has_lifecycle_status=False,  # junction — lifecycle follows parent records
+    has_lifecycle_status=False,
     fields=[
         FieldDef("name", "Display Name", hidden=True),
         FieldDef("scene_id", "Scene", "reference", reference_entity="scene", required=True),
@@ -719,10 +637,7 @@ register(EntityDef(
 
 
 # #############################################################################
-#
-#  TIER 1 — PROJECT-LEVEL CREATIVE DIRECTION
-#  (Unchanged from existing schema. Phase 1B doesn't touch these.)
-#
+#  TIER 1 — PROJECT-LEVEL CREATIVE DIRECTION (unchanged)
 # #############################################################################
 
 register(EntityDef(
@@ -808,9 +723,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Visual Identity
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="visual_identity",
     label="Visual Identity",
@@ -838,9 +750,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Cinematographic Philosophy
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="cinematographic_philosophy",
     label="Cinematographic Philosophy",
@@ -868,9 +777,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Project Color Palette
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="project_color_palette",
     label="Project Color Palette",
@@ -897,9 +803,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Project Tone
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="project_tone",
     label="Project Tone",
@@ -922,9 +825,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Pacing Strategy
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="pacing_strategy",
     label="Pacing Strategy",
@@ -946,9 +846,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Sonic Identity
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="sonic_identity",
     label="Sonic Identity",
@@ -972,9 +869,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Musical Identity
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="musical_identity",
     label="Musical Identity",
@@ -1001,9 +895,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Design Constraints
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="design_constraints",
     label="Design Constraints",
@@ -1031,9 +922,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Look Development
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="look_development",
     label="Look Development",
@@ -1063,9 +951,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Coverage Philosophy
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="coverage_philosophy",
     label="Coverage Philosophy",
@@ -1088,9 +973,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Costume Design Philosophy
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="costume_design_philosophy",
     label="Costume Design Philosophy",
@@ -1114,9 +996,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Material Palette
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="material_palette",
     label="Material Palette",
@@ -1136,9 +1015,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Texture Philosophy
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="texture_philosophy",
     label="Texture Philosophy",
@@ -1158,9 +1034,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Color Temperature Strategy
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="color_temperature_strategy",
     label="Color Temperature Strategy",
@@ -1184,15 +1057,9 @@ register(EntityDef(
 
 
 # #############################################################################
-#
 #  TIER 2 — CHARACTER DEPTH
-#  Per-character description entities.
-#
 # #############################################################################
 
-# ---------------------------------------------------------------------------
-# Character Relationship
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="character_relationship",
     label="Character Relationship",
@@ -1203,7 +1070,7 @@ register(EntityDef(
     tier=2,
     description="Relationship between two characters with dynamics and evolution.",
     fields=[
-        FieldDef("name", "Relationship Label", placeholder="e.g. Father/Son, Rivals"),
+        FieldDef("name", "Relationship Label"),
         FieldDef("character_a_id", "Character A", "reference",
                  reference_entity="character", required=True),
         FieldDef("character_b_id", "Character B", "reference",
@@ -1222,15 +1089,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# NOTE: character_color_identity has MOVED to Tier 4 (Thematic Tracking).
-# See the Tier 4 section below for its new placement. It is no longer in
-# Character Depth.
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Physical Character Profile
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="physical_character_profile",
     label="Physical Character Profile",
@@ -1243,11 +1101,10 @@ register(EntityDef(
     parent_field="character_id",
     description="Baseline physical existence — posture, movement, tension, energy.",
     fields=[
-        FieldDef("name", "Name", placeholder="e.g. Eleanor's Physicality"),
+        FieldDef("name", "Name"),
         FieldDef("character_id", "Character", "reference",
                  reference_entity="character", required=True),
-        # Physical baseline fields preserved as before
-        FieldDef("height", "Height", "text", placeholder="e.g. 5'10\", Tall, Average"),
+        FieldDef("height", "Height", "text"),
         FieldDef("build", "Build", "select", options=[
             "slim", "athletic", "average", "stocky", "heavy", "muscular", "frail", "other"
         ]),
@@ -1260,7 +1117,6 @@ register(EntityDef(
                  options=["tense", "relaxed", "variable"]),
         FieldDef("energy_quality", "Energy Quality", "select",
                  options=["kinetic", "still", "restless", "contained"]),
-        # Movement tab
         FieldDef("movement_style", "Movement Style", "textarea", tab="Movement"),
         FieldDef("movement_speed", "Movement Speed", "select", tab="Movement",
                  options=["quick", "slow", "deliberate", "erratic"]),
@@ -1270,13 +1126,11 @@ register(EntityDef(
                  options=["efficient", "wasteful", "precise", "sloppy"]),
         FieldDef("movement_weight", "Movement Weight", "select", tab="Movement",
                  options=["light", "heavy", "grounded", "floating"]),
-        # Presence tab
         FieldDef("spatial_presence", "Spatial Presence", "select", tab="Presence",
                  options=["takes up space", "minimizes self"]),
         FieldDef("physical_comfort", "Physical Comfort", "select", tab="Presence",
                  options=["at home in body", "disconnected"]),
         FieldDef("coordination_level", "Coordination Level", "text", tab="Presence"),
-        # History tab
         FieldDef("physical_training_visible", "Physical Training Visible", "textarea",
                  tab="History"),
         FieldDef("physical_neglect_visible", "Physical Neglect Visible", "textarea",
@@ -1287,9 +1141,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Vocal Profile
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="vocal_profile",
     label="Vocal Profile",
@@ -1302,11 +1153,10 @@ register(EntityDef(
     parent_field="character_id",
     description="Baseline vocal identity — how a character sounds.",
     fields=[
-        FieldDef("name", "Name", placeholder="e.g. Eleanor's Voice"),
+        FieldDef("name", "Name"),
         FieldDef("character_id", "Character", "reference",
                  reference_entity="character", required=True),
-        FieldDef("voice_quality", "Voice Quality", "text",
-                 placeholder="e.g. Deep, gravelly, warm"),
+        FieldDef("voice_quality", "Voice Quality", "text"),
         FieldDef("pitch_range", "Pitch Range", "select",
                  options=["high", "low", "middle", "variable"]),
         FieldDef("timbre", "Timbre", "select",
@@ -1315,7 +1165,6 @@ register(EntityDef(
                  options=["loud", "soft", "variable"]),
         FieldDef("breathiness_level", "Breathiness", "select",
                  options=["none", "slight", "moderate", "heavy"]),
-        # Speech tab
         FieldDef("speech_pattern", "Speech Pattern", "textarea", tab="Speech"),
         FieldDef("pace", "Pace", "select", tab="Speech",
                  options=["fast", "slow", "measured", "variable"]),
@@ -1325,14 +1174,12 @@ register(EntityDef(
                  options=["precise", "mumbled", "clipped", "drawled"]),
         FieldDef("fluency", "Fluency", "select", tab="Speech",
                  options=["smooth", "stuttered", "filled pauses"]),
-        # Accent tab
         FieldDef("accent", "Accent / Dialect", "text", tab="Accent"),
         FieldDef("regional_markers", "Regional Markers", "text", tab="Accent"),
         FieldDef("class_markers", "Class Markers", "text", tab="Accent"),
         FieldDef("educational_markers", "Educational Markers", "text", tab="Accent"),
         FieldDef("accent_authenticity", "Accent Authenticity", "select", tab="Accent",
                  options=["native", "acquired", "affected"]),
-        # Habits tab
         FieldDef("vocal_habits", "Vocal Habits", "textarea", tab="Habits"),
         FieldDef("filler_words", "Filler Words", "json", tab="Habits"),
         FieldDef("catch_phrases", "Catch Phrases", "json", tab="Habits"),
@@ -1340,9 +1187,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Delivery Profile
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="delivery_profile",
     label="Delivery Profile",
@@ -1355,7 +1199,7 @@ register(EntityDef(
     parent_field="character_id",
     description="How a character generally delivers lines.",
     fields=[
-        FieldDef("name", "Name", placeholder="e.g. Eleanor's Delivery"),
+        FieldDef("name", "Name"),
         FieldDef("character_id", "Character", "reference",
                  reference_entity="character", required=True),
         FieldDef("delivery_style", "Delivery Style", "select", options=[
@@ -1370,9 +1214,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Facial Expression Profile
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="facial_expression_profile",
     label="Facial Expression Profile",
@@ -1401,9 +1242,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Character Appearance Profile
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="character_appearance_profile",
     label="Character Appearance Profile",
@@ -1419,28 +1257,21 @@ register(EntityDef(
         FieldDef("name", "Name"),
         FieldDef("character_id", "Character", "reference",
                  reference_entity="character", required=True),
-        # Surfaced from the slimmed character: hair, eyes, distinguishing_features
         FieldDef("body_type", "Body Type", "text"),
         FieldDef("height_proportions", "Height / Proportions", "text"),
         FieldDef("age_appearance", "Age Appearance", "text"),
-        FieldDef("hair", "Hair", "text", placeholder="e.g. Long dark curls"),
+        FieldDef("hair", "Hair", "text"),
         FieldDef("eyes", "Eyes", "text"),
         FieldDef("distinguishing_features", "Distinguishing Features", "textarea"),
-        # Appearance tab
         FieldDef("skin_tone", "Skin Tone", "text", tab="Appearance"),
         FieldDef("grooming_level", "Grooming Level", "text", tab="Appearance"),
-        # Identity tab
         FieldDef("visual_distinction", "Visual Distinction", "textarea", tab="Identity"),
         FieldDef("silhouette_description", "Silhouette Description", "textarea", tab="Identity"),
         FieldDef("visual_shorthand", "Visual Shorthand", "textarea", tab="Identity"),
-        # Evolution tab
         FieldDef("appearance_evolution", "Appearance Evolution", "textarea", tab="Evolution"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Costume
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="costume",
     label="Costume",
@@ -1453,8 +1284,7 @@ register(EntityDef(
     parent_field="character_id",
     description="A specific wardrobe look for a character.",
     fields=[
-        FieldDef("name", "Costume Name", required=True,
-                 placeholder="e.g. Eleanor's Work Outfit, Marcus's Disguise"),
+        FieldDef("name", "Costume Name", required=True),
         FieldDef("character_id", "Character", "reference",
                  reference_entity="character", required=True),
         FieldDef("description", "Description", "textarea"),
@@ -1462,14 +1292,11 @@ register(EntityDef(
         FieldDef("key_garments", "Key Garments", "json"),
         FieldDef("layers", "Layers", "textarea"),
         FieldDef("accessories", "Accessories", "json"),
-        # Color tab
         FieldDef("primary_color_hex", "Primary Color (hex)", "text", tab="Color"),
         FieldDef("primary_color_name", "Primary Color Name", "text", tab="Color"),
         FieldDef("secondary_colors", "Secondary Colors", "json", tab="Color"),
-        # Material tab
         FieldDef("fabrics", "Fabrics", "textarea", tab="Material"),
         FieldDef("texture_qualities", "Texture Qualities", "textarea", tab="Material"),
-        # Narrative tab
         FieldDef("condition", "Condition", "select", tab="Narrative",
                  options=["new", "worn", "distressed"]),
         FieldDef("what_reveals", "What It Reveals", "textarea", tab="Narrative"),
@@ -1556,9 +1383,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Character Variant (Phase 1B: removed duration_type)
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="character_variant",
     label="Character Variant",
@@ -1569,18 +1393,14 @@ register(EntityDef(
     tier=2,
     parent_entity="character",
     parent_field="character_id",
-    description="Specific state or version of a character (e.g. Young Eleanor, Angry Marcus). "
-                "The previous duration_type field has been removed; the variant's purpose "
-                "lives in its name, context, and physical_differences fields.",
+    description="Specific state or version of a character (e.g. Young Eleanor, Angry Marcus).",
     fields=[
-        FieldDef("name", "Variant Name", required=True,
-                 placeholder="e.g. Young Eleanor, Marcus in Disguise"),
+        FieldDef("name", "Variant Name", required=True),
         FieldDef("character_id", "Character", "reference",
                  reference_entity="character", required=True),
         FieldDef("physical_differences", "Physical Differences", "textarea"),
         FieldDef("emotional_state", "Emotional State", "textarea"),
-        FieldDef("context", "Context", "textarea",
-                 placeholder="When/why this variant appears"),
+        FieldDef("context", "Context", "textarea"),
     ],
 ))
 
@@ -1612,15 +1432,79 @@ register(EntityDef(
 
 
 # #############################################################################
-#
-#  TIER 2 — LOCATION DEPTH
-#  Per-location structured data from Creative Layer.
-#
+#  TIER 2 — PROP DEPTH (Phase 1D — new)
 # #############################################################################
 
-# ---------------------------------------------------------------------------
-# Location Design
-# ---------------------------------------------------------------------------
+register(EntityDef(
+    name="prop_surface_profile",
+    label="Prop Surface Profile",
+    label_plural="Prop Surface Profiles",
+    icon="🪙",
+    category="Prop Depth",
+    sort_order=220,
+    tier=2,
+    parent_entity="prop",
+    parent_field="prop_id",
+    description="Surface, material, and physical-presence detail for a prop. "
+                "Holds the descriptive baseline that surface and visual bundles "
+                "reference. State variation (clean vs damaged) belongs in prop_variant.",
+    fields=[
+        FieldDef("name", "Name"),
+        FieldDef("prop_id", "Prop", "reference",
+                 reference_entity="prop", required=True),
+        FieldDef("material", "Primary Material", "text",
+                 placeholder='e.g. "Tarnished silver", "Worn leather"'),
+        FieldDef("secondary_materials", "Secondary Materials", "text"),
+        FieldDef("size", "Size", "text", placeholder="e.g. Palm-sized, 6 feet tall"),
+        FieldDef("weight_impression", "Weight Impression", "text",
+                 placeholder='e.g. "heavier than it looks"'),
+        FieldDef("primary_color_hex", "Primary Color (hex)", "text", tab="Color"),
+        FieldDef("primary_color_name", "Primary Color Name", "text", tab="Color"),
+        FieldDef("secondary_colors", "Secondary Colors", "json", tab="Color"),
+        FieldDef("surface_finish", "Surface Finish", "select", tab="Surface", options=[
+            "matte", "satin", "gloss", "worn", "polished", "pitted"
+        ]),
+        FieldDef("texture_quality", "Texture Quality", "textarea", tab="Surface"),
+        FieldDef("baseline_condition", "Baseline Condition", "text", tab="Condition",
+                 help_text="The prop's default state. State changes belong in prop_variant."),
+        FieldDef("wear_pattern", "Wear Pattern", "textarea", tab="Condition"),
+        FieldDef("aging_notes", "Aging Notes", "textarea", tab="Condition"),
+        FieldDef("visual_distinction", "Visual Distinction", "textarea", tab="Identity",
+                 placeholder="The silhouette / shorthand of this prop"),
+        FieldDef("notes", "Notes", "textarea", tab="Notes"),
+    ],
+))
+
+register(EntityDef(
+    name="prop_variant",
+    label="Prop Variant",
+    label_plural="Prop Variants",
+    icon="🔀",
+    category="Prop Depth",
+    sort_order=221,
+    tier=2,
+    parent_entity="prop",
+    parent_field="prop_id",
+    description="Specific state or version of a prop (e.g. Locket open, Gun blood-spattered, "
+                "Letter torn). Tools bind state-specific bundles to a prop variant; the "
+                "cascade resolves the right bundle for the right state.",
+    fields=[
+        FieldDef("name", "Variant Name", required=True,
+                 placeholder='e.g. "Locket — open", "Gun — fired"'),
+        FieldDef("prop_id", "Prop", "reference",
+                 reference_entity="prop", required=True),
+        FieldDef("physical_differences", "Physical Differences", "textarea"),
+        FieldDef("state_trigger", "State Trigger", "textarea",
+                 placeholder="What causes this variant to appear"),
+        FieldDef("context", "Context", "textarea"),
+    ],
+))
+
+
+# #############################################################################
+#  TIER 2 — LOCATION DEPTH
+# #############################################################################
+
 register(EntityDef(
     name="location_design",
     label="Location Design",
@@ -1639,7 +1523,6 @@ register(EntityDef(
         FieldDef("design_concept", "Design Concept", "textarea"),
         FieldDef("visual_metaphor", "Visual Metaphor", "textarea"),
         FieldDef("emotional_target", "Emotional Target", "textarea"),
-        # Architecture tab
         FieldDef("period_style", "Period / Style", "text", tab="Architecture"),
         FieldDef("condition", "Condition", "select", tab="Architecture",
                  options=["pristine", "maintained", "neglected", "ruined"]),
@@ -1647,16 +1530,13 @@ register(EntityDef(
                  options=["intimate", "domestic", "commercial", "monumental"]),
         FieldDef("geometry", "Geometry", "select", tab="Architecture",
                  options=["organic", "angular", "chaotic", "ordered"]),
-        # Materials tab
         FieldDef("dominant_materials", "Dominant Materials", "textarea", tab="Materials"),
         FieldDef("secondary_materials", "Secondary Materials", "textarea", tab="Materials"),
         FieldDef("texture_quality", "Texture Quality", "textarea", tab="Materials"),
         FieldDef("surface_finish", "Surface Finish", "textarea", tab="Materials"),
-        # Spatial tab
         FieldDef("spatial_description", "Spatial Layout", "textarea", tab="Spatial"),
         FieldDef("sight_lines", "Sight Lines", "textarea", tab="Spatial"),
         FieldDef("key_focal_points", "Key Focal Points", "textarea", tab="Spatial"),
-        # Lighting tab
         FieldDef("natural_light_sources", "Natural Light Sources", "textarea", tab="Lighting"),
         FieldDef("practical_light_sources", "Practical Light Sources", "textarea",
                  tab="Lighting"),
@@ -1665,7 +1545,7 @@ register(EntityDef(
 ))
 
 # ---------------------------------------------------------------------------
-# Location Variant
+# Location Variant (Phase 1D — added is_baseline + structured state axes)
 # ---------------------------------------------------------------------------
 register(EntityDef(
     name="location_variant",
@@ -1677,11 +1557,25 @@ register(EntityDef(
     tier=2,
     parent_entity="location",
     parent_field="location_id",
-    description="Modified state of a location (e.g. Night version, After fire).",
+    description="Modified state of a location (e.g. Night version, After fire). "
+                "Includes structured state axes (time-of-day, weather, season, "
+                "post-event state) that previously lived on the location base entity. "
+                "Exactly one variant per location should be marked is_baseline = true.",
     fields=[
         FieldDef("name", "Variant Name", required=True),
         FieldDef("location_id", "Location", "reference",
                  reference_entity="location", required=True),
+        FieldDef("is_baseline", "Is Baseline", "boolean", default=False,
+                 help_text="True for the unconditional default variant for this location."),
+        FieldDef("time_of_day", "Time of Day", "select", tab="State", options=[
+            "dawn", "morning", "midday", "afternoon", "dusk", "night", "varies"
+        ]),
+        FieldDef("weather", "Weather", "text", tab="State"),
+        FieldDef("season", "Season", "select", tab="State", options=[
+            "spring", "summer", "autumn", "winter", "unspecified"
+        ]),
+        FieldDef("post_event_state", "Post-Event State", "text", tab="State",
+                 placeholder='e.g. "after the fire", "during the festival", "abandoned"'),
         FieldDef("physical_differences", "Physical Differences", "textarea"),
         FieldDef("lighting_differences", "Lighting Differences", "textarea"),
         FieldDef("emotional_shift", "Emotional Shift", "textarea"),
@@ -1689,9 +1583,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Location Color Scheme
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="location_color_scheme",
     label="Location Color Scheme",
@@ -1719,9 +1610,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Location Sound Profile
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="location_sound_profile",
     label="Location Sound Profile",
@@ -1749,18 +1637,10 @@ register(EntityDef(
 
 
 # #############################################################################
-#
-#  CHARACTER REDESIGN — NEW ENTITIES (Phase 1B)
-#
-#  Layer 2: Asset reference (bundle pattern)
-#  Layer 3: Performance corpus
-#  Layer 4: Workflow state
-#
+#  ASSET REFERENCE — Layer 2 (Phase 1B + 1D)
 # #############################################################################
 
-# ---------------------------------------------------------------------------
-# Bundle — tool-agnostic media reference (VERSIONABLE)
-# ---------------------------------------------------------------------------
+# Bundle (Phase 1D — added `acoustic` to intent enum)
 register(EntityDef(
     name="bundle",
     label="Bundle",
@@ -1770,44 +1650,35 @@ register(EntityDef(
     sort_order=250,
     tier=2,
     description="Named, intent-typed collection of assets. Tool-agnostic media reference "
-                "primitive used by the character cluster (and later by props and locations). "
+                "primitive used by the character cluster (and now by props and locations). "
                 "Versionable — participates in linear version chains.",
     versionable=True,
     fields=[
-        FieldDef("name", "Bundle Name", required=True,
-                 placeholder='e.g. "Snapper — baseline visual"'),
+        FieldDef("name", "Bundle Name", required=True),
         FieldDef("intent", "Intent", "select", required=True, options=[
-            "visual_identity",   # face/body locking
-            "voice_identity",    # voice cloning material
-            "motion",            # body/gesture data
-            "behavior",          # decision/reaction corpora
-            "performance",       # multimodal captured performance
-            "surface",           # material/texture detail
-            "environment",       # for locations
-            "other",             # escape hatch
+            "visual_identity",
+            "voice_identity",
+            "motion",
+            "behavior",
+            "performance",
+            "surface",
+            "environment",
+            "acoustic",
+            "other",
         ],
-                 help_text="Hard enum. Tools switch on this to determine compatibility."),
-        FieldDef("description", "Description", "textarea",
-                 placeholder="What this bundle is for"),
-        FieldDef("coverage_summary", "Coverage Summary", "textarea",
-                 placeholder="Plain-language: angles, expressions, phoneme set, etc."),
+                 help_text="Hard enum. Tools switch on this to determine compatibility. "
+                           "acoustic added in Phase 1D for location ambience."),
+        FieldDef("description", "Description", "textarea"),
+        FieldDef("coverage_summary", "Coverage Summary", "textarea"),
         FieldDef("format_hints", "Format Hints", "json", tab="Technical",
-                 placeholder='{"frame_count": 30, "lighting_conditions": [...], '
-                             '"audio_duration_sec": 240}',
-                 help_text="Structured metadata tools can read without prescribing pipeline. "
-                           "Open shape — conventional keys vary by intent."),
+                 placeholder='{"frame_count": 30, "lighting_conditions": [...]}'),
         FieldDef("intended_consumers", "Intended Consumers", "json", tab="Technical",
-                 placeholder='["image_gen", "video_gen", "voice_clone", "world_model"]',
-                 help_text="Optional hints about what tool types this is designed for."),
-        FieldDef("provenance", "Provenance", "textarea", tab="Technical",
-                 placeholder="How this bundle was assembled — shoot session, curated set, etc."),
+                 placeholder='["image_gen", "video_gen", "voice_clone", "world_model"]'),
+        FieldDef("provenance", "Provenance", "textarea", tab="Technical"),
         FieldDef("notes", "Notes", "textarea", tab="Notes"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Bundle-Asset (junction)
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="bundle_asset",
     label="Bundle-Asset",
@@ -1822,16 +1693,12 @@ register(EntityDef(
         FieldDef("name", "Display Name", hidden=True),
         FieldDef("bundle_id", "Bundle", "reference", reference_entity="bundle", required=True),
         FieldDef("asset_id", "Asset", "reference", reference_entity="asset", required=True),
-        FieldDef("role_in_bundle", "Role in Bundle", "text",
-                 placeholder='e.g. "front view neutral", "phoneme /θ/", "anger reaction"'),
+        FieldDef("role_in_bundle", "Role in Bundle", "text"),
         FieldDef("order", "Order", "integer"),
         FieldDef("notes", "Notes", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Character-Asset Binding — applies a bundle to a character under conditions
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="character_asset_binding",
     label="Character Asset Binding",
@@ -1840,91 +1707,142 @@ register(EntityDef(
     category="Asset Reference",
     sort_order=251,
     tier=2,
-    description="Applies a bundle to a character under specific conditions. "
-                "Tools walk the resolution cascade and use bindings to find the "
-                "right media for a given character in a given scene/state.",
+    description="Applies a bundle to a character under specific conditions.",
     fields=[
-        FieldDef("name", "Binding Name",
-                 placeholder='e.g. "Snapper baseline visual"'),
+        FieldDef("name", "Binding Name"),
         FieldDef("character_id", "Character", "reference",
                  reference_entity="character", required=True),
         FieldDef("bundle_id", "Bundle", "reference",
                  reference_entity="bundle", required=True),
-        FieldDef("is_baseline", "Is Baseline", "boolean", default=False,
-                 help_text="True for the unconditional default binding for this character."),
-        FieldDef("precedence", "Precedence", "integer", default=0,
-                 help_text="Higher wins when multiple bindings could apply. "
-                           "Author or tool sets this manually."),
-        # Conditional filters
+        FieldDef("is_baseline", "Is Baseline", "boolean", default=False),
+        FieldDef("precedence", "Precedence", "integer", default=0),
         FieldDef("variant_id", "Variant", "reference",
                  reference_entity="character_variant", tab="Conditions"),
-        FieldDef("physical_state_filter", "Physical State Filter", "text",
-                 tab="Conditions",
-                 placeholder='Matches against physical_state values'),
-        FieldDef("vocal_state_filter", "Vocal State Filter", "text",
-                 tab="Conditions"),
+        FieldDef("physical_state_filter", "Physical State Filter", "text", tab="Conditions"),
+        FieldDef("vocal_state_filter", "Vocal State Filter", "text", tab="Conditions"),
         FieldDef("scene_range_start_id", "Scene Range Start", "reference",
                  reference_entity="scene", tab="Conditions"),
         FieldDef("scene_range_end_id", "Scene Range End", "reference",
                  reference_entity="scene", tab="Conditions"),
-        FieldDef("act_id", "Act", "reference", reference_entity="act",
-                 tab="Conditions",
-                 help_text="Alternative coarser scope to scene range."),
-        FieldDef("conditions_json", "Additional Conditions", "json", tab="Conditions",
-                 placeholder='{"custom_key": "value"}',
-                 help_text="Catch-all for tool-specific filters."),
+        FieldDef("act_id", "Act", "reference", reference_entity="act", tab="Conditions"),
+        FieldDef("conditions_json", "Additional Conditions", "json", tab="Conditions"),
         FieldDef("notes", "Notes", "textarea", tab="Notes"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Identity Anchor — canonical reference frames/segments for verification
-# ---------------------------------------------------------------------------
+# Prop Asset Binding (NEW in Phase 1D)
 register(EntityDef(
-    name="identity_anchor",
-    label="Identity Anchor",
-    label_plural="Identity Anchors",
+    name="prop_asset_binding",
+    label="Prop Asset Binding",
+    label_plural="Prop Asset Bindings",
+    icon="🎚️",
+    category="Asset Reference",
+    sort_order=253,
+    tier=2,
+    description="Applies a bundle to a prop under specific conditions (variant, scene "
+                "range, act). Tools walk the prop resolution cascade and use bindings to "
+                "find the right media for a prop in a given scene/state.",
+    fields=[
+        FieldDef("name", "Binding Name"),
+        FieldDef("prop_id", "Prop", "reference",
+                 reference_entity="prop", required=True),
+        FieldDef("bundle_id", "Bundle", "reference",
+                 reference_entity="bundle", required=True),
+        FieldDef("is_baseline", "Is Baseline", "boolean", default=False),
+        FieldDef("precedence", "Precedence", "integer", default=0),
+        FieldDef("variant_id", "Variant", "reference",
+                 reference_entity="prop_variant", tab="Conditions"),
+        FieldDef("scene_range_start_id", "Scene Range Start", "reference",
+                 reference_entity="scene", tab="Conditions"),
+        FieldDef("scene_range_end_id", "Scene Range End", "reference",
+                 reference_entity="scene", tab="Conditions"),
+        FieldDef("act_id", "Act", "reference", reference_entity="act", tab="Conditions"),
+        FieldDef("conditions_json", "Additional Conditions", "json", tab="Conditions"),
+        FieldDef("notes", "Notes", "textarea", tab="Notes"),
+    ],
+))
+
+# Location Asset Binding (NEW in Phase 1D)
+register(EntityDef(
+    name="location_asset_binding",
+    label="Location Asset Binding",
+    label_plural="Location Asset Bindings",
+    icon="🎚️",
+    category="Asset Reference",
+    sort_order=254,
+    tier=2,
+    description="Applies a bundle to a location under specific conditions (variant, "
+                "scene range, act, time-of-day). Tools walk the location resolution "
+                "cascade and use bindings to find the right media for a location.",
+    fields=[
+        FieldDef("name", "Binding Name"),
+        FieldDef("location_id", "Location", "reference",
+                 reference_entity="location", required=True),
+        FieldDef("bundle_id", "Bundle", "reference",
+                 reference_entity="bundle", required=True),
+        FieldDef("is_baseline", "Is Baseline", "boolean", default=False),
+        FieldDef("precedence", "Precedence", "integer", default=0),
+        FieldDef("variant_id", "Variant", "reference",
+                 reference_entity="location_variant", tab="Conditions"),
+        FieldDef("scene_range_start_id", "Scene Range Start", "reference",
+                 reference_entity="scene", tab="Conditions"),
+        FieldDef("scene_range_end_id", "Scene Range End", "reference",
+                 reference_entity="scene", tab="Conditions"),
+        FieldDef("act_id", "Act", "reference", reference_entity="act", tab="Conditions"),
+        FieldDef("time_of_day_filter", "Time of Day Filter", "text", tab="Conditions",
+                 help_text="Matches scene.time_of_day for bindings scoped to specific times."),
+        FieldDef("conditions_json", "Additional Conditions", "json", tab="Conditions"),
+        FieldDef("notes", "Notes", "textarea", tab="Notes"),
+    ],
+))
+
+# Entity Anchor (Phase 1D — renamed from identity_anchor, constrained polymorphic)
+register(EntityDef(
+    name="entity_anchor",
+    label="Entity Anchor",
+    label_plural="Entity Anchors",
     icon="📍",
     category="Asset Reference",
     sort_order=252,
     tier=2,
     description="Known-good single frame, audio segment, or motion sample marked as "
-                "canonical reference for a character. Used for both ID-locking inputs "
-                "and output verification. Points into source assets without modifying them.",
+                "canonical reference for a character, prop, or location. Used for both "
+                "ID-locking inputs and output verification. Points into source assets "
+                "without modifying them. Uses constrained polymorphism — subject_type "
+                "is a hard closed enum (character / prop / location).",
     fields=[
-        FieldDef("name", "Anchor Name",
-                 placeholder='e.g. "Snapper front neutral verified"'),
-        FieldDef("character_id", "Character", "reference",
-                 reference_entity="character", required=True),
-        FieldDef("variant_id", "Variant", "reference",
-                 reference_entity="character_variant"),
+        FieldDef("name", "Anchor Name"),
+        FieldDef("subject_type", "Subject Type", "select", required=True, options=[
+            "character", "prop", "location"
+        ],
+                 help_text="Hard closed enum. Tools switch on this exhaustively. "
+                           "Distinct from the open-polymorphism entity_type used elsewhere."),
+        FieldDef("subject_id", "Subject ID", "integer", required=True,
+                 help_text="Polymorphic reference into the table named by subject_type."),
+        FieldDef("subject_variant_id", "Subject Variant ID", "integer",
+                 help_text="Optional. Polymorphic reference into the matching variant table "
+                           "(character_variant / prop_variant / location_variant)."),
         FieldDef("anchor_type", "Anchor Type", "select", required=True, options=[
             "visual", "audio", "motion"
         ]),
         FieldDef("asset_id", "Source Asset", "reference",
-                 reference_entity="asset", required=True,
-                 help_text="The whole source asset. Anchors describe how to interpret it."),
-        # Visual/motion scoping
-        FieldDef("frame_number", "Frame Number", "integer", tab="Scope",
-                 help_text="For video/motion assets."),
+                 reference_entity="asset", required=True),
+        FieldDef("frame_number", "Frame Number", "integer", tab="Scope"),
         FieldDef("timecode", "Timecode", "text", tab="Scope",
-                 placeholder="HH:MM:SS:FF",
-                 help_text="Alternative to frame number."),
+                 placeholder="HH:MM:SS:FF"),
         FieldDef("region_box", "Region Box", "json", tab="Scope",
-                 placeholder='{"x": 420, "y": 180, "w": 480, "h": 600}',
-                 help_text="Optional spatial crop within frame."),
-        FieldDef("region_label", "Region Label", "text", tab="Scope",
-                 placeholder='e.g. "face only", "head and shoulders"',
-                 help_text="Author's note on what the region box represents."),
-        # Audio scoping
-        FieldDef("audio_offset_start_sec", "Audio Offset Start (sec)", "float", tab="Scope",
-                 help_text="For audio anchors."),
+                 placeholder='{"x": 420, "y": 180, "w": 480, "h": 600}'),
+        FieldDef("region_label", "Region Label", "text", tab="Scope"),
+        FieldDef("audio_offset_start_sec", "Audio Offset Start (sec)", "float", tab="Scope"),
         FieldDef("audio_offset_end_sec", "Audio Offset End (sec)", "float", tab="Scope"),
-        # Conditions and verification
-        FieldDef("condition_description", "Condition Description", "textarea", tab="Context",
-                 placeholder="When this anchor is valid: lighting, expression, state"),
-        FieldDef("physical_state", "Physical State", "text", tab="Context"),
-        FieldDef("vocal_state", "Vocal State", "text", tab="Context"),
+        FieldDef("condition_description", "Condition Description", "textarea", tab="Context"),
+        FieldDef("physical_state", "Physical State", "text", tab="Context",
+                 help_text="Applies for character and prop subjects."),
+        FieldDef("vocal_state", "Vocal State", "text", tab="Context",
+                 help_text="Applies for character subjects."),
+        FieldDef("environmental_state", "Environmental State", "text", tab="Context",
+                 placeholder='e.g. "midday clear", "post-rain dusk"',
+                 help_text="Applies for location subjects."),
         FieldDef("canonical_status", "Canonical Status", "select", options=[
             "verified", "candidate", "rejected"
         ], default="candidate",
@@ -1935,14 +1853,12 @@ register(EntityDef(
 
 
 # #############################################################################
-#
 #  PERFORMANCE CORPUS — Layer 3
-#
+#  Shared infrastructure. Props participate via clip_prop. Locations participate
+#  via plates (clip_type=atmospheric); no clip_location junction (clip→scene→
+#  location already chains).
 # #############################################################################
 
-# ---------------------------------------------------------------------------
-# Performance Corpus (project-level singleton)
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="performance_corpus",
     label="Performance Corpus",
@@ -1951,30 +1867,22 @@ register(EntityDef(
     category="Performance Corpus",
     sort_order=260,
     tier=2,
-    description="Project-level index of captured footage. Singleton per project. "
-                "Only populated when shooting happens, but always queryable.",
+    description="Project-level index of captured footage.",
     fields=[
         FieldDef("name", "Name", default="Performance Corpus"),
-        FieldDef("shoot_dates_start", "Shoot Dates Start", "text",
-                 placeholder="YYYY-MM-DD"),
-        FieldDef("shoot_dates_end", "Shoot Dates End", "text",
-                 placeholder="YYYY-MM-DD"),
+        FieldDef("shoot_dates_start", "Shoot Dates Start", "text"),
+        FieldDef("shoot_dates_end", "Shoot Dates End", "text"),
         FieldDef("shoot_locations", "Shoot Locations", "textarea"),
         FieldDef("coverage_completeness", "Coverage Completeness", "select", options=[
             "planned", "in_production", "principal_complete",
             "pickups_complete", "complete"
         ], default="planned"),
-        FieldDef("camera_metadata", "Camera Metadata", "textarea", tab="Technical",
-                 placeholder="Sensors, codec, color space"),
-        FieldDef("audio_metadata", "Audio Metadata", "textarea", tab="Technical",
-                 placeholder="Sample rate, mic config, boom/lav setup"),
+        FieldDef("camera_metadata", "Camera Metadata", "textarea", tab="Technical"),
+        FieldDef("audio_metadata", "Audio Metadata", "textarea", tab="Technical"),
         FieldDef("corpus_notes", "Corpus Notes", "textarea", tab="Notes"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Actor (project-level, minimal)
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="actor",
     label="Actor",
@@ -1992,9 +1900,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Actor-Character Role (junction with rich relationship metadata)
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="actor_character_role",
     label="Actor-Character Role",
@@ -2003,9 +1908,7 @@ register(EntityDef(
     category="Connections",
     sort_order=69,
     tier=0,
-    description="Junction: actor + character + role type. Handles all combinations: "
-                "one actor playing multiple characters, multiple actors playing one "
-                "character (principal, body double, voice double, ADR, mocap).",
+    description="Junction: actor + character + role type.",
     fields=[
         FieldDef("name", "Display Name", hidden=True),
         FieldDef("actor_id", "Actor", "reference", reference_entity="actor", required=True),
@@ -2018,15 +1921,11 @@ register(EntityDef(
         FieldDef("scope", "Scope", "select", options=[
             "whole_project", "specific_scenes", "specific_takes"
         ], default="whole_project"),
-        FieldDef("scope_details", "Scope Details", "textarea",
-                 placeholder="When scope isn't whole_project"),
+        FieldDef("scope_details", "Scope Details", "textarea"),
         FieldDef("notes", "Notes", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Take
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="take",
     label="Take",
@@ -2038,30 +1937,23 @@ register(EntityDef(
     description="A single recorded take. May cross scenes (via take_scene junction).",
     has_external_id=True,
     fields=[
-        FieldDef("name", "Take Name / Slate", required=True,
-                 placeholder='e.g. "23A-3"'),
+        FieldDef("name", "Take Name / Slate", required=True),
         FieldDef("corpus_id", "Corpus", "reference",
                  reference_entity="performance_corpus", required=True),
         FieldDef("shot_id", "Shot", "reference", reference_entity="shot"),
         FieldDef("take_number", "Take Number", "integer"),
-        FieldDef("date_recorded", "Date Recorded", "text", placeholder="YYYY-MM-DD"),
+        FieldDef("date_recorded", "Date Recorded", "text"),
         FieldDef("duration_seconds", "Duration (seconds)", "integer"),
-        FieldDef("timecode_start", "Timecode Start", "text",
-                 placeholder="HH:MM:SS:FF"),
+        FieldDef("timecode_start", "Timecode Start", "text"),
         FieldDef("timecode_end", "Timecode End", "text"),
         FieldDef("preferred", "Director's Pick", "boolean", default=False),
-        # Technical tab
-        FieldDef("camera_designation", "Camera", "text", tab="Technical",
-                 placeholder='e.g. "A cam", "B cam", "witness"'),
+        FieldDef("camera_designation", "Camera", "text", tab="Technical"),
         FieldDef("lens_info", "Lens Info", "text", tab="Technical"),
         FieldDef("recording_format", "Recording Format", "text", tab="Technical"),
         FieldDef("notes", "Notes", "textarea", tab="Notes"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Take-Scene (junction)
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="take_scene",
     label="Take-Scene",
@@ -2076,19 +1968,14 @@ register(EntityDef(
         FieldDef("name", "Display Name", hidden=True),
         FieldDef("take_id", "Take", "reference", reference_entity="take", required=True),
         FieldDef("scene_id", "Scene", "reference", reference_entity="scene", required=True),
-        FieldDef("order_in_take", "Order in Take", "integer",
-                 help_text="Which scene comes first in the take."),
+        FieldDef("order_in_take", "Order in Take", "integer"),
         FieldDef("coverage_completeness", "Coverage Completeness", "select", options=[
             "partial", "complete", "incidental"
-        ], default="complete",
-                 help_text="incidental = take caught the scene in passing, not trying to cover it."),
+        ], default="complete"),
         FieldDef("notes", "Notes", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Clip
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="clip",
     label="Clip",
@@ -2097,35 +1984,28 @@ register(EntityDef(
     category="Performance Corpus",
     sort_order=263,
     tier=2,
-    description="A meaningful within-scene segment of a take. Clips are by definition "
-                "within-scene; cross-scene takes get cut into multiple clips.",
+    description="A meaningful within-scene segment of a take. Plates are clips with "
+                "clip_type=atmospheric.",
     has_external_id=True,
     fields=[
         FieldDef("name", "Clip Name", required=True),
         FieldDef("take_id", "Take", "reference", reference_entity="take", required=True),
         FieldDef("scene_id", "Scene", "reference", reference_entity="scene", required=True),
-        FieldDef("clip_in_timecode", "Clip In", "text",
-                 placeholder="HH:MM:SS:FF"),
+        FieldDef("clip_in_timecode", "Clip In", "text"),
         FieldDef("clip_out_timecode", "Clip Out", "text"),
         FieldDef("duration_seconds", "Duration (seconds)", "integer"),
         FieldDef("clip_type", "Clip Type", "select", options=[
             "dialogue", "action", "reaction", "transition", "insert", "atmospheric"
         ]),
-        # Screenplay linkage tab
         FieldDef("screenplay_line_start_id", "Screenplay Line Start", "integer",
-                 tab="Screenplay",
-                 help_text="Reference into screenplay_lines table. Links clips to dialogue."),
-        FieldDef("screenplay_line_end_id", "Screenplay Line End", "integer",
                  tab="Screenplay"),
+        FieldDef("screenplay_line_end_id", "Screenplay Line End", "integer", tab="Screenplay"),
         FieldDef("beat_id", "Story Beat", "reference",
                  reference_entity="story_beat", tab="Screenplay"),
         FieldDef("notes", "Notes", "textarea", tab="Notes"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Clip-Character (junction)
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="clip_character",
     label="Clip-Character",
@@ -2148,16 +2028,35 @@ register(EntityDef(
     ],
 ))
 
+# Clip-Prop (NEW junction in Phase 1D)
+register(EntityDef(
+    name="clip_prop",
+    label="Clip-Prop",
+    label_plural="Clip-Props",
+    icon="🔗",
+    category="Connections",
+    sort_order=72,
+    tier=0,
+    description="Junction: props present in a clip with their role. Parallel to "
+                "clip_character. Supports queries like 'every clip featuring the locket' "
+                "— useful for production review and for assembling prop-identity training sets.",
+    has_lifecycle_status=False,
+    fields=[
+        FieldDef("name", "Display Name", hidden=True),
+        FieldDef("clip_id", "Clip", "reference", reference_entity="clip", required=True),
+        FieldDef("prop_id", "Prop", "reference", reference_entity="prop", required=True),
+        FieldDef("role_in_clip", "Role in Clip", "select", options=[
+            "featured", "supporting", "background"
+        ], default="featured"),
+        FieldDef("notes", "Notes", "textarea"),
+    ],
+))
+
 
 # #############################################################################
-#
-#  WORKFLOW STATE — Layer 4
-#
+#  WORKFLOW STATE — Layer 4 (Phase 1B + 1D)
 # #############################################################################
 
-# ---------------------------------------------------------------------------
-# Shot Coverage — production state per shot, with history
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="shot_coverage",
     label="Shot Coverage",
@@ -2178,21 +2077,16 @@ register(EntityDef(
         ]),
         FieldDef("source_take_id", "Source Take", "reference", reference_entity="take"),
         FieldDef("source_clip_id", "Source Clip", "reference", reference_entity="clip"),
-        FieldDef("generation_required", "Generation Required", "textarea",
-                 placeholder="What needs to be generated to complete this shot"),
+        FieldDef("generation_required", "Generation Required", "textarea"),
         FieldDef("override_summary", "Override Summary", "textarea",
-                 placeholder="High-level deviation summary — details in character_shot_override"),
+                 placeholder="High-level deviation summary — details in *_shot_override"),
         FieldDef("status_date", "Status Date", "text",
-                 placeholder="YYYY-MM-DD",
                  help_text="For ordering history. Most recent record is canonical."),
         FieldDef("decided_by", "Decided By", "text"),
         FieldDef("notes", "Notes", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Character Shot Override (VERSIONABLE; single active per shot+character)
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="character_shot_override",
     label="Character Shot Override",
@@ -2217,36 +2111,102 @@ register(EntityDef(
             "transformation", "other"
         ]),
         FieldDef("bundle_override_id", "Bundle Override", "reference",
-                 reference_entity="bundle",
-                 help_text="Use this bundle instead of the default cascade resolution."),
+                 reference_entity="bundle"),
         FieldDef("variant_target_id", "Variant Target", "reference",
                  reference_entity="character_variant"),
-        # Deltas
         FieldDef("visual_delta", "Visual Delta", "textarea", tab="Deltas"),
         FieldDef("vocal_delta", "Vocal Delta", "textarea", tab="Deltas"),
         FieldDef("motion_delta", "Motion Delta", "textarea", tab="Deltas"),
-        # Progression (generalized from transformation_progress)
         FieldDef("progression_axis", "Progression Axis", "text", tab="Progression",
-                 placeholder='e.g. "transformation", "aging", "decay", "corruption"',
-                 help_text="Project-defined progression dimension. Free text — axes are "
-                           "project-specific."),
-        FieldDef("progression_value", "Progression Value (0-1)", "float", tab="Progression",
-                 help_text="Where on the named axis this shot sits. Author-defined endpoints."),
+                 placeholder='e.g. "transformation", "aging", "decay"'),
+        FieldDef("progression_value", "Progression Value (0-1)", "float", tab="Progression"),
+        FieldDef("notes", "Notes", "textarea", tab="Notes"),
+    ],
+))
+
+# Prop Shot Override (NEW in Phase 1D)
+register(EntityDef(
+    name="prop_shot_override",
+    label="Prop Shot Override",
+    label_plural="Prop Shot Overrides",
+    icon="🎛️",
+    category="Workflow State",
+    sort_order=272,
+    tier=2,
+    description="Per-prop deviation from the cascade for a specific shot. "
+                "Versionable: only one active record per (shot, prop). "
+                "Earns its keep for mid-shot state transitions (gun firing, "
+                "locket falling open) and shot-specific VFX enhancement.",
+    versionable=True,
+    fields=[
+        FieldDef("name", "Override Name"),
+        FieldDef("shot_id", "Shot", "reference", reference_entity="shot", required=True),
+        FieldDef("prop_id", "Prop", "reference", reference_entity="prop", required=True),
+        FieldDef("override_types", "Override Types", "multiselect", options=[
+            "state_change", "damage", "transformation",
+            "vfx_enhancement", "other"
+        ]),
+        FieldDef("bundle_override_id", "Bundle Override", "reference",
+                 reference_entity="bundle"),
+        FieldDef("variant_target_id", "Variant Target", "reference",
+                 reference_entity="prop_variant"),
+        FieldDef("visual_delta", "Visual Delta", "textarea", tab="Deltas"),
+        FieldDef("surface_delta", "Surface Delta", "textarea", tab="Deltas",
+                 help_text="Material / finish deviation for this shot."),
+        FieldDef("motion_delta", "Motion Delta", "textarea", tab="Deltas",
+                 help_text="How the prop moves / breaks / behaves in this shot."),
+        FieldDef("progression_axis", "Progression Axis", "text", tab="Progression",
+                 placeholder='e.g. "damage", "wear", "transformation"'),
+        FieldDef("progression_value", "Progression Value (0-1)", "float", tab="Progression"),
+        FieldDef("notes", "Notes", "textarea", tab="Notes"),
+    ],
+))
+
+# Location Shot Override (NEW in Phase 1D)
+register(EntityDef(
+    name="location_shot_override",
+    label="Location Shot Override",
+    label_plural="Location Shot Overrides",
+    icon="🎛️",
+    category="Workflow State",
+    sort_order=273,
+    tier=2,
+    description="Per-location deviation from the cascade for a specific shot. "
+                "Versionable: only one active record per (shot, location). "
+                "Most location deviations belong at scene level (location_variant); "
+                "this entity is for genuinely shot-specific cases (VFX additions, "
+                "shot reveals beyond standard coverage).",
+    versionable=True,
+    fields=[
+        FieldDef("name", "Override Name"),
+        FieldDef("shot_id", "Shot", "reference", reference_entity="shot", required=True),
+        FieldDef("location_id", "Location", "reference",
+                 reference_entity="location", required=True),
+        FieldDef("override_types", "Override Types", "multiselect", options=[
+            "extension_change", "lighting_change", "weather_change",
+            "vfx_addition", "other"
+        ]),
+        FieldDef("bundle_override_id", "Bundle Override", "reference",
+                 reference_entity="bundle"),
+        FieldDef("variant_target_id", "Variant Target", "reference",
+                 reference_entity="location_variant"),
+        FieldDef("visual_delta", "Visual Delta", "textarea", tab="Deltas"),
+        FieldDef("acoustic_delta", "Acoustic Delta", "textarea", tab="Deltas",
+                 help_text="Ambience / acoustic deviation for this shot."),
+        FieldDef("lighting_delta", "Lighting Delta", "textarea", tab="Deltas",
+                 help_text="Lighting deviation specific to this shot."),
+        FieldDef("progression_axis", "Progression Axis", "text", tab="Progression",
+                 placeholder='e.g. "decay", "construction", "weather_progression"'),
+        FieldDef("progression_value", "Progression Value (0-1)", "float", tab="Progression"),
         FieldDef("notes", "Notes", "textarea", tab="Notes"),
     ],
 ))
 
 
 # #############################################################################
-#
 #  TIER 3 — SCENE DETAIL
-#  (Unchanged from existing schema. Phase 1B doesn't touch these.)
-#
 # #############################################################################
-#
-# ---------------------------------------------------------------------------
-# Scene Emotional Target
-# ---------------------------------------------------------------------------
+
 register(EntityDef(
     name="scene_emotional_target",
     label="Scene Emotional Target",
@@ -2274,9 +2234,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Scene Color Palette
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="scene_color_palette",
     label="Scene Color Palette",
@@ -2304,9 +2261,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Lighting Design
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="lighting_design",
     label="Lighting Design",
@@ -2329,14 +2283,12 @@ register(EntityDef(
         FieldDef("overall_mood", "Overall Mood", "text"),
         FieldDef("light_quality", "Overall Light Quality", "select",
                  options=["hard", "soft", "mixed"]),
-        # Key light tab
         FieldDef("key_source", "Key Light Source", "text", tab="Key Light"),
         FieldDef("key_direction", "Key Direction", "text", tab="Key Light"),
         FieldDef("key_quality", "Key Quality", "select", tab="Key Light",
                  options=["hard", "soft"]),
         FieldDef("key_color_temperature", "Key Color Temperature (K)", "integer",
                  tab="Key Light"),
-        # Fill and other tab
         FieldDef("fill_ratio", "Fill Ratio", "text", tab="Fill & Other"),
         FieldDef("fill_quality", "Fill Quality", "text", tab="Fill & Other"),
         FieldDef("fill_color_temperature", "Fill Color Temp (K)", "integer",
@@ -2349,9 +2301,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Scene Music Design
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="scene_music_design",
     label="Scene Music Design",
@@ -2382,9 +2331,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Tone Marker
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="tone_marker",
     label="Tone Marker",
@@ -2408,9 +2354,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Set Dressing
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="set_dressing",
     label="Set Dressing",
@@ -2434,9 +2377,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Dialogue Sound Design
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="dialogue_sound_design",
     label="Dialogue Sound Design",
@@ -2461,33 +2401,23 @@ register(EntityDef(
 
 
 # #############################################################################
-#
 #  TIER 4 — THEMATIC TRACKING
-#  Motifs, symbols, subtext — and character_color_identity (moved here in 1B)
-#
 # #############################################################################
 
-# ---------------------------------------------------------------------------
-# Character Color Identity (MOVED to Tier 4 in Phase 1B)
-# ---------------------------------------------------------------------------
-# Previously lived in Character Depth (Tier 2). Moved here because color
-# identity is a directorial/thematic choice about how a character manifests
-# visually, not a fundamental character property. Sits alongside the other
-# color entities.
 register(EntityDef(
     name="character_color_identity",
     label="Character Color Identity",
     label_plural="Character Color Identities",
     icon="🎨",
     category="Thematic Tracking",
-    sort_order=508,  # alongside color_symbolism, color_script, etc.
+    sort_order=508,
     tier=4,
     parent_entity="character",
     parent_field="character_id",
     description="Signature color language for a character. A directorial choice about "
                 "how the character manifests visually — thematic, not fundamental.",
     fields=[
-        FieldDef("name", "Name", placeholder="e.g. Eleanor's Color Identity"),
+        FieldDef("name", "Name"),
         FieldDef("character_id", "Character", "reference",
                  reference_entity="character", required=True),
         FieldDef("primary_color_hex", "Primary Color (hex)", "text",
@@ -2508,9 +2438,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Visual Motif
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="visual_motif",
     label="Visual Motif",
@@ -2535,9 +2462,9 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Visual Motif Appearance (junction)
-# ---------------------------------------------------------------------------
+# visual_motif_appearance uses open polymorphism (entity_type + entity_id).
+# Distinct from constrained polymorphism (subject_type + subject_id) used in
+# entity_anchor. See conventions.md.
 register(EntityDef(
     name="visual_motif_appearance",
     label="Visual Motif Appearance",
@@ -2546,7 +2473,8 @@ register(EntityDef(
     category="Connections",
     sort_order=64,
     tier=0,
-    description="Where a visual motif manifests (in a location, prop, costume, or scene).",
+    description="Where a visual motif manifests (in a location, prop, costume, or scene). "
+                "Open polymorphism — entity_type is open-ended.",
     has_lifecycle_status=False,
     fields=[
         FieldDef("name", "Display Name", hidden=True),
@@ -2559,9 +2487,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Sonic Motif
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="sonic_motif",
     label="Sonic Motif",
@@ -2584,9 +2509,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Symbol
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="symbol",
     label="Symbol",
@@ -2610,9 +2532,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Conceptual Motif
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="conceptual_motif",
     label="Conceptual Motif",
@@ -2631,9 +2550,7 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Motif Manifestation (junction)
-# ---------------------------------------------------------------------------
+# motif_manifestation uses open polymorphism (entity_type + entity_id).
 register(EntityDef(
     name="motif_manifestation",
     label="Motif Manifestation",
@@ -2642,7 +2559,8 @@ register(EntityDef(
     category="Connections",
     sort_order=65,
     tier=0,
-    description="Where a conceptual motif manifests in the story.",
+    description="Where a conceptual motif manifests in the story. "
+                "Open polymorphism — entity_type is open-ended.",
     has_lifecycle_status=False,
     fields=[
         FieldDef("name", "Display Name", hidden=True),
@@ -2656,9 +2574,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Subtext
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="subtext",
     label="Subtext",
@@ -2686,9 +2601,7 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Thematic Connection
-# ---------------------------------------------------------------------------
+# thematic_connection uses open polymorphism (entity_type + entity_id).
 register(EntityDef(
     name="thematic_connection",
     label="Thematic Connection",
@@ -2697,7 +2610,8 @@ register(EntityDef(
     category="Thematic Tracking",
     sort_order=505,
     tier=4,
-    description="How a specific element connects to a theme.",
+    description="How a specific element connects to a theme. "
+                "Open polymorphism — entity_type is open-ended.",
     fields=[
         FieldDef("name", "Display Name"),
         FieldDef("theme_id", "Theme", "reference",
@@ -2718,9 +2632,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Color Symbolism
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="color_symbolism",
     label="Color Symbolism",
@@ -2742,9 +2653,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Color Script
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="color_script",
     label="Color Script",
@@ -2770,14 +2678,9 @@ register(EntityDef(
 
 
 # #############################################################################
-#
 #  TIER 5 — EMOTIONAL ARCHITECTURE
-#
 # #############################################################################
 
-# ---------------------------------------------------------------------------
-# Emotional Arc
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="emotional_arc",
     label="Emotional Arc",
@@ -2798,9 +2701,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Emotional Beat
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="emotional_beat",
     label="Emotional Beat",
@@ -2823,9 +2723,6 @@ register(EntityDef(
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Information Strategy
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="information_strategy",
     label="Information Strategy",
@@ -2844,238 +2741,200 @@ register(EntityDef(
         ]),
         FieldDef("information_withheld", "Information Withheld", "textarea"),
         FieldDef("reveal_timing", "Reveal Timing", "textarea"),
-        FieldDef("suspense_approach", "Suspense Approach", "textarea"),
-        FieldDef("surprise_setup", "Surprise / Plant-and-Payoff", "textarea"),
+        FieldDef("audience_position", "Audience Position", "select",
+                 options=["ahead of characters", "behind characters", "with characters"]),
+        FieldDef("information_layers", "Information Layers", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Identification Strategy
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="identification_strategy",
     label="Identification Strategy",
     label_plural="Identification Strategies",
-    icon="🪞",
+    icon="🎯",
     category="Thematic Tracking",
     sort_order=513,
     tier=5,
-    description="How the audience relates to and identifies with characters.",
+    description="How the audience aligns with characters in a scene.",
     fields=[
-        FieldDef("name", "Name", default="Audience Identification Strategy"),
-        FieldDef("primary_identification_character_id", "Primary Identification Character",
-                 "reference", reference_entity="character"),
-        FieldDef("how_identification_created", "How Identification is Created", "textarea"),
-        FieldDef("identification_shifts", "Identification Shifts", "textarea"),
-        FieldDef("empathy_targets", "Empathy Targets", "json"),
-        FieldDef("distance_targets", "Distance Targets", "json"),
-        FieldDef("moral_alignment_approach", "Moral Alignment Approach", "textarea"),
+        FieldDef("name", "Name"),
+        FieldDef("scene_id", "Scene", "reference",
+                 reference_entity="scene", required=True),
+        FieldDef("primary_identification", "Primary Identification With", "reference",
+                 reference_entity="character"),
+        FieldDef("secondary_identification", "Secondary Identification With", "reference",
+                 reference_entity="character"),
+        FieldDef("audience_position", "Audience Position", "select", options=[
+            "with character", "observing character", "above character"
+        ]),
+        FieldDef("identification_technique", "Identification Technique", "textarea"),
+        FieldDef("emotional_alignment", "Emotional Alignment", "textarea"),
     ],
 ))
 
 
 # #############################################################################
-#
-#  TIER 6 — PRODUCTION (Shot-level, Performance Execution, Choreography)
-#
-#  NOTE: physical_habit was moved to Tier 2 (Character Depth) earlier in this
-#  file — it's not in the Tier 6 set below.
-#
+#  TIER 6 — PRODUCTION
 # #############################################################################
 
-# ---------------------------------------------------------------------------
-# Shot
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="shot",
     label="Shot",
     label_plural="Shots",
-    icon="📷",
+    icon="🎥",
     category="Production",
     sort_order=600,
     tier=6,
-    parent_entity="scene",
-    parent_field="scene_id",
-    description="Specific camera setup within a scene.",
+    description="A single camera setup within a scene.",
     has_external_id=True,
     fields=[
-        FieldDef("name", "Shot Number/Name", required=True),
+        FieldDef("name", "Shot Name / Number", required=True,
+                 placeholder="e.g. 23A"),
         FieldDef("scene_id", "Scene", "reference",
                  reference_entity="scene", required=True),
-        FieldDef("duration", "Duration (seconds)", "integer"),
-        FieldDef("coverage_type", "Coverage Type", "select",
-                 options=["primary", "alt angle", "cutaway", "insert", "establishing"]),
-        FieldDef("technical_requirements", "Technical Requirements", "textarea"),
+        FieldDef("shot_number", "Shot Number", "text"),
+        FieldDef("shot_order", "Order in Scene", "integer"),
+        FieldDef("shot_size", "Shot Size", "select", options=[
+            "extreme wide", "wide", "medium wide", "medium",
+            "medium close-up", "close-up", "extreme close-up"
+        ]),
+        FieldDef("camera_angle", "Camera Angle", "select", options=[
+            "eye level", "high angle", "low angle", "overhead", "dutch", "POV"
+        ]),
+        FieldDef("camera_movement", "Camera Movement", "select", options=[
+            "static", "pan", "tilt", "dolly", "tracking", "crane",
+            "handheld", "steadicam", "drone", "zoom"
+        ]),
+        FieldDef("lens_choice", "Lens", "text"),
+        FieldDef("duration_seconds", "Estimated Duration (seconds)", "float"),
+        FieldDef("description", "Shot Description", "textarea"),
+        FieldDef("notes", "Notes", "textarea", tab="Notes"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Shot Design
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="shot_design",
     label="Shot Design",
     label_plural="Shot Designs",
-    icon="🎯",
+    icon="📐",
     category="Production",
     sort_order=601,
     tier=6,
-    parent_entity="shot",
-    parent_field="shot_id",
-    description="Framing, lens, focus, and movement specifications for a shot.",
+    description="Detailed visual composition for a shot.",
     fields=[
         FieldDef("name", "Name"),
         FieldDef("shot_id", "Shot", "reference", reference_entity="shot", required=True),
-        FieldDef("framing_type", "Framing Type", "select", options=[
-            "EWS", "WS", "MWS", "MS", "MCU", "CU", "ECU", "insert", "OTS", "POV"
+        FieldDef("composition_type", "Composition Type", "select", options=[
+            "rule of thirds", "centered", "symmetrical", "asymmetric", "dynamic"
         ]),
-        FieldDef("angle", "Angle", "select", options=[
-            "eye level", "high", "low", "dutch", "overhead", "worm's eye"
-        ]),
-        FieldDef("composition", "Composition", "text"),
-        FieldDef("subject_placement", "Subject Placement", "text"),
-        FieldDef("depth_composition", "Depth Composition", "textarea"),
-        FieldDef("focal_length", "Focal Length (mm)", "integer", tab="Lens"),
-        FieldDef("aperture", "Aperture", "text", tab="Lens"),
-        FieldDef("lens_choice_reason", "Lens Choice Reason", "textarea", tab="Lens"),
-        FieldDef("focus_mode", "Focus Mode", "select", tab="Focus",
-                 options=["deep focus", "shallow focus", "rack focus", "split diopter"]),
-        FieldDef("primary_focus_subject", "Primary Focus Subject", "text", tab="Focus"),
-        FieldDef("rack_focus_choreography", "Rack Focus Choreography", "textarea",
-                 tab="Focus"),
-        FieldDef("movement_type", "Movement Type", "select", tab="Movement", options=[
-            "static", "pan", "tilt", "dolly", "crane", "handheld",
-            "steadicam", "tracking", "zoom", "combined"
-        ]),
-        FieldDef("movement_speed", "Movement Speed", "text", tab="Movement"),
-        FieldDef("movement_motivation", "Movement Motivation", "textarea", tab="Movement"),
-        FieldDef("start_position", "Start Position", "text", tab="Movement"),
-        FieldDef("end_position", "End Position", "text", tab="Movement"),
+        FieldDef("frame_division", "Frame Division", "textarea"),
+        FieldDef("subject_placement", "Subject Placement", "textarea"),
+        FieldDef("negative_space", "Negative Space Usage", "textarea"),
+        FieldDef("depth_of_field", "Depth of Field", "select",
+                 options=["shallow", "medium", "deep"]),
+        FieldDef("focus_strategy", "Focus Strategy", "textarea"),
+        FieldDef("color_emphasis", "Color Emphasis", "textarea"),
+        FieldDef("textural_emphasis", "Textural Emphasis", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Shot Language
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="shot_language",
     label="Shot Language",
     label_plural="Shot Language",
-    icon="💬",
+    icon="🗣️",
     category="Production",
     sort_order=602,
     tier=6,
-    parent_entity="shot",
-    parent_field="shot_id",
-    description="Meaning and intent conveyed through shot choices.",
+    description="How shots communicate meaning — visual vocabulary for a scene.",
     fields=[
         FieldDef("name", "Name"),
-        FieldDef("shot_id", "Shot", "reference", reference_entity="shot", required=True),
-        FieldDef("shot_intention", "Shot Intention", "select", options=[
-            "establishing", "reaction", "POV", "insert", "emotional emphasis",
-            "information delivery"
-        ]),
-        FieldDef("shot_psychology", "Shot Psychology", "select", options=[
-            "intimate", "distant", "powerful", "vulnerable", "stable", "unstable"
-        ]),
-        FieldDef("audience_relationship", "Audience Relationship", "select",
-                 options=["observer", "participant", "character identification", "omniscient"]),
+        FieldDef("scene_id", "Scene", "reference",
+                 reference_entity="scene", required=True),
+        FieldDef("visual_strategy", "Visual Strategy", "textarea"),
+        FieldDef("shot_relationships", "Shot Relationships", "textarea"),
+        FieldDef("cutting_pattern", "Cutting Pattern", "textarea"),
+        FieldDef("rhythm", "Editorial Rhythm", "select",
+                 options=["fast", "slow", "varying", "deliberate"]),
+        FieldDef("transitions", "Transition Approach", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Scene Blocking
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="scene_blocking",
     label="Scene Blocking",
     label_plural="Scene Blockings",
     icon="🗺️",
     category="Production",
-    sort_order=610,
+    sort_order=603,
     tier=6,
-    parent_entity="scene",
-    parent_field="scene_id",
-    description="Physical arrangement and movement of characters through a scene.",
+    description="Physical staging of characters and movement within the scene.",
     fields=[
         FieldDef("name", "Name"),
         FieldDef("scene_id", "Scene", "reference",
                  reference_entity="scene", required=True),
-        FieldDef("opening_positions", "Opening Positions", "json"),
-        FieldDef("closing_positions", "Closing Positions", "json"),
-        FieldDef("spatial_storytelling", "Spatial Storytelling", "textarea"),
-        FieldDef("blocking_notes", "Blocking Notes", "textarea"),
+        FieldDef("staging_concept", "Staging Concept", "textarea"),
+        FieldDef("character_geography", "Character Geography", "textarea"),
+        FieldDef("blocking_evolution", "Blocking Evolution Through Scene", "textarea"),
+        FieldDef("camera_relationship", "Camera Relationship to Action", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Blocking Beat
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="blocking_beat",
     label="Blocking Beat",
     label_plural="Blocking Beats",
-    icon="👣",
+    icon="📍",
     category="Production",
-    sort_order=611,
+    sort_order=604,
     tier=6,
-    description="Specific movement or position change within a scene.",
+    description="Discrete blocking moment within a scene.",
     fields=[
         FieldDef("name", "Name"),
         FieldDef("scene_blocking_id", "Scene Blocking", "reference",
                  reference_entity="scene_blocking", required=True),
-        FieldDef("character_id", "Character", "reference",
-                 reference_entity="character", required=True),
         FieldDef("beat_order", "Beat Order", "integer", required=True),
-        FieldDef("movement_description", "Movement Description", "textarea", required=True),
-        FieldDef("character_motivation", "Character Motivation", "textarea"),
-        FieldDef("story_motivation", "Story Motivation", "textarea"),
-        FieldDef("timing", "Timing", "text"),
-        FieldDef("quality", "Quality", "text"),
-        FieldDef("meaning", "Meaning", "textarea"),
+        FieldDef("description", "Description", "textarea"),
+        FieldDef("character_positions", "Character Positions", "json"),
+        FieldDef("movement_description", "Movement Description", "textarea"),
+        FieldDef("camera_position", "Camera Position", "text"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Action Sequence
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="action_sequence",
     label="Action Sequence",
     label_plural="Action Sequences",
-    icon="⚔️",
+    icon="💥",
     category="Production",
-    sort_order=612,
+    sort_order=605,
     tier=6,
-    description="Extended physical action — fight, chase, dance, stunt.",
+    description="Choreographed action sequence — fight, chase, stunt.",
     fields=[
         FieldDef("name", "Name", required=True),
         FieldDef("scene_id", "Scene", "reference",
                  reference_entity="scene", required=True),
-        FieldDef("action_type", "Action Type", "select", options=[
-            "fight/combat", "chase", "physical labor", "athletic performance",
-            "dance", "stunt sequence"
+        FieldDef("sequence_type", "Sequence Type", "select", options=[
+            "fight", "chase", "stunt", "combat", "athletic", "physical comedy"
         ]),
-        FieldDef("narrative_function", "Narrative Function", "textarea"),
-        FieldDef("character_revelation", "Character Revelation", "textarea"),
-        FieldDef("emotional_journey", "Emotional Journey", "textarea"),
-        FieldDef("action_arc", "Action Arc", "textarea"),
-        FieldDef("physical_vocabulary", "Physical Vocabulary / Style", "textarea"),
+        FieldDef("description", "Description", "textarea"),
+        FieldDef("style", "Style", "text"),
+        FieldDef("difficulty_level", "Difficulty Level", "select",
+                 options=["simple", "moderate", "complex", "extreme"]),
+        FieldDef("safety_concerns", "Safety Concerns", "textarea"),
+        FieldDef("stunt_requirements", "Stunt Requirements", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Action Sequence Character (junction)
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="action_sequence_character",
-    label="Action Sequence Character",
-    label_plural="Action Sequence Characters",
+    label="Action Sequence-Character",
+    label_plural="Action Sequence-Characters",
     icon="🔗",
     category="Connections",
     sort_order=66,
     tier=0,
-    description="Links a character to an action sequence.",
+    description="Links characters to action sequences with their role.",
     has_lifecycle_status=False,
     fields=[
         FieldDef("name", "Display Name", hidden=True),
@@ -3084,661 +2943,554 @@ register(EntityDef(
         FieldDef("character_id", "Character", "reference",
                  reference_entity="character", required=True),
         FieldDef("role_in_action", "Role in Action", "text"),
+        FieldDef("notes", "Notes", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Action Beat
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="action_beat",
     label="Action Beat",
     label_plural="Action Beats",
-    icon="💥",
+    icon="⚡",
     category="Production",
-    sort_order=613,
+    sort_order=606,
     tier=6,
-    description="Specific moment within an action sequence.",
+    description="Discrete moment within an action sequence.",
     fields=[
         FieldDef("name", "Name"),
         FieldDef("action_sequence_id", "Action Sequence", "reference",
-                 reference_entity="action_sequence"),
-        FieldDef("scene_id", "Scene", "reference", reference_entity="scene", required=True),
-        FieldDef("character_id", "Character", "reference", reference_entity="character"),
-        FieldDef("description", "Description", "textarea", required=True),
-        FieldDef("beat_function", "Beat Function", "select",
-                 options=["story", "character", "spectacle", "emotional"]),
-        FieldDef("timing", "Timing", "text"),
-        FieldDef("intensity", "Intensity (1-10)", "integer"),
-        FieldDef("safety_requirements", "Safety Requirements", "textarea"),
+                 reference_entity="action_sequence", required=True),
+        FieldDef("beat_order", "Beat Order", "integer", required=True),
+        FieldDef("description", "Description", "textarea"),
+        FieldDef("characters_involved", "Characters Involved", "json"),
+        FieldDef("physical_action", "Physical Action", "textarea"),
+        FieldDef("camera_treatment", "Camera Treatment", "text"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Proxemic Design
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="proxemic_design",
     label="Proxemic Design",
     label_plural="Proxemic Designs",
-    icon="↔️",
+    icon="📏",
     category="Production",
-    sort_order=614,
+    sort_order=607,
     tier=6,
-    parent_entity="scene",
-    parent_field="scene_id",
-    description="Intentional use of interpersonal distance in a scene.",
+    description="Use of physical distance between characters as meaning.",
     fields=[
         FieldDef("name", "Name"),
         FieldDef("scene_id", "Scene", "reference",
                  reference_entity="scene", required=True),
-        FieldDef("starting_distance_zone", "Starting Distance Zone", "select",
-                 options=["intimate (0-18in)", "personal (18in-4ft)",
-                          "social (4-12ft)", "public (12ft+)"]),
-        FieldDef("ending_distance_zone", "Ending Distance Zone", "select",
-                 options=["intimate (0-18in)", "personal (18in-4ft)",
-                          "social (4-12ft)", "public (12ft+)"]),
-        FieldDef("distance_story", "Distance Story", "textarea"),
-        FieldDef("violations", "Violations", "textarea"),
-        FieldDef("violation_purpose", "Violation Purpose", "textarea"),
+        FieldDef("opening_distances", "Opening Distances", "textarea"),
+        FieldDef("distance_evolution", "Distance Evolution", "textarea"),
+        FieldDef("intimate_distance_use", "Intimate Distance Use", "textarea"),
+        FieldDef("personal_distance_use", "Personal Distance Use", "textarea"),
+        FieldDef("social_distance_use", "Social Distance Use", "textarea"),
+        FieldDef("public_distance_use", "Public Distance Use", "textarea"),
+        FieldDef("distance_violations", "Distance Violations", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Physical State
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="physical_state",
     label="Physical State",
     label_plural="Physical States",
-    icon="🤕",
+    icon="🌡️",
     category="Production",
-    sort_order=620,
+    sort_order=608,
     tier=6,
-    description="Character's physical condition at a specific story point.",
+    description="Modulation of a character's baseline physicality in a specific moment.",
     fields=[
         FieldDef("name", "Name"),
         FieldDef("character_id", "Character", "reference",
                  reference_entity="character", required=True),
-        FieldDef("scene_id", "Scene", "reference",
-                 reference_entity="scene", required=True),
-        FieldDef("energy_level", "Energy Level", "select",
-                 options=["alert/energized", "tired/depleted", "wired/anxious",
-                          "relaxed/calm"]),
-        FieldDef("physical_comfort", "Physical Comfort", "textarea"),
-        FieldDef("intoxication_level", "Intoxication / Alteration", "select",
-                 options=["sober", "slightly intoxicated", "heavily intoxicated",
-                          "medicated", "exhausted to impairment"]),
-        FieldDef("physical_needs", "Physical Needs", "textarea"),
-        FieldDef("current_injuries", "Current Injuries", "textarea"),
-        FieldDef("illness_symptoms", "Illness Symptoms", "textarea"),
+        FieldDef("scene_id", "Scene", "reference", reference_entity="scene"),
+        FieldDef("shot_id", "Shot", "reference", reference_entity="shot"),
+        FieldDef("state_description", "State Description", "textarea"),
+        FieldDef("tension_modulation", "Tension Modulation", "text"),
+        FieldDef("energy_modulation", "Energy Modulation", "text"),
+        FieldDef("posture_modulation", "Posture Modulation", "text"),
+        FieldDef("movement_modulation", "Movement Modulation", "text"),
+        FieldDef("trigger", "Trigger", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Vocal State
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="vocal_state",
     label="Vocal State",
     label_plural="Vocal States",
-    icon="🗣️",
+    icon="🎤",
     category="Production",
-    sort_order=621,
+    sort_order=609,
     tier=6,
-    description="Character's vocal condition at a specific story point.",
+    description="Modulation of a character's baseline vocal profile in a specific moment.",
     fields=[
         FieldDef("name", "Name"),
         FieldDef("character_id", "Character", "reference",
                  reference_entity="character", required=True),
-        FieldDef("scene_id", "Scene", "reference",
-                 reference_entity="scene", required=True),
-        FieldDef("physical_vocal_state", "Physical Vocal State", "select",
-                 options=["healthy", "hoarse", "strained", "damaged"]),
-        FieldDef("emotional_vocal_state", "Emotional Vocal State", "select",
-                 options=["controlled", "emotional", "confident", "shaking"]),
-        FieldDef("environmental_factors", "Environmental Factors", "textarea"),
-        FieldDef("altered_state_effects", "Altered State Effects", "textarea"),
+        FieldDef("scene_id", "Scene", "reference", reference_entity="scene"),
+        FieldDef("shot_id", "Shot", "reference", reference_entity="shot"),
+        FieldDef("state_description", "State Description", "textarea"),
+        FieldDef("pitch_modulation", "Pitch Modulation", "text"),
+        FieldDef("volume_modulation", "Volume Modulation", "text"),
+        FieldDef("pace_modulation", "Pace Modulation", "text"),
+        FieldDef("articulation_modulation", "Articulation Modulation", "text"),
+        FieldDef("emotional_coloring", "Emotional Coloring", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Physical Performance Beat
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="physical_performance_beat",
     label="Physical Performance Beat",
     label_plural="Physical Performance Beats",
-    icon="🎭",
+    icon="🏃",
     category="Production",
-    sort_order=622,
+    sort_order=610,
     tier=6,
-    description="Specific physical moment or action in a performance.",
+    description="A specific physical performance moment within a scene.",
     fields=[
         FieldDef("name", "Name"),
-        FieldDef("character_id", "Character", "reference",
-                 reference_entity="character", required=True),
         FieldDef("scene_id", "Scene", "reference",
                  reference_entity="scene", required=True),
-        FieldDef("beat_description", "Beat Description", "textarea", required=True),
-        FieldDef("timing", "Timing", "text"),
-        FieldDef("purpose", "Purpose", "textarea"),
-        FieldDef("quality_notes", "Quality Notes", "text"),
-        FieldDef("scale", "Scale", "select", options=["large", "small", "subtle"]),
-        FieldDef("relationship_to_dialogue", "Relationship to Dialogue", "select",
-                 options=["accompanies", "replaces", "contradicts", "punctuates"]),
+        FieldDef("character_id", "Character", "reference",
+                 reference_entity="character", required=True),
+        FieldDef("beat_order", "Beat Order", "integer"),
+        FieldDef("description", "Description", "textarea"),
+        FieldDef("physical_action", "Physical Action", "textarea"),
+        FieldDef("body_part_focus", "Body Part Focus", "text"),
+        FieldDef("emotional_subtext", "Emotional Subtext", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Vocal Beat
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="vocal_beat",
     label="Vocal Beat",
     label_plural="Vocal Beats",
-    icon="🎤",
+    icon="💬",
     category="Production",
-    sort_order=623,
+    sort_order=611,
     tier=6,
-    description="Specific vocal moment.",
+    description="A specific vocal performance moment within a scene.",
     fields=[
         FieldDef("name", "Name"),
-        FieldDef("character_id", "Character", "reference",
-                 reference_entity="character", required=True),
         FieldDef("scene_id", "Scene", "reference",
                  reference_entity="scene", required=True),
-        FieldDef("beat_description", "Beat Description", "textarea", required=True),
-        FieldDef("beat_type", "Beat Type", "select", options=[
-            "silence/pause", "non-verbal sound", "quality shift",
-            "volume shift", "tempo shift"
-        ]),
-        FieldDef("timing", "Timing", "text"),
-        FieldDef("purpose", "Purpose", "textarea"),
+        FieldDef("character_id", "Character", "reference",
+                 reference_entity="character", required=True),
+        FieldDef("beat_order", "Beat Order", "integer"),
+        FieldDef("description", "Description", "textarea"),
+        FieldDef("line_or_sound", "Line or Sound", "textarea"),
+        FieldDef("delivery_quality", "Delivery Quality", "text"),
+        FieldDef("emotional_subtext", "Emotional Subtext", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Line Delivery
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="line_delivery",
     label="Line Delivery",
     label_plural="Line Deliveries",
-    icon="📜",
+    icon="🗨️",
     category="Production",
-    sort_order=624,
+    sort_order=612,
     tier=6,
-    description="Specific delivery instructions for a line of dialogue.",
-    fields=[
-        FieldDef("name", "Name"),
-        FieldDef("character_id", "Character", "reference", reference_entity="character"),
-        FieldDef("scene_id", "Scene", "reference", reference_entity="scene"),
-        FieldDef("line_text", "Line Text", "text"),
-        FieldDef("emotional_quality", "Emotional Quality", "textarea"),
-        FieldDef("tempo", "Tempo", "text"),
-        FieldDef("volume", "Volume", "text"),
-        FieldDef("emphasis_words", "Emphasis Words", "json"),
-        FieldDef("pause_locations", "Pause Locations", "json"),
-        FieldDef("subtext", "Subtext", "textarea"),
-        FieldDef("operative_words", "Operative Words", "textarea"),
-        FieldDef("physical_integration", "Physical Integration", "textarea"),
-    ],
-))
-
-# ---------------------------------------------------------------------------
-# Dialogue Rhythm
-# ---------------------------------------------------------------------------
-register(EntityDef(
-    name="dialogue_rhythm",
-    label="Dialogue Rhythm",
-    label_plural="Dialogue Rhythms",
-    icon="🥁",
-    category="Production",
-    sort_order=625,
-    tier=6,
-    description="The musicality of conversation between characters in a scene.",
+    description="Specific direction for how a line should be delivered.",
     fields=[
         FieldDef("name", "Name"),
         FieldDef("scene_id", "Scene", "reference",
                  reference_entity="scene", required=True),
-        FieldDef("character_a_id", "Character A", "reference",
+        FieldDef("character_id", "Character", "reference",
                  reference_entity="character", required=True),
-        FieldDef("character_b_id", "Character B", "reference",
-                 reference_entity="character"),
-        FieldDef("conversational_style", "Conversational Style", "select", options=[
-            "overlapping/interrupting", "turn-taking/polite", "rapid exchange",
-            "languid/paused"
-        ]),
-        FieldDef("power_dynamics", "Power Dynamics", "textarea"),
-        FieldDef("listening_indicators", "Listening Indicators", "textarea"),
-        FieldDef("rhythm_evolution", "Rhythm Evolution Through Scene", "textarea"),
+        FieldDef("line_text", "Line Text", "textarea", required=True),
+        FieldDef("emotional_target", "Emotional Target", "text"),
+        FieldDef("subtext", "Subtext", "textarea"),
+        FieldDef("emphasis_words", "Emphasis Words", "json"),
+        FieldDef("pace", "Pace", "select", options=["fast", "slow", "measured", "varying"]),
+        FieldDef("volume", "Volume", "select", options=["whisper", "soft", "normal", "loud", "shout"]),
+        FieldDef("delivery_notes", "Delivery Notes", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Emotional Physicality
-# ---------------------------------------------------------------------------
+register(EntityDef(
+    name="dialogue_rhythm",
+    label="Dialogue Rhythm",
+    label_plural="Dialogue Rhythms",
+    icon="🎼",
+    category="Production",
+    sort_order=613,
+    tier=6,
+    description="Conversational pacing and interaction patterns in a scene.",
+    fields=[
+        FieldDef("name", "Name"),
+        FieldDef("scene_id", "Scene", "reference",
+                 reference_entity="scene", required=True),
+        FieldDef("overall_rhythm", "Overall Rhythm", "select",
+                 options=["staccato", "legato", "varying"]),
+        FieldDef("pause_pattern", "Pause Pattern", "textarea"),
+        FieldDef("overlap_pattern", "Overlap Pattern", "textarea"),
+        FieldDef("silence_pattern", "Silence Pattern", "textarea"),
+    ],
+))
+
 register(EntityDef(
     name="emotional_physicality",
     label="Emotional Physicality",
     label_plural="Emotional Physicalities",
-    icon="😤",
+    icon="💢",
     category="Production",
-    sort_order=630,
+    sort_order=614,
     tier=6,
-    description="How a specific emotion manifests physically for a character.",
+    description="How emotion manifests in the body.",
     fields=[
         FieldDef("name", "Name"),
         FieldDef("character_id", "Character", "reference",
                  reference_entity="character", required=True),
         FieldDef("emotion", "Emotion", "text", required=True),
-        FieldDef("posture_changes", "Posture Changes", "textarea"),
-        FieldDef("tension_location", "Tension Location", "text"),
-        FieldDef("breathing_pattern", "Breathing Pattern", "textarea"),
-        FieldDef("expansion_contraction", "Expansion / Contraction", "select",
-                 options=["expanding", "contracting"]),
-        FieldDef("stillness_vs_movement", "Stillness vs Movement", "textarea"),
-        FieldDef("visibility_level", "Visibility Level", "select",
-                 options=["obvious", "subtle", "hidden", "leaked"]),
-        FieldDef("control_level", "Control Level", "select",
-                 options=["conscious", "unconscious", "suppressed", "overwhelming"]),
+        FieldDef("body_manifestation", "Body Manifestation", "textarea"),
+        FieldDef("face_manifestation", "Face Manifestation", "textarea"),
+        FieldDef("voice_manifestation", "Voice Manifestation", "textarea"),
+        FieldDef("breathing_manifestation", "Breathing Manifestation", "textarea"),
+        FieldDef("intensity_level", "Intensity Level", "select",
+                 options=["subtle", "moderate", "intense", "overwhelming"]),
     ],
 ))
 
-# NOTE: physical_habit is in Tier 2 (Character Depth) earlier in this file.
-
-# ---------------------------------------------------------------------------
-# Microexpression
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="microexpression",
     label="Microexpression",
     label_plural="Microexpressions",
-    icon="😏",
+    icon="👁️",
     category="Production",
-    sort_order=632,
+    sort_order=615,
     tier=6,
-    description="Fleeting facial expression that reveals hidden emotion.",
+    description="Brief involuntary facial expression revealing inner state.",
     fields=[
         FieldDef("name", "Name"),
+        FieldDef("scene_id", "Scene", "reference",
+                 reference_entity="scene", required=True),
         FieldDef("character_id", "Character", "reference",
                  reference_entity="character", required=True),
-        FieldDef("scene_id", "Scene", "reference", reference_entity="scene"),
-        FieldDef("expression_type", "Expression Type", "text"),
-        FieldDef("facial_region", "Facial Region", "text"),
-        FieldDef("underlying_emotion", "Underlying (True) Emotion", "text"),
-        FieldDef("displayed_emotion", "Displayed (Surface) Emotion", "text"),
-        FieldDef("character_awareness", "Character Awareness", "select",
-                 options=["aware", "unaware"]),
-        FieldDef("audience_intended_to_catch", "Audience Intended to Catch?", "boolean"),
+        FieldDef("emotion_revealed", "Emotion Revealed", "text", required=True),
+        FieldDef("trigger", "Trigger", "textarea"),
+        FieldDef("description", "Description", "textarea"),
+        FieldDef("audience_visibility", "Audience Visibility", "select",
+                 options=["clearly seen", "subtle", "blink and miss"]),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Character-Environment Physicality
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="character_environment_physicality",
     label="Character-Environment Physicality",
     label_plural="Character-Environment Physicalities",
-    icon="🏠",
+    icon="🏞️",
     category="Production",
-    sort_order=633,
+    sort_order=616,
     tier=6,
-    description="How a character physically inhabits a specific location.",
+    description="How a character physically interacts with their environment.",
     fields=[
         FieldDef("name", "Name"),
         FieldDef("character_id", "Character", "reference",
                  reference_entity="character", required=True),
         FieldDef("location_id", "Location", "reference",
                  reference_entity="location", required=True),
-        FieldDef("how_enters_space", "How Character Enters", "textarea"),
-        FieldDef("typical_position", "Typical Position", "textarea"),
-        FieldDef("space_claiming_behavior", "Space Claiming Behavior", "textarea"),
-        FieldDef("object_interaction_quality", "Object Interaction Quality", "textarea"),
-        FieldDef("territorial_behavior", "Territorial Behavior", "textarea"),
+        FieldDef("comfort_level", "Comfort Level", "select",
+                 options=["at home", "comfortable", "alert", "uncomfortable", "alien"]),
+        FieldDef("interaction_pattern", "Interaction Pattern", "textarea"),
+        FieldDef("spatial_use", "Spatial Use", "textarea"),
+        FieldDef("object_interaction", "Object Interaction", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Physical Relationship
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="physical_relationship",
     label="Physical Relationship",
     label_plural="Physical Relationships",
-    icon="🤲",
+    icon="🤝",
     category="Production",
-    sort_order=634,
+    sort_order=617,
     tier=6,
-    description="How two characters physically relate.",
+    description="Physical dimension of a relationship between characters.",
     fields=[
         FieldDef("name", "Name"),
         FieldDef("character_a_id", "Character A", "reference",
                  reference_entity="character", required=True),
         FieldDef("character_b_id", "Character B", "reference",
                  reference_entity="character", required=True),
-        FieldDef("typical_distance", "Typical Distance", "select",
-                 options=["intimate", "personal", "social", "public"]),
-        FieldDef("who_controls_distance", "Who Controls Distance", "text"),
-        FieldDef("touch_patterns", "Touch Patterns", "textarea"),
-        FieldDef("touch_quality", "Touch Quality", "select",
-                 options=["gentle", "aggressive", "casual", "charged"]),
-        FieldDef("who_initiates_touch", "Who Initiates Touch", "text"),
-        FieldDef("physical_mirroring", "Physical Mirroring", "textarea"),
-        FieldDef("physical_power_dynamic", "Physical Power Dynamic", "textarea"),
+        FieldDef("touch_comfort", "Touch Comfort", "select",
+                 options=["touching", "tactile", "reserved", "avoidant"]),
+        FieldDef("distance_preference", "Distance Preference", "text"),
+        FieldDef("eye_contact_pattern", "Eye Contact Pattern", "text"),
+        FieldDef("body_orientation", "Body Orientation", "text"),
+        FieldDef("mirroring_tendencies", "Mirroring Tendencies", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Physical Relationship Evolution
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="physical_relationship_evolution",
     label="Physical Relationship Evolution",
     label_plural="Physical Relationship Evolutions",
-    icon="📊",
+    icon="📈",
     category="Production",
-    sort_order=635,
+    sort_order=618,
     tier=6,
-    description="How a physical relationship between characters changes at a specific scene.",
+    description="How a physical relationship changes across the story.",
     fields=[
         FieldDef("name", "Name"),
         FieldDef("physical_relationship_id", "Physical Relationship", "reference",
                  reference_entity="physical_relationship", required=True),
-        FieldDef("scene_id", "Scene", "reference",
-                 reference_entity="scene", required=True),
-        FieldDef("distance_state", "Distance State", "text"),
-        FieldDef("touch_state", "Touch State", "text"),
-        FieldDef("mirroring_state", "Mirroring State", "text"),
-        FieldDef("change_from_previous", "Change from Previous", "textarea"),
+        FieldDef("starting_state", "Starting State", "textarea"),
+        FieldDef("ending_state", "Ending State", "textarea"),
+        FieldDef("key_transition_points", "Key Transition Points", "textarea"),
+        FieldDef("driving_events", "Driving Events", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Movement Choreography
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="movement_choreography",
     label="Movement Choreography",
     label_plural="Movement Choreographies",
     icon="💃",
     category="Production",
-    sort_order=636,
+    sort_order=619,
     tier=6,
-    description="Designed movement patterns — dance, ritual, work, sport.",
+    description="Choreographed movement design for a scene or sequence.",
     fields=[
-        FieldDef("name", "Name", required=True),
+        FieldDef("name", "Name"),
         FieldDef("scene_id", "Scene", "reference",
                  reference_entity="scene", required=True),
-        FieldDef("choreography_type", "Choreography Type", "select", options=[
-            "dance (formal)", "dance (social)", "dance (spontaneous)",
-            "ritual/ceremony", "work/labor", "sport/game", "synchronized movement"
-        ]),
-        FieldDef("style", "Style", "textarea"),
-        FieldDef("meaning", "Meaning", "textarea"),
-        FieldDef("period_accuracy", "Period Accuracy", "textarea"),
+        FieldDef("movement_concept", "Movement Concept", "textarea"),
+        FieldDef("rhythm_pattern", "Rhythm Pattern", "textarea"),
+        FieldDef("spatial_pattern", "Spatial Pattern", "textarea"),
+        FieldDef("ensemble_coordination", "Ensemble Coordination", "textarea"),
+        FieldDef("style_reference", "Style Reference", "text"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Musical Theme
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="musical_theme",
     label="Musical Theme",
     label_plural="Musical Themes",
     icon="🎼",
     category="Production",
-    sort_order=640,
+    sort_order=620,
     tier=6,
-    description="Recurring melodic or harmonic idea — leitmotif.",
+    description="Recurring musical phrase associated with a character, place, or idea.",
     fields=[
         FieldDef("name", "Theme Name", required=True),
-        FieldDef("theme_description", "Theme Description", "textarea"),
-        FieldDef("emotional_association", "Emotional Association", "textarea"),
-        FieldDef("character_id", "Associated Character", "reference",
-                 reference_entity="character"),
-        FieldDef("concept_association", "Concept Association", "text"),
-        FieldDef("first_appearance_scene_id", "First Appearance Scene", "reference",
-                 reference_entity="scene"),
-        FieldDef("development_description", "Development Through Story", "textarea"),
-        FieldDef("orchestration_variations", "Orchestration Variations", "textarea"),
+        FieldDef("theme_type", "Theme Type", "select", options=[
+            "character theme", "place theme", "idea theme",
+            "relationship theme", "emotional theme"
+        ]),
+        FieldDef("associated_entity", "Associated Entity", "text"),
+        FieldDef("description", "Description", "textarea"),
+        FieldDef("instrumentation", "Instrumentation", "text"),
+        FieldDef("variations", "Variations Through Story", "textarea"),
+        FieldDef("evolution_description", "Evolution Description", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Sound Cue
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="sound_cue",
     label="Sound Cue",
     label_plural="Sound Cues",
-    icon="🔈",
+    icon="🔊",
     category="Production",
-    sort_order=641,
+    sort_order=621,
     tier=6,
-    description="Individual sound effect or designed sound placement.",
+    description="A specific sound element placement.",
     fields=[
-        FieldDef("name", "Name"),
-        FieldDef("scene_id", "Scene", "reference",
-                 reference_entity="scene", required=True),
+        FieldDef("name", "Name", required=True),
+        FieldDef("scene_id", "Scene", "reference", reference_entity="scene"),
         FieldDef("shot_id", "Shot", "reference", reference_entity="shot"),
-        FieldDef("cue_type", "Cue Type", "select",
-                 options=["SFX", "foley", "ambient", "designed"]),
+        FieldDef("sound_type", "Sound Type", "select", options=[
+            "ambient", "effect", "foley", "design",
+            "stinger", "dialogue", "voiceover"
+        ]),
         FieldDef("description", "Description", "textarea"),
-        FieldDef("source", "Source", "select", options=["on screen", "off screen"]),
-        FieldDef("volume_intensity", "Volume / Intensity", "text"),
-        FieldDef("emotional_function", "Emotional Function", "textarea"),
         FieldDef("timing", "Timing", "text"),
-        FieldDef("duration", "Duration (seconds)", "integer"),
+        FieldDef("duration", "Duration", "text"),
+        FieldDef("emotional_function", "Emotional Function", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Music Cue
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="music_cue",
     label="Music Cue",
     label_plural="Music Cues",
     icon="🎵",
     category="Production",
-    sort_order=642,
+    sort_order=622,
     tier=6,
-    description="Individual music cue placement in a scene.",
+    description="A specific music placement and its function.",
     fields=[
-        FieldDef("name", "Cue Name"),
+        FieldDef("name", "Cue Name", required=True),
         FieldDef("scene_id", "Scene", "reference",
                  reference_entity="scene", required=True),
         FieldDef("cue_type", "Cue Type", "select",
-                 options=["diegetic", "non-diegetic"]),
-        FieldDef("genre_style", "Genre / Style", "text"),
-        FieldDef("tempo_mood", "Tempo / Mood", "text"),
-        FieldDef("emotional_purpose", "Emotional Purpose", "textarea"),
+                 options=["score", "source"]),
+        FieldDef("entry_timing", "Entry Timing", "text"),
+        FieldDef("exit_timing", "Exit Timing", "text"),
+        FieldDef("duration_seconds", "Duration (seconds)", "integer"),
         FieldDef("musical_theme_id", "Musical Theme", "reference",
                  reference_entity="musical_theme"),
-        FieldDef("instrumentation", "Instrumentation", "textarea"),
-        FieldDef("volume_level", "Volume Level", "text"),
-        FieldDef("source", "Source (if diegetic)", "text", tab="Source"),
+        FieldDef("emotional_function", "Emotional Function", "textarea"),
+        FieldDef("dynamics", "Dynamics", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Sound Perspective
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="sound_perspective",
     label="Sound Perspective",
     label_plural="Sound Perspectives",
     icon="👂",
     category="Production",
-    sort_order=643,
+    sort_order=623,
     tier=6,
-    description="Point-of-view in sound — whose hearing, what techniques.",
+    description="POV approach to sound — whose ears are we using?",
     fields=[
         FieldDef("name", "Name"),
         FieldDef("scene_id", "Scene", "reference",
                  reference_entity="scene", required=True),
-        FieldDef("character_id", "Character", "reference", reference_entity="character"),
         FieldDef("perspective_type", "Perspective Type", "select",
-                 options=["objective", "subjective", "omniscient"]),
-        FieldDef("subjective_techniques", "Subjective Techniques", "textarea"),
-        FieldDef("transition_triggers", "Transition Triggers", "textarea"),
+                 options=["objective", "subjective", "shifting"]),
+        FieldDef("pov_character_id", "POV Character", "reference",
+                 reference_entity="character"),
+        FieldDef("spatial_logic", "Spatial Logic", "textarea"),
+        FieldDef("psychological_logic", "Psychological Logic", "textarea"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Voiceover Design
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="voiceover_design",
     label="Voiceover Design",
     label_plural="Voiceover Designs",
-    icon="📢",
+    icon="🎙️",
     category="Production",
-    sort_order=644,
+    sort_order=624,
     tier=6,
-    description="Non-diegetic or semi-diegetic speech design.",
+    description="Narration / inner-voice approach for the project or scene.",
     fields=[
-        FieldDef("name", "Name", default="Voiceover Design"),
-        FieldDef("character_id", "Character (whose voice)", "reference",
+        FieldDef("name", "Name"),
+        FieldDef("scene_id", "Scene (if scene-specific)", "reference",
+                 reference_entity="scene"),
+        FieldDef("character_id", "Narrator Character", "reference",
                  reference_entity="character"),
-        FieldDef("narration_type", "Narration Type", "select", options=[
-            "character voice-over", "omniscient narrator", "internal monologue"
+        FieldDef("voiceover_type", "Voiceover Type", "select", options=[
+            "narrator", "inner monologue", "letter/diary",
+            "retrospective", "future self"
         ]),
-        FieldDef("acoustic_treatment", "Acoustic Treatment", "select",
-                 options=["intimate (close, dry)", "distanced (room, space)", "stylized"]),
+        FieldDef("voiceover_function", "Function", "textarea"),
+        FieldDef("temporal_position", "Temporal Position", "select",
+                 options=["concurrent", "retrospective", "prospective"]),
+        FieldDef("knowledge_position", "Knowledge Position", "select",
+                 options=["omniscient", "limited", "unreliable"]),
         FieldDef("relationship_to_image", "Relationship to Image", "select",
-                 options=["complements", "counterpoints", "reveals"]),
-        FieldDef("placement_in_mix", "Placement in Mix", "textarea"),
+                 options=["matches", "counterpoint", "expands"]),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Music-Sound Relationship
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="music_sound_relationship",
     label="Music-Sound Relationship",
     label_plural="Music-Sound Relationships",
-    icon="🔀",
+    icon="🎚️",
     category="Production",
-    sort_order=645,
+    sort_order=625,
     tier=6,
-    description="How score and sound design interact.",
+    description="How music and sound design interact in a scene.",
     fields=[
         FieldDef("name", "Name"),
-        FieldDef("scene_id", "Scene (optional)", "reference", reference_entity="scene"),
-        FieldDef("hierarchy", "Hierarchy", "select", options=[
-            "music-forward", "sound-forward", "equal partners", "shifting"
+        FieldDef("scene_id", "Scene", "reference",
+                 reference_entity="scene", required=True),
+        FieldDef("relationship_type", "Relationship Type", "select", options=[
+            "music dominant", "sound dominant", "integrated", "alternating"
         ]),
-        FieldDef("blend_approach", "Blend Approach", "select",
-                 options=["clear separation", "blurred boundaries", "designed interaction"]),
-        FieldDef("combined_silence", "Combined Silence", "textarea"),
+        FieldDef("integration_approach", "Integration Approach", "textarea"),
+        FieldDef("dynamic_balance", "Dynamic Balance", "textarea"),
+        FieldDef("frequency_separation", "Frequency Separation", "textarea"),
     ],
 ))
 
 
 # #############################################################################
-#
-#  METADATA
-#
+#  METADATA — Creative decisions, notes, assets
 # #############################################################################
 
-# ---------------------------------------------------------------------------
-# Creative Decision
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="creative_decision",
     label="Creative Decision",
     label_plural="Creative Decisions",
-    icon="⚖️",
+    icon="✅",
     category="Metadata",
-    sort_order=800,
-    tier=1,
-    description="Documented rationale for a creative choice.",
+    sort_order=700,
+    tier=0,
+    description="A recorded creative decision with rationale.",
     fields=[
-        FieldDef("name", "Decision Title", required=True),
-        FieldDef("entity_type", "Related Entity Type", "text"),
-        FieldDef("entity_id", "Related Entity ID", "integer"),
-        FieldDef("decision_description", "Decision Description", "textarea", required=True),
-        FieldDef("options_considered", "Options Considered", "json"),
-        FieldDef("why_chosen", "Why This Option Chosen", "textarea"),
-        FieldDef("what_sacrificed", "What Was Sacrificed", "textarea"),
-        FieldDef("what_gained", "What Was Gained", "textarea"),
-        FieldDef("confidence_level", "Confidence Level", "select",
-                 options=["certain", "confident", "uncertain", "compromised"]),
+        FieldDef("name", "Decision Name", required=True),
+        FieldDef("decision_type", "Decision Type", "select", options=[
+            "casting", "visual", "narrative", "technical",
+            "audio", "design", "structural", "other"
+        ]),
+        FieldDef("description", "Description", "textarea"),
+        FieldDef("rationale", "Rationale", "textarea"),
+        FieldDef("alternatives_considered", "Alternatives Considered", "textarea"),
+        FieldDef("affected_entities", "Affected Entities", "json"),
+        FieldDef("decision_date", "Decision Date", "text"),
+        FieldDef("decided_by", "Decided By", "text"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Collaboration Note
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="collaboration_note",
     label="Collaboration Note",
     label_plural="Collaboration Notes",
-    icon="📝",
+    icon="💬",
     category="Metadata",
-    sort_order=801,
-    tier=1,
-    description="Director's guidance to specific collaborators or domains.",
+    sort_order=701,
+    tier=0,
+    description="Notes for or from collaborators.",
     fields=[
-        FieldDef("name", "Note Title", required=True),
-        FieldDef("entity_type", "Related Entity Type", "text"),
-        FieldDef("entity_id", "Related Entity ID", "integer"),
-        FieldDef("domain", "Domain / Area", "text"),
-        FieldDef("note_text", "Note Text", "textarea", required=True),
+        FieldDef("name", "Note Title"),
         FieldDef("note_type", "Note Type", "select", options=[
-            "vision communication", "problem-solving", "permission-granting",
-            "boundary-setting", "question-posing"
+            "for cinematographer", "for production designer",
+            "for costume designer", "for sound designer",
+            "for composer", "for editor", "for actors", "general"
         ]),
+        FieldDef("content", "Content", "textarea", required=True),
         FieldDef("priority", "Priority", "select",
-                 options=["critical", "important", "optional"]),
-        FieldDef("response_expected", "Response Expected", "select",
-                 options=["execution", "interpretation", "options"]),
+                 options=["low", "medium", "high", "critical"]),
+        FieldDef("affected_entities", "Affected Entities", "json"),
+        FieldDef("author", "Author", "text"),
+        FieldDef("note_date", "Date", "text"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Asset
-# ---------------------------------------------------------------------------
 register(EntityDef(
     name="asset",
     label="Asset",
     label_plural="Assets",
     icon="📎",
     category="Metadata",
-    sort_order=802,
-    tier=1,
-    description="External file reference — image, model, audio, document.",
+    sort_order=702,
+    tier=0,
+    description="Reference asset (image, audio, video, document). The atomic unit "
+                "that bundles compose. Versionable — supports asset version chains.",
+    versionable=True,
     has_external_id=True,
     fields=[
-        FieldDef("name", "File Name", required=True),
-        FieldDef("file_path", "File Path", "text", required=True),
-        FieldDef("file_type", "File Type", "select", options=[
-            "image", "3D model", "audio", "video", "document", "project file"
+        FieldDef("name", "Asset Name", required=True),
+        FieldDef("asset_type", "Asset Type", "select", options=[
+            "image", "audio", "video", "document", "3d model",
+            "lookbook", "reference photo", "concept art", "other"
         ]),
-        FieldDef("purpose", "Purpose", "select", options=[
-            "reference", "concept", "pre-production", "production", "post-production"
-        ]),
-        FieldDef("department", "Department", "text"),
-        FieldDef("creator", "Creator", "text"),
-        FieldDef("approval_status", "Approval Status", "select",
-                 options=["wip", "pending", "approved", "final"],
-                 help_text="Approval axis — distinct from lifecycle_status."),
-        FieldDef("resolution", "Resolution", "text", tab="Technical"),
-        FieldDef("color_space", "Color Space", "text", tab="Technical"),
-        FieldDef("duration", "Duration (seconds)", "integer", tab="Technical"),
-        FieldDef("file_size", "File Size (bytes)", "integer", tab="Technical"),
+        FieldDef("file_path", "File Path / URL", "text"),
+        FieldDef("description", "Description", "textarea"),
+        FieldDef("tags", "Tags", "json"),
+        FieldDef("source", "Source / Credit", "text"),
+        FieldDef("notes", "Notes", "textarea", tab="Notes"),
     ],
 ))
 
-# ---------------------------------------------------------------------------
-# Asset Relationship (junction)
-# ---------------------------------------------------------------------------
+# asset_relationship uses open polymorphism (entity_type + entity_id).
 register(EntityDef(
     name="asset_relationship",
     label="Asset Relationship",
@@ -3747,17 +3499,20 @@ register(EntityDef(
     category="Connections",
     sort_order=67,
     tier=0,
-    description="Links an asset to any entity in the project.",
+    description="Links an asset to an entity it documents or references. "
+                "Open polymorphism — entity_type is open-ended.",
     has_lifecycle_status=False,
     fields=[
         FieldDef("name", "Display Name", hidden=True),
         FieldDef("asset_id", "Asset", "reference",
                  reference_entity="asset", required=True),
-        FieldDef("entity_type", "Entity Type", "text", required=True),
+        FieldDef("entity_type", "Entity Type", "text", required=True,
+                 help_text="Open-ended — any entity name."),
         FieldDef("entity_id", "Entity ID", "integer", required=True),
-        FieldDef("relationship_type", "Relationship Type", "select",
-                 options=["reference for", "concept of", "generated from", "variant of"]),
-        FieldDef("context_notes", "Context Notes", "textarea"),
+        FieldDef("relationship_type", "Relationship Type", "select", options=[
+            "reference", "documentation", "concept", "inspiration", "final", "other"
+        ]),
+        FieldDef("notes", "Notes", "textarea"),
     ],
 ))
 
@@ -3767,29 +3522,48 @@ register(EntityDef(
 # =============================================================================
 
 def get_entity(name: str) -> EntityDef | None:
+    """Get an entity definition by name."""
     return ENTITY_REGISTRY.get(name)
 
 
 def get_all_entities() -> dict[str, EntityDef]:
+    """Get all registered entities as a name-keyed dict.
+
+    Returns the registry itself so callers can iterate name/def pairs via
+    ``.items()`` or look up by name directly. For sort-ordered iteration
+    use ``get_entities_by_category()``, ``get_entities_in_tier()``, or
+    sort ``.values()`` explicitly. This signature matches the codebase
+    contract used by ``database.py``, ``main.py``, and ``screenplay_db.py``.
+    """
     return ENTITY_REGISTRY
 
 
 def get_entities_by_category() -> dict[str, list[EntityDef]]:
-    """Group entities by category, sorted by sort_order."""
-    categories: dict[str, list[EntityDef]] = {}
-    for entity in sorted(ENTITY_REGISTRY.values(), key=lambda e: e.sort_order):
-        cat = entity.category
-        if cat not in categories:
-            categories[cat] = []
-        categories[cat].append(entity)
-    return categories
+    """Group entities by category, preserving sort order within each category."""
+    by_category: dict[str, list[EntityDef]] = {}
+    for entity in sorted(
+        ENTITY_REGISTRY.values(),
+        key=lambda e: (e.tier, e.sort_order, e.name),
+    ):
+        by_category.setdefault(entity.category, []).append(entity)
+    return by_category
 
 
 def get_versionable_entities() -> list[EntityDef]:
-    """All entities flagged versionable."""
+    """All entities that participate in version chains."""
     return [e for e in ENTITY_REGISTRY.values() if e.versionable]
 
 
 def get_entities_with_external_id() -> list[EntityDef]:
-    """All entities flagged for external ID bridging."""
+    """All entities that may bridge to external systems via external_id."""
     return [e for e in ENTITY_REGISTRY.values() if e.has_external_id]
+
+
+def get_entities_in_tier(tier: int) -> list[EntityDef]:
+    """All entities at a given tier (0–6)."""
+    return [e for e in ENTITY_REGISTRY.values() if e.tier == tier]
+
+
+def get_junction_entities() -> list[EntityDef]:
+    """All Tier 0 Connections entities (junctions)."""
+    return [e for e in ENTITY_REGISTRY.values() if e.category == "Connections"]

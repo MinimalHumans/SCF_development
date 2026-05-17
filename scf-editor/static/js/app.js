@@ -465,6 +465,131 @@ function restoreEditorState() {
 }
 
 // =============================================================================
+// Entity Anchor — Polymorphic Subject + Variant Picker (Phase 1D)
+// =============================================================================
+// entity_anchor.subject_type chooses a constrained polymorphism target
+// (character | prop | location). subject_id then references that table,
+// and subject_variant_id optionally references the {type}_variant table,
+// scoped to the chosen subject.
+//
+// Generic form rendering can't show a real picker for subject_id because
+// the FK target isn't fixed. entity_form.html renders subject_id and
+// subject_variant_id as <select> elements with `data-current-value`
+// attrs; this code populates them from /api/entity_anchor/subjects and
+// /api/entity_anchor/variants based on what's chosen.
+//
+// State flow on form open:
+//   1. Read current subject_type from #field-subject_type
+//   2. Load subjects for that type, preselect data-current-value if any
+//   3. If subject is set, load variants filtered by subject_id, preselect
+//
+// On user change:
+//   - subject_type changes → reload subjects, clear variants
+//   - subject_id changes → reload variants
+//
+// Re-runs on htmx swap when the editor-panel reloads (after a save).
+
+function initEntityAnchorPicker() {
+    const subjectTypeSelect = document.getElementById('field-subject_type');
+    const subjectIdSelect = document.querySelector('.anchor-subject-picker');
+    const variantIdSelect = document.querySelector('.anchor-variant-picker');
+
+    // Only on entity_anchor forms — these elements only exist there.
+    if (!subjectTypeSelect || !subjectIdSelect) return;
+
+    // Don't double-init: a sentinel attr lets us detect re-initialization
+    // after an htmx swap (which replaces the DOM nodes anyway, so it's
+    // safe to re-attach listeners; but if for some reason the same node
+    // sticks around, this prevents duplicate handlers).
+    if (subjectIdSelect.dataset.pickerInitialized === 'true') return;
+    subjectIdSelect.dataset.pickerInitialized = 'true';
+
+    const initialSubjectId = subjectIdSelect.dataset.currentValue || '';
+    const initialVariantId = variantIdSelect
+        ? (variantIdSelect.dataset.currentValue || '')
+        : '';
+
+    function escHtml(s) {
+        if (s == null) return '';
+        const d = document.createElement('div');
+        d.textContent = String(s);
+        return d.innerHTML;
+    }
+
+    async function loadSubjects(subjectType, selectedId) {
+        if (!subjectType) {
+            subjectIdSelect.innerHTML = '<option value="">— Choose Subject Type first —</option>';
+            // Don't disable — the form must still be submittable to show
+            // validation errors. The empty option is enough of a hint.
+            return;
+        }
+        subjectIdSelect.innerHTML = '<option value="">Loading…</option>';
+        try {
+            const res = await fetch(
+                `/api/entity_anchor/subjects?subject_type=${encodeURIComponent(subjectType)}`
+            );
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const items = await res.json();
+            const opts = [`<option value="">— Select ${escHtml(subjectType)} —</option>`];
+            for (const it of items) {
+                const sel = String(it.id) === String(selectedId) ? ' selected' : '';
+                opts.push(`<option value="${it.id}"${sel}>${escHtml(it.name)}</option>`);
+            }
+            subjectIdSelect.innerHTML = opts.join('');
+        } catch (e) {
+            subjectIdSelect.innerHTML = '<option value="">— Failed to load —</option>';
+            console.error('Anchor subjects load failed:', e);
+        }
+    }
+
+    async function loadVariants(subjectType, subjectId, selectedId) {
+        if (!variantIdSelect) return;
+        if (!subjectType || !subjectId) {
+            variantIdSelect.innerHTML = '<option value="">— Choose subject first —</option>';
+            return;
+        }
+        variantIdSelect.innerHTML = '<option value="">Loading…</option>';
+        try {
+            const res = await fetch(
+                `/api/entity_anchor/variants?subject_type=${encodeURIComponent(subjectType)}&subject_id=${encodeURIComponent(subjectId)}`
+            );
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const items = await res.json();
+            const opts = ['<option value="">— None / Baseline —</option>'];
+            for (const it of items) {
+                const sel = String(it.id) === String(selectedId) ? ' selected' : '';
+                opts.push(`<option value="${it.id}"${sel}>${escHtml(it.name)}</option>`);
+            }
+            variantIdSelect.innerHTML = opts.join('');
+        } catch (e) {
+            variantIdSelect.innerHTML = '<option value="">— Failed to load —</option>';
+            console.error('Anchor variants load failed:', e);
+        }
+    }
+
+    // Initial population from saved values
+    const initialSubjectType = subjectTypeSelect.value;
+    loadSubjects(initialSubjectType, initialSubjectId).then(() => {
+        if (initialSubjectType && initialSubjectId) {
+            loadVariants(initialSubjectType, initialSubjectId, initialVariantId);
+        }
+    });
+
+    // React to subject_type change: reload subjects, clear variant
+    subjectTypeSelect.addEventListener('change', () => {
+        loadSubjects(subjectTypeSelect.value, '');
+        if (variantIdSelect) {
+            variantIdSelect.innerHTML = '<option value="">— Choose subject first —</option>';
+        }
+    });
+
+    // React to subject_id change: reload variants
+    subjectIdSelect.addEventListener('change', () => {
+        loadVariants(subjectTypeSelect.value, subjectIdSelect.value, '');
+    });
+}
+
+// =============================================================================
 // Inline Relationship Link Panels
 // =============================================================================
 
@@ -740,6 +865,10 @@ document.body.addEventListener('htmx:afterSwap', (e) => {
             showToast('Changes saved');
         }
         initLinkPanels();
+        // Phase 1D: re-init the entity_anchor picker after the form
+        // reloads. The DOM nodes are fresh, so dataset.pickerInitialized
+        // guard won't trip.
+        initEntityAnchorPicker();
     }
     // Re-apply tree state after any tree refresh
     applyTreeState();
@@ -766,4 +895,5 @@ initPanelResize();
 initSearch();
 initKeyboardShortcuts();
 initLinkPanels();
+initEntityAnchorPicker();
 initTreeScrollPreservation();

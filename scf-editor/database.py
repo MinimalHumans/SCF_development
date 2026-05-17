@@ -134,7 +134,18 @@ def _q(identifier: str) -> str:
 
 
 def _create_entity_table(conn: sqlite3.Connection, entity_def: EntityDef) -> None:
-    """Create a table for an entity type if it doesn't exist."""
+    """Create a table for an entity type if it doesn't exist.
+
+    Note on `required=True`:
+        The editor's UX is "click + to create a stub, then fill it in" — rows
+        need to exist before they have meaningful values for FK fields. So
+        `required=True` is treated as a *form-level / UX hint* (the form
+        template renders the asterisk and emits `required` on the input,
+        giving client-side enforcement). It is NOT translated to SQL
+        `NOT NULL` here, because that would block stub creation for every
+        entity with a required reference. Server-side validation on save can
+        be added at the API layer if stricter enforcement is wanted later.
+    """
     columns = [
         "id INTEGER PRIMARY KEY AUTOINCREMENT",
         "created_at TEXT DEFAULT (datetime('now'))",
@@ -143,8 +154,7 @@ def _create_entity_table(conn: sqlite3.Connection, entity_def: EntityDef) -> Non
 
     for f in entity_def.fields:
         col = f"{_q(f.name)} {f.get_sql_type()}"
-        if f.required:
-            col += " NOT NULL"
+        # NOT NULL is intentionally NOT emitted here — see docstring above.
         if f.default is not None:
             if isinstance(f.default, str):
                 # Escape embedded single-quotes in string defaults

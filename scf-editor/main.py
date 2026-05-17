@@ -66,6 +66,9 @@ _LABEL_ACRONYMS = {
     "2.8k": "2.8K", "3.4k": "3.4K", "4.6k": "4.6K", "5.7k": "5.7K", "6.5k": "6.5K",
     "rec.709": "Rec.709", "rec.2020": "Rec.2020", "dci-p3": "DCI-P3",
     "fps": "fps",
+    # Phase 1D additions
+    "tbd": "TBD",
+    "vfx": "VFX",
 }
 
 _LABEL_SMALL_WORDS = {
@@ -96,7 +99,7 @@ def display_label(value):
 
     Rules:
       - Whole-value specials win first (e.g. pre_production → Pre-Production).
-      - Whole-value acronyms next (ecu → ECU, 4k → 4K).
+      - Whole-value acronyms next (ecu → ECU, 4k → 4K, tbd → TBD).
       - Leading text + trailing (…) chunk → handled separately; parens
         content is title-cased only if it starts with a letter, so
         '1.85:1 (flat)' → '1.85:1 (Flat)' and 'intimate (0-18in)' →
@@ -144,6 +147,31 @@ def display_label(value):
 templates.env.filters["display_label"] = display_label
 
 
+# Phase 1D: parse a stored multiselect value (JSON array or comma-separated)
+# into a Python list for use in template selection logic.
+def parse_multiselect(value):
+    """Parse a stored multiselect value to a list of strings."""
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    s = str(value).strip()
+    if not s:
+        return []
+    if s.startswith('['):
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, list):
+                return [str(v) for v in parsed]
+            return []
+        except Exception:
+            return []
+    return [v.strip() for v in s.split(',') if v.strip()]
+
+
+templates.env.filters["parse_multiselect"] = parse_multiselect
+
+
 # Mount v2 screenplay API BEFORE generic CRUD routes
 app.include_router(screenplay_router)
 # Mount entity images API
@@ -180,11 +208,13 @@ def _require_project(request: Request) -> Path:
 
 
 # -- Junction entity auto-naming --
-# Phase 1C: extended with the new character-cluster junctions. The
-# entity_type/entity_id-driven junctions (visual_motif_appearance,
-# motif_manifestation, asset_relationship) are intentionally omitted —
-# their second "ref" is a polymorphic (entity_type, entity_id) pair that
-# doesn't fit this simple resolver, and they're auto-named elsewhere.
+# Phase 1D: added clip_prop. The entity_type/entity_id-driven junctions
+# (visual_motif_appearance, motif_manifestation, asset_relationship) are
+# intentionally omitted — their second "ref" is a polymorphic
+# (entity_type, entity_id) pair that doesn't fit this simple resolver.
+# entity_anchor is NOT a junction (it's a full entity with polymorphic
+# subject_id, but it's standalone, not connecting two parent records);
+# its display name comes from the user-authored `name` field directly.
 _JUNCTION_NAME_PARTS = {
     "scene_character": [("character_id", "character"), ("scene_id", "scene")],
     "scene_prop": [("prop_id", "prop"), ("scene_id", "scene")],
@@ -197,8 +227,25 @@ _JUNCTION_NAME_PARTS = {
     "bundle_asset": [("bundle_id", "bundle"), ("asset_id", "asset")],
     "take_scene": [("take_id", "take"), ("scene_id", "scene")],
     "clip_character": [("clip_id", "clip"), ("character_id", "character")],
+    "clip_prop": [("clip_id", "clip"), ("prop_id", "prop")],  # Phase 1D
     "actor_character_role": [("actor_id", "actor"), ("character_id", "character")],
 }
+
+
+def _coerce_multiselect_fields(form, entity_def, data):
+    """For each multiselect field on the entity, replace data[name] with a
+    JSON-encoded list pulled from form.getlist() — dict(form) flattens
+    multi-value form keys to a single value, which loses information.
+    Phase 1D: needed for character/prop/location shot_override.override_types.
+    """
+    for f in entity_def.fields:
+        if f.field_type != "multiselect":
+            continue
+        values = form.getlist(f.name)
+        # Filter out empty placeholder strings
+        values = [v for v in values if v]
+        # Always set, even if empty — that's how user clears the field
+        data[f.name] = json.dumps(values) if values else ""
 
 
 def _build_reference_options(db_path: Path, entity_def, entity_type, entity_id):
@@ -282,7 +329,7 @@ def _build_tree_data(db_path: Path) -> dict:
     Only fetches full record lists for tier-0 entities and entities that
     actually have data. Empty tier-1+ entities get count=0, records=[]
     without any SELECT query, dramatically reducing DB load with the
-    expanded 96-entity schema.
+    expanded entity schema.
     """
     # 1. Get counts for all entities in one connection
     counts = db.batch_entity_counts(db_path)
@@ -424,7 +471,7 @@ async def browse(request: Request, entity_type: str = None, entity_id: int = Non
     """Main two-panel browser view."""
     db_path = _require_project(request)
 
-    # Optimized: batch counts + selective queries (was: 96 separate connections)
+    # Optimized: batch counts + selective queries (was: N separate connections)
     tree_data = _build_tree_data(db_path)
 
     selected = None
@@ -545,6 +592,73 @@ async def htmx_tree(request: Request):
 
 
 # =============================================================================
+# Entity Anchor — polymorphic picker support (Phase 1D)
+# =============================================================================
+# entity_anchor stores subject_id/subject_variant_id as plain integers
+# (because they're polymorphic across character/prop/location), so the
+# generic form rendering can't show a normal reference picker. These
+# routes feed the picker JS in app.js for the entity_anchor editor.
+# Registered before the generic CRUD routes (longer path beats shorter
+# in FastAPI's match order regardless of registration order, but keep
+# this explicit for clarity).
+
+_ANCHOR_SUBJECT_TYPES = ("character", "prop", "location")
+
+
+@app.get("/api/entity_anchor/subjects")
+async def api_anchor_subjects(request: Request, subject_type: str = Query(...)):
+    """List all entities of the given subject_type for the anchor picker."""
+    if subject_type not in _ANCHOR_SUBJECT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid subject_type: {subject_type!r}. "
+                   f"Must be one of: {', '.join(_ANCHOR_SUBJECT_TYPES)}"
+        )
+    db_path = _require_project(request)
+    edef = get_entity(subject_type)
+    name_field = edef.name_field if edef else "name"
+    # Pull up to 2000 — anchors typically work in projects that don't have
+    # hundreds of any one entity type, but be generous.
+    items = db.list_entities(db_path, subject_type, limit=2000)
+    return JSONResponse([
+        {"id": item["id"], "name": item.get(name_field) or f"#{item['id']}"}
+        for item in items
+    ])
+
+
+@app.get("/api/entity_anchor/variants")
+async def api_anchor_variants(
+    request: Request,
+    subject_type: str = Query(...),
+    subject_id: int = Query(...),
+):
+    """List variants of a specific subject. Filtered by the parent FK so the
+    picker only shows variants that actually belong to the chosen subject."""
+    if subject_type not in _ANCHOR_SUBJECT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid subject_type: {subject_type!r}. "
+                   f"Must be one of: {', '.join(_ANCHOR_SUBJECT_TYPES)}"
+        )
+    variant_table = f"{subject_type}_variant"
+    parent_field = f"{subject_type}_id"
+    db_path = _require_project(request)
+    conn = db.get_connection(db_path)
+    try:
+        rows = conn.execute(
+            f'SELECT id, name FROM "{variant_table}" '
+            f'WHERE "{parent_field}" = ? ORDER BY id ASC',
+            (subject_id,)
+        ).fetchall()
+        return JSONResponse([
+            {"id": r["id"], "name": r["name"] or f"#{r['id']}"}
+            for r in rows
+        ])
+    finally:
+        conn.close()
+
+
+# =============================================================================
 # API routes (CRUD) — Generic routes
 # =============================================================================
 
@@ -558,6 +672,8 @@ async def api_create(request: Request, entity_type: str):
 
     form = await request.form()
     data = dict(form)
+    # Phase 1D: rebuild multiselect values from the multidict.
+    _coerce_multiselect_fields(form, entity_def, data)
 
     if entity_def.name_field not in data or not data[entity_def.name_field]:
         count = db.count_entities(db_path, entity_type)
@@ -584,6 +700,8 @@ async def api_update(request: Request, entity_type: str, entity_id: int):
 
     form = await request.form()
     data = dict(form)
+    # Phase 1D: rebuild multiselect values from the multidict.
+    _coerce_multiselect_fields(form, entity_def, data)
 
     for f in entity_def.fields:
         if f.name in data:

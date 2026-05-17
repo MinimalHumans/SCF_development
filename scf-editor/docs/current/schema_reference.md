@@ -1,18 +1,18 @@
 # SCF Schema Reference
 
-*Auto-generated from `entity_registry.py` on 2026-05-15 UTC. Do not edit by hand — re-run `scripts/generate_schema_docs.py` instead.*
+*Auto-generated from `entity_registry.py` on 2026-05-17 UTC. Do not edit by hand — re-run `scripts/generate_schema_docs.py` instead.*
 
 ---
 
 ## Summary
 
-- **Total entities:** 111
-- **Total declared visible fields:** 962
-- **Total auto-injected fields:** 124 (from `versionable` / `has_lifecycle_status` / `has_external_id` flags)
-- **Categories:** 15
-- **Versionable:** 2 entities
-- **Has lifecycle status:** 100 entities
-- **Has external ID:** 8 entities
+- **Total entities:** 118
+- **Total declared visible fields:** 1014
+- **Total auto-injected fields:** 146 (from `versionable` / `has_lifecycle_status` / `has_external_id` flags)
+- **Categories:** 16
+- **Versionable:** 5 entities
+- **Has lifecycle status:** 106 entities
+- **Has external ID:** 10 entities
 
 ---
 
@@ -22,17 +22,18 @@
 - [Story Entities](#category-story-entities) (3 entities)
 - [Story Structure](#category-story-structure) (4 entities)
 - [Vision](#category-vision) (1 entities)
-- [Connections](#category-connections) (12 entities)
+- [Connections](#category-connections) (13 entities)
+- [Metadata](#category-metadata) (3 entities)
 - [Creative Direction](#category-creative-direction) (17 entities)
 - [Character Depth](#category-character-depth) (11 entities)
-- [Asset Reference](#category-asset-reference) (3 entities)
+- [Prop Depth](#category-prop-depth) (2 entities)
+- [Asset Reference](#category-asset-reference) (5 entities)
 - [Performance Corpus](#category-performance-corpus) (4 entities)
-- [Workflow State](#category-workflow-state) (2 entities)
+- [Workflow State](#category-workflow-state) (4 entities)
 - [Location Depth](#category-location-depth) (4 entities)
 - [Scene Detail](#category-scene-detail) (7 entities)
 - [Thematic Tracking](#category-thematic-tracking) (13 entities)
 - [Production](#category-production) (26 entities)
-- [Metadata](#category-metadata) (3 entities)
 
 ---
 
@@ -91,12 +92,19 @@ Applied to: `scene`, `act`, `sequence`. Tracks where each narrative unit is in t
 
 #### 4. Entity-specific status fields
 
-Domain-specific verification or approval axes:
+Domain-specific axes — verification, approval, production realization. Each tracks a concern genuinely distinct from lifecycle.
 
-- `asset.approval_status` — `wip`, `pending`, `approved`, `final`
-- `identity_anchor.canonical_status` — `verified`, `candidate`, `rejected`
+| Field | Values | Meaning |
+|---|---|---|
+| `asset.approval_status` | `wip`, `pending`, `approved`, `final` | Review state for an asset. |
+| `entity_anchor.canonical_status` | `verified`, `candidate`, `rejected` | Whether an anchor has been confirmed as canonical reference. |
+| `character.casting_status` | `tbd`, `cast`, `actor_as_character`, `digital_double`, `generated_only` | Whether and how a character has a real-world actor anchor. |
+| `prop.realization_status` | `tbd`, `sourced`, `built`, `scanned`, `hybrid`, `generated_only` | How the prop will exist in the final work. |
+| `location.realization_status` | `tbd`, `real_location`, `built`, `plate_captured`, `virtual_set`, `hybrid`, `generated_only` | How the location will be realized. |
 
-These track concerns that are genuinely distinct from lifecycle. They stay as separate fields with their own enums.
+The `casting_status` / `realization_status` family is a "how will this entity be brought into existence?" axis that drives downstream tool expectations: a `casting_status=generated_only` character needs a complete `visual_identity` bundle; a `realization_status=real_location` location may have plate captures rather than asset bindings; a `realization_status=hybrid` prop combines methods (sourced base + built modification, scanned then sculpted, etc.). The format records the intent; tools interpret it.
+
+These all stay as separate fields with their own enums.
 
 #### Multiple axes coexist
 
@@ -104,7 +112,9 @@ A single entity often has multiple status fields, each measuring a different axi
 
 - A `project` has `lifecycle_status` (is this record current?) and `production_status` (what phase?).
 - An `asset` has `lifecycle_status` (is this record current?) and `approval_status` (has this been approved for use?).
-- An `identity_anchor` has `lifecycle_status` and `canonical_status`.
+- An `entity_anchor` has `lifecycle_status` and `canonical_status`.
+- A `character` has `lifecycle_status` and `casting_status`.
+- A `prop` or `location` has `lifecycle_status` and `realization_status`.
 
 Tools query the axis relevant to their job. Compressing axes into a single field would force false equivalences.
 
@@ -112,7 +122,7 @@ Tools query the axis relevant to their job. Compressing axes into a single field
 
 **All enum values across the schema are lowercase**, with two carve-outs for legibility:
 
-- **Acronyms stay uppercase.** Camera framing acronyms (`EWS`, `WS`, `MS`, `MCU`, `CU`, `ECU`, `OTS`, `POV`), color spaces (`Rec.709`, `DCI-P3`), standards (`ACES`, `DCP`, `BVH`), resolution tokens (`2K`, `4K`, `8K`), mixed-case proper nouns (`ProRes`, `ARRIRAW`, `REDCODE`, `ARRI`, `Dolby`, `Atmos`, `Stereo`). The principle: when a token is a domain acronym or proper noun that everyone in film/VFX writes a specific way, we honor that — strict lowercase would harm legibility (`mcu` reads worse than `MCU`).
+- **Acronyms stay uppercase.** Camera framing acronyms (`EWS`, `WS`, `MS`, `MCU`, `CU`, `ECU`, `OTS`, `POV`), color spaces (`Rec.709`, `DCI-P3`), standards (`ACES`, `DCP`, `BVH`), resolution tokens (`2K`, `4K`, `8K`), mixed-case proper nouns (`ProRes`, `ARRIRAW`, `REDCODE`, `ARRI`, `Dolby`, `Atmos`, `Stereo`), and short domain acronyms (`TBD`, `VFX`). The principle: when a token is a domain acronym or proper noun that everyone in film/VFX writes a specific way, we honor that — strict lowercase would harm legibility (`mcu` reads worse than `MCU`).
 - **Embedded punctuation and numerics preserved.** Slashes (`int/ext`, `mentor/mentee`), hyphens (`pre-production`, `actor-focused`), parens with technical content (`1.85:1 (flat)`, `intimate (0-18in)`) — only descriptive words inside are lowercased; technical content stays intact.
 
 Display layers may capitalize for UI; the stored value is canonical lowercase (with the acronym carve-outs). This sidesteps "is this a display label or a value?" comparison bugs across tools.
@@ -132,9 +142,50 @@ FieldDef("character_id", "Character", "reference",
 
 SQL `FOREIGN KEY` constraints are not enforced in entity tables to allow flexible authoring (e.g. creating a relationship before its target exists). Tools should validate references but the format permits temporary inconsistency.
 
+### Polymorphism patterns
+
+Some fields need to reference "an entity, of some type". SCF uses two patterns for this, with deliberately different naming conventions so the distinction is visible at the field name.
+
+#### Constrained polymorphism (`subject_*` naming)
+
+The target set is fixed at the format level. Tools switch exhaustively on the type. Naming pattern:
+
+| Field | Notes |
+|---|---|
+| `subject_type` | hard-coded enum, closed. e.g. `character`, `prop`, `location`. |
+| `subject_id` | integer FK into the table named by `subject_type`. |
+| `subject_variant_id` (optional) | integer FK into the `<subject_type>_variant` table for this subject. |
+
+Used by: `entity_anchor`.
+
+The closed enum is the point: anyone reading the schema knows the complete list of valid `subject_type` values, tools can statically check coverage, and new target types require a deliberate schema change rather than appearing organically.
+
+#### Open polymorphism (`entity_*` naming)
+
+The target set is genuinely heterogeneous or unbounded. Tools handle the types they recognize and pass others through. Naming pattern:
+
+| Field | Notes |
+|---|---|
+| `entity_type` | free string. Sometimes restricted by enum in the registry for documentation, but treated as open at the format level. |
+| `entity_id` | integer FK into the table named by `entity_type`. |
+
+Used by: `asset_relationship` (any entity), `visual_motif_appearance` (location/prop/costume/scene/shot), `motif_manifestation` (dialogue/action/visual/audio domains), `thematic_connection` (various story entities).
+
+The open variant is appropriate when the entity type is incidental to the relationship — an asset can relate to anything; a motif can manifest anywhere — and forcing a closed enum would be a maintenance burden.
+
+#### Choosing which to use
+
+When adding a polymorphic reference, prefer **constrained** unless the target set is genuinely open. Constrained is friendlier to tools and to readers of the schema. Open is honest about cases where the set really does vary.
+
+The two patterns deliberately share neither a field name nor a naming root — `subject_*` vs `entity_*` — so the choice is visible at every reference site.
+
+#### Polymorphic references in the doc generator
+
+Both patterns store the FK as a plain integer (not a `reference`-type field, since the target table varies), so polymorphic references don't appear in `schema_reference.md`'s reference graph. They're documented in the per-entity field tables via `help_text`, and as a category here. If the reference graph ever grows a "Polymorphic references" subsection, the source for it is the `<base>_type` + `<base>_id` field pair pattern.
+
 ### Preservation over deletion
 
-The schema favors lifecycle state transitions over physical deletion. A cut character isn't removed from the file; their `lifecycle_status` changes to `cut`. A superseded bundle isn't deleted; the new version supersedes it and the old version's `lifecycle_status` becomes `superseded`. A rejected identity anchor isn't deleted; its `canonical_status` changes to `rejected`.
+The schema favors lifecycle state transitions over physical deletion. A cut character isn't removed from the file; their `lifecycle_status` changes to `cut`. A superseded bundle isn't deleted; the new version supersedes it and the old version's `lifecycle_status` becomes `superseded`. A rejected entity anchor isn't deleted; its `canonical_status` changes to `rejected`.
 
 Tools default to showing `active` records. They can opt into showing other states. They never need to handle missing entities — the file is the complete history.
 
@@ -164,7 +215,7 @@ Entities that may be addressed by external systems (OMC, EIDR, production databa
 | `external_id` | identifier in an external system |
 | `external_id_namespace` | which system the identifier belongs to. e.g. `omc`, `eidr`, `shotgrid:project_42` |
 
-These appear on: `project`, `asset`, `actor`, `character`, `scene`, `shot`, `take`, `clip`. Authoring tools don't need to fill them in. Tools that bridge SCF and an external system populate them to maintain identity across handoffs.
+These appear on: `project`, `asset`, `actor`, `character`, `prop`, `location`, `scene`, `shot`, `take`, `clip`. Authoring tools don't need to fill them in. Tools that bridge SCF and an external system populate them to maintain identity across handoffs.
 
 The mechanism is generic. It serves OMC interop but is not OMC-specific.
 
@@ -174,7 +225,7 @@ SCF does not adopt OMC's identifier scheme, does not implement OMC's base classe
 
 ### The bundle pattern (character cluster)
 
-For media references on characters, the schema uses a tool-agnostic bundle pattern. The same pattern is intended to extend to props and locations.
+For media references on characters, the schema uses a tool-agnostic bundle pattern. The same pattern extends to props and locations — see the next section for the deltas.
 
 #### Bundle
 
@@ -190,8 +241,9 @@ A `bundle` is a named, intent-typed collection of assets:
 | `motion` | body/gesture data (mocap, video clips, gait recordings) |
 | `behavior` | decision/reaction corpora, character LLM training data |
 | `performance` | multimodal captured performance (video with sync sound) |
-| `surface` | material/texture detail (skin micro, fabric weave) |
+| `surface` | material/texture detail (skin micro, fabric weave, prop material) |
 | `environment` | for locations: spatial/environmental references |
+| `acoustic` | non-character sound profiles (location ambience, prop sounds, ensemble beds) |
 | `other` | escape hatch — should be flagged for promotion to a real value |
 
 - **`format_hints`** — JSON metadata tools can read to assess compatibility (frame count, view angles, lighting conditions, phonemes covered, audio duration, etc.)
@@ -213,9 +265,11 @@ A `character_asset_binding` applies a bundle to a character under specific condi
 
 A character typically has several bindings: a baseline visual, a baseline voice, then more specific ones layered on (variant-specific, state-specific, scene-range-specific).
 
-#### Identity anchors
+#### Entity anchors
 
-Distinct from bundles, anchors mark known-good single frames or audio segments as canonical references. Used for both ID-locking inputs and output verification (QA). Anchors point into source assets with optional spatial scoping (region_box) and temporal scoping (frame_number, timecode, audio offset). Source assets stay whole and uncropped — anchors describe how to interpret them.
+Distinct from bundles, anchors mark known-good single frames or audio segments as canonical references. Used for both ID-locking inputs and output verification (QA). Anchors point into source assets with optional spatial scoping (`region_box`) and temporal scoping (`frame_number`, `timecode`, audio offset). Source assets stay whole and uncropped — anchors describe how to interpret them.
+
+The `entity_anchor` entity (formerly `identity_anchor`) uses constrained polymorphism — `subject_type` (closed enum: `character`, `prop`, `location`) + `subject_id` + optional `subject_variant_id`. The same anchor mechanism serves all three subject types; what's anchored is whatever the `subject_type` names. See [Polymorphism patterns](#polymorphism-patterns) above.
 
 #### Resolution cascade
 
@@ -225,21 +279,79 @@ A tool generating any character in any shot walks a deterministic cascade:
 2. Check `shot_coverage` (most recent by status_date). If `coverage_state` is `captured_live` and the captured source provides usable data for the requested modality, use it.
 3. Resolve `character_asset_binding` for the character, filtered by scene/variant/state and bundle `intent` matching the requested modality. Pick highest-precedence match.
 4. Fall back to bindings with looser scope: drop state filter, then variant filter, then fall to `is_baseline=true`.
-5. For verification, pull `identity_anchor` records matching the same conditions and modality.
+5. For verification, pull `entity_anchor` records (with `subject_type=character`) matching the same conditions and modality.
 
 **The cascade operates per-modality.** Visual, voice, motion, and behavior are resolved independently. A tool requesting one modality filters by bundle `intent`. Step 2 (captured live) short-circuits only when the captured source provides usable data for that modality.
 
 The cascade enables performance-first projects (live action, generation augmenting) and generation-first projects (fully synthetic) to use the same query patterns. They simply land at different steps.
 
+The same cascade shape applies to props and locations — just with `prop_shot_override` / `prop_asset_binding` / `entity_anchor(subject_type=prop)`, and `location_shot_override` / `location_asset_binding` / `entity_anchor(subject_type=location)`. See the next section.
+
+### Extending the bundle pattern: props and locations
+
+The bundle pattern was designed on the character cluster. It extends symmetrically to props and locations with the deltas below.
+
+#### Parallel per-subject families
+
+The pattern's per-entity entities have parallel names:
+
+| Subject | Variant | Asset binding | Shot override |
+|---|---|---|---|
+| `character` | `character_variant` | `character_asset_binding` | `character_shot_override` |
+| `prop` | `prop_variant` | `prop_asset_binding` | `prop_shot_override` |
+| `location` | `location_variant` | `location_asset_binding` | `location_shot_override` |
+
+All three rows follow the same structure: variants describe modified states of the subject; bindings apply bundles under conditions; overrides record per-shot deviations from the binding cascade. The resolution cascade operates per-modality for each subject independently.
+
+`entity_anchor` serves all three subject types via constrained polymorphism — one anchor table, three valid `subject_type` values.
+
+#### Location-specific simplification
+
+Where character has a deep stack of description entities (`physical_character_profile`, `vocal_profile`, `character_appearance_profile`, `costume`, `makeup_hair_design`, etc.), location's depth is much thinner. Atmosphere, lighting, color, and sound for a location are already covered by existing scene-level and Tier 2 entities — `scene_color_palette`, `lighting_design`, `scene_music_design`, `set_dressing`, `dialogue_sound_design`, `location_color_scheme`, `location_sound_profile`, `location_design`. The slimmed `location` entity carries only what's intrinsic to the place across all scenes: name, type, setting, geography, time period, realization status, and a baseline `notes` field.
+
+#### Prop surface profile
+
+Props get one additional Tier 2 description entity beyond the parallels above: `prop_surface_profile`. This holds the surface and material qualities that an artist or a generative tool needs to render the prop consistently (material, finish, wear, response to light). Other prop description axes are folded into the existing prop entity's main fields.
+
+#### Plates and the performance corpus
+
+The performance corpus stays as one shared layer regardless of subject type. There is no `prop_performance_corpus` or `location_performance_corpus` — all captured footage lives in one `performance_corpus`, organized into `take` → `clip`. A clip whose primary purpose is a plate or atmospheric capture is modeled as `clip` with `clip_type=atmospheric`. Props that appear in a clip are linked via the `clip_prop` junction; locations that appear in a clip are reached via the clip's `scene_id` (and the scene's `location_id`), so no separate `clip_location` junction exists.
+
+#### Realization status enums
+
+Each subject's `realization_status` enum has its own values (see Status field taxonomy §4) but a shared shape:
+
+- `tbd` — not yet decided
+- `generated_only` — exists only as model output
+- `hybrid` — combined methods (live + synthesized, or any other multi-method realization)
+- A small number of subject-specific "fully realized" values: `cast` for character; `sourced` / `built` / `scanned` for prop; `real_location` / `built` / `plate_captured` / `virtual_set` for location
+
+Tools can switch on the status to gate workflow expectations: a `generated_only` subject needs a complete bundle stack; a `real_location` or `cast` subject can rely on captured material at step 2 of the cascade; `hybrid` is the signal that both paths contribute.
+
 ### Naming conventions for new entities
 
 When adding new entities to the registry, follow these conventions:
 
-- **Entity names:** `snake_case` singular. e.g. `character_variant`, `identity_anchor`, `performance_corpus`.
-- **Junction entities:** noun-noun, indicating what's being connected. e.g. `scene_character`, `clip_character`, `actor_character_role`.
+- **Entity names:** `snake_case` singular. e.g. `character_variant`, `entity_anchor`, `performance_corpus`.
+- **Junction entities:** noun-noun, indicating what's being connected. e.g. `scene_character`, `clip_character`, `clip_prop`, `actor_character_role`.
 - **Field names:** `snake_case`. Reference fields are `<target>_id`.
+- **Polymorphic references:** `subject_*` for constrained polymorphism, `entity_*` for open. See [Polymorphism patterns](#polymorphism-patterns).
 - **Enum values:** lowercase, underscored if multi-word. e.g. `actor_as_character`, `hybrid_generated_extension`.
-- **Categories:** human-readable Title Case. e.g. `"Character Depth"`, `"Thematic Tracking"`.
+- **Categories:** human-readable Title Case. e.g. `"Character Depth"`, `"Thematic Tracking"`, `"Prop Depth"`.
+
+#### Parallel entity families
+
+When extending a pattern to multiple subject types, use parallel naming. The names should be derivable rather than invented.
+
+| Pattern | Examples |
+|---|---|
+| `<subject>_variant` | `character_variant`, `prop_variant`, `location_variant` |
+| `<subject>_asset_binding` | `character_asset_binding`, `prop_asset_binding`, `location_asset_binding` |
+| `<subject>_shot_override` | `character_shot_override`, `prop_shot_override`, `location_shot_override` |
+| `<subject>_<aspect>_profile` | `physical_character_profile`, `vocal_profile`, `prop_surface_profile`, `location_sound_profile` |
+| `clip_<subject>` (junction) | `clip_character`, `clip_prop` |
+
+Parallel naming reads predictably and makes it obvious where the pattern applies. When a new subject type adopts the pattern, the entity names follow from the convention rather than from a fresh design decision.
 
 ### Notational conventions in documentation
 
@@ -288,13 +400,13 @@ The root container for an SCF story project.
 | `tone` | text |  |  | General | *Tone* — placeholder: e.g. Dark, whimsical, gritty |
 | `setting_period` | text |  |  | General | *Setting / Time Period* — placeholder: e.g. Victorian England, Near-future Tokyo |
 | `target_runtime` | integer |  |  | General | *Target Runtime (minutes)* |
-| `project_format` | select<br/>options: `feature`, `series`, `short`, `commercial`, `other` |  |  | General | *Format* — The form factor of the project |
-| `production_status` | select<br/>options: `development`, `pre_production`, `production`, `post_production`, `complete` |  | `development` | General | *Production Status* — Project-level production phase axis. Distinct from lifecycle_status and from scene/act/sequence writing-process status. |
-| `workflow_mode` | select<br/>options: `performance_first`, `generation_first`, `hybrid` |  | `generation_first` | General | *Workflow Mode* — Dominant production workflow stance for this project. performance_first = footage-driven (Rango-style); generation_first = synthesis-driven; hybrid = mixed. |
+| `project_format` | select<br/>options: `feature`, `series`, `short`, `commercial`, `other` |  |  | General | *Format* |
+| `production_status` | select<br/>options: `development`, `pre_production`, `production`, `post_production`, `complete` |  | `development` | General | *Production Status* — Project-level production phase axis. |
+| `workflow_mode` | select<br/>options: `performance_first`, `generation_first`, `hybrid` |  | `generation_first` | General | *Workflow Mode* — Dominant production workflow stance. |
 | `notes` | textarea |  |  | Notes | *Notes* |
-| `vision_statement` | textarea |  |  | Vision | *Vision Statement* — The director's overarching vision for this project |
+| `vision_statement` | textarea |  |  | Vision | *Vision Statement* |
 | `creative_philosophy` | textarea |  |  | Vision | *Creative Philosophy* |
-| `themes` | json |  |  | Vision | *Core Themes* — placeholder: ["redemption", "identity", "power"] — JSON array of thematic keywords |
+| `themes` | json |  |  | Vision | *Core Themes* — placeholder: ["redemption", "identity", "power"] |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -339,14 +451,14 @@ A character in the story. Identity and narrative function only — physical/voca
 | `occupation` | text |  |  | General | *Occupation* |
 | `casting_status` | select<br/>options: `tbd`, `cast`, `actor_as_character`, `digital_double`, `generated_only` |  | `tbd` | General | *Casting Status* — Whether this character has a real-world actor anchor. Drives downstream tool expectations. |
 | `summary` | textarea |  |  | General | *Character Summary* — placeholder: Brief description of who this character is |
-| `backstory` | textarea |  |  | Backstory | *Backstory* — placeholder: Key events and history that shaped this character |
+| `backstory` | textarea |  |  | Backstory | *Backstory* |
 | `motivation` | textarea |  |  | Backstory | *Core Motivation* |
 | `flaw` | text |  |  | Backstory | *Fatal Flaw* |
-| `arc_description` | textarea |  |  | Backstory | *Character Arc* — How does this character change throughout the story? |
-| `internal_goal` | textarea |  |  | Backstory | *Internal Goal* — placeholder: What does the character need emotionally/psychologically? |
-| `external_goal` | textarea |  |  | Backstory | *External Goal* — placeholder: What is the character actively trying to achieve? |
+| `arc_description` | textarea |  |  | Backstory | *Character Arc* |
+| `internal_goal` | textarea |  |  | Backstory | *Internal Goal* |
+| `external_goal` | textarea |  |  | Backstory | *External Goal* |
 | `greatest_fear` | textarea |  |  | Backstory | *Greatest Fear* |
-| `core_belief` | textarea |  |  | Backstory | *Core Belief* — placeholder: The fundamental belief this character operates from |
+| `core_belief` | textarea |  |  | Backstory | *Core Belief* |
 | `education_level` | text |  |  | Backstory | *Education Level* |
 | `skills_abilities` | textarea |  |  | Backstory | *Skills & Abilities* |
 
@@ -363,7 +475,7 @@ A character in the story. Identity and narrative function only — physical/voca
 
 #### 📍 `location` — Location
 
-A location where story events take place.
+A location where story events take place. Identity and narrative function only — architectural/visual detail lives in location_design, color in location_color_scheme, sound in location_sound_profile, and state variation (time-of-day, weather, post-event) in location_variant.
 
 | Meta | Value |
 |---|---|
@@ -372,6 +484,7 @@ A location where story events take place.
 | Tier | 0 |
 | Sort order | 20 |
 | Has lifecycle status | yes |
+| Has external ID | yes |
 
 **Declared fields:**
 
@@ -379,18 +492,11 @@ A location where story events take place.
 |---|---|---|---|---|---|
 | `name` | text | yes |  | General | *Location Name* — placeholder: e.g. The Old Mill |
 | `location_type` | select<br/>options: `interior`, `exterior`, `int/ext`, `virtual`, `abstract` |  |  | General | *Type* |
-| `setting` | textarea |  |  | General | *Setting Description* — placeholder: What does this place look and feel like? |
+| `setting` | textarea |  |  | General | *Setting Description* — placeholder: What does this place look and feel like? (narrative-level) |
 | `time_period` | text |  |  | General | *Time Period* |
 | `geography` | text |  |  | General | *Geography / Region* — placeholder: e.g. Northern California coast |
-| `mood` | textarea |  |  | Atmosphere | *Mood / Atmosphere* — placeholder: What feeling does this place evoke? |
-| `lighting` | textarea |  |  | Atmosphere | *Lighting* — placeholder: e.g. Harsh fluorescent, Dappled sunlight through canopy |
-| `color_palette` | text |  |  | Atmosphere | *Color Palette* — placeholder: e.g. Warm ambers, desaturated greens |
-| `time_of_day` | select<br/>options: `dawn`, `morning`, `midday`, `afternoon`, `dusk`, `night`, `varies` |  |  | Atmosphere | *Typical Time of Day* |
-| `weather` | text |  |  | Atmosphere | *Weather* |
-| `ambient_sound` | textarea |  |  | Sound | *Ambient Sound* — placeholder: e.g. Distant traffic, birdsong, mechanical hum |
-| `sound_notes` | textarea |  |  | Sound | *Sound Design Notes* |
-| `key_features` | textarea |  |  | Details | *Key Features* — placeholder: Notable objects, architecture, landmarks within this location |
-| `props_present` | textarea |  |  | Details | *Props Typically Present* |
+| `realization_status` | select<br/>options: `tbd`, `real_location`, `built`, `plate_captured`, `virtual_set`, `hybrid`, `generated_only` |  | `tbd` | General | *Realization Status* — How this location is realized in production. real_location = found and shot in-camera; built = constructed set; plate_captured = photographic plate only; virtual_set = LED wall / volumetric; hybrid = combined methods (practical + extension etc.); generated_only = fully synthetic. |
+| `key_features` | textarea |  |  | Details | *Key Features* — placeholder: Notable objects, architecture, landmarks. Specific dressing belongs in set_dressing. |
 | `notes` | textarea |  |  | Details | *Notes* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
@@ -398,13 +504,15 @@ A location where story events take place.
 | Field | Type | Required | Default | Tab | Source | Description |
 |---|---|---|---|---|---|---|
 | `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+| `external_id` | text |  |  | External | `external` | *External ID* — placeholder: identifier in external system — Optional. Identifier in an external system (OMC, EIDR, production DB, etc.). See conventions.md. |
+| `external_id_namespace` | text |  |  | External | `external` | *External ID Namespace* — placeholder: e.g. "omc", "eidr", "shotgrid:project_42" — Which external system the identifier belongs to. |
 
-**Tabs:** `General`, `Atmosphere`, `Sound`, `Details`, `Lifecycle`
+**Tabs:** `General`, `Details`, `Lifecycle`, `External`
 
 
 #### 🔧 `prop` — Prop
 
-A significant object in the story.
+A significant object in the story. Identity, narrative function, and story moments — surface/material detail lives in prop_surface_profile, state variation (clean/damaged/symbolic) in prop_variant.
 
 | Meta | Value |
 |---|---|
@@ -413,6 +521,7 @@ A significant object in the story.
 | Tier | 0 |
 | Sort order | 30 |
 | Has lifecycle status | yes |
+| Has external ID | yes |
 
 **Declared fields:**
 
@@ -421,16 +530,12 @@ A significant object in the story.
 | `name` | text | yes |  | General | *Prop Name* — placeholder: e.g. The Silver Compass |
 | `prop_type` | select<br/>options: `hand prop`, `set dressing`, `vehicle`, `weapon`, `document`, `technology`, `clothing item`, `food/drink`, `other` |  |  | General | *Type* |
 | `description` | textarea |  |  | General | *Description* — placeholder: What does this prop look like? |
+| `realization_status` | select<br/>options: `tbd`, `sourced`, `built`, `scanned`, `hybrid`, `generated_only` |  | `tbd` | General | *Realization Status* — How this prop is realized in production. sourced = found / purchased real object; built = fabricated; scanned = real object digitally captured; hybrid = combined methods (practical + VFX, sourced + CG damage, plate replacement, miniature, etc.); generated_only = fully synthetic. |
 | `narrative_significance` | textarea |  |  | General | *Narrative Significance* — placeholder: Why does this prop matter to the story? |
 | `story_function` | select<br/>options: `macguffin`, `character extension`, `plot device`, `symbol`, `atmosphere`, `other` |  |  | General | *Story Function* |
 | `associated_character` | reference → `character` |  |  | General | *Primary Character* |
-| `material` | text |  |  | Physical | *Material* — placeholder: e.g. Tarnished silver, worn leather |
-| `size` | text |  |  | Physical | *Size* — placeholder: e.g. Palm-sized, 6 feet tall |
-| `color` | text |  |  | Physical | *Color* |
-| `condition` | text |  |  | Physical | *Condition* — placeholder: e.g. Pristine, battle-worn, ancient |
-| `physical_notes` | textarea |  |  | Physical | *Physical Notes* |
-| `first_appearance` | textarea |  |  | Story | *First Appearance* — placeholder: When/where does this prop first appear? |
-| `key_moments` | textarea |  |  | Story | *Key Moments* — placeholder: Important scenes involving this prop |
+| `first_appearance` | textarea |  |  | Story | *First Appearance* |
+| `key_moments` | textarea |  |  | Story | *Key Moments* |
 | `symbolism` | textarea |  |  | Story | *Symbolism* |
 | `notes` | textarea |  |  | Notes | *Notes* |
 
@@ -439,8 +544,10 @@ A significant object in the story.
 | Field | Type | Required | Default | Tab | Source | Description |
 |---|---|---|---|---|---|---|
 | `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+| `external_id` | text |  |  | External | `external` | *External ID* — placeholder: identifier in external system — Optional. Identifier in an external system (OMC, EIDR, production DB, etc.). See conventions.md. |
+| `external_id_namespace` | text |  |  | External | `external` | *External ID Namespace* — placeholder: e.g. "omc", "eidr", "shotgrid:project_42" — Which external system the identifier belongs to. |
 
-**Tabs:** `General`, `Physical`, `Story`, `Notes`, `Lifecycle`
+**Tabs:** `General`, `Story`, `Notes`, `Lifecycle`, `External`
 
 
 ---
@@ -465,11 +572,11 @@ A major structural division of the story.
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text | yes |  | General | *Act Name* — placeholder: e.g. Act One, The Setup, Episode 1 Act A |
-| `act_number` | integer |  |  | General | *Act Number* — placeholder: Position in the structure: 1, 2, 3... |
-| `function` | textarea |  |  | General | *Function* — placeholder: What does this act do in the story? |
-| `dramatic_question` | textarea |  |  | General | *Dramatic Question* — placeholder: The central question this act poses |
-| `shift` | textarea |  |  | General | *Shift* — placeholder: What changes from the start to the end of this act? |
+| `name` | text | yes |  | General | *Act Name* |
+| `act_number` | integer |  |  | General | *Act Number* |
+| `function` | textarea |  |  | General | *Function* |
+| `dramatic_question` | textarea |  |  | General | *Dramatic Question* |
+| `shift` | textarea |  |  | General | *Shift* |
 | `summary` | textarea |  |  | General | *Summary* |
 | `status` | select<br/>options: `outline`, `draft`, `revised`, `locked`, `cut` |  | `outline` | General | *Status* — Writing-process status. Distinct from lifecycle_status. |
 | `notes` | textarea |  |  | Notes | *Notes* |
@@ -499,7 +606,7 @@ A group of related scenes forming a narrative unit.
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text | yes |  | General | *Sequence Name* — placeholder: e.g. The Heist |
+| `name` | text | yes |  | General | *Sequence Name* |
 | `sequence_number` | integer |  |  | General | *Sequence Number* |
 | `act_id` | reference → `act` |  |  | General | *Act* |
 | `summary` | textarea |  |  | General | *Summary* |
@@ -537,7 +644,7 @@ A single scene in the story.
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text | yes |  | General | *Scene Name / Slug* — placeholder: e.g. INT. COFFEE SHOP - MORNING |
+| `name` | text | yes |  | General | *Scene Name / Slug* |
 | `scene_number` | integer |  |  | General | *Scene Number* |
 | `int_ext` | select<br/>options: `interior`, `exterior`, `int/ext` |  |  | General | *Int/Ext* |
 | `location_id` | reference → `location` |  |  | General | *Location* |
@@ -595,7 +702,7 @@ A discrete narrative unit within a scene — a moment of change.
 | `beat_type` | select<br/>options: `setup`, `action`, `reaction`, `decision`, `discovery`, `revelation`, `reversal`, `payoff`, `other` |  |  | General | *Beat Type* |
 | `description` | textarea |  |  | General | *Description* |
 | `purpose` | textarea |  |  | General | *Purpose* |
-| `value_shift` | text |  |  | General | *Value Shift* — placeholder: e.g. Hope → Despair, Trust → Doubt |
+| `value_shift` | text |  |  | General | *Value Shift* |
 | `pov_character_id` | reference → `character` |  |  | General | *POV Character* |
 | `notes` | textarea |  |  | General | *Notes* |
 
@@ -754,7 +861,7 @@ Links a costume to the scenes where it appears.
 
 #### 🔗 `visual_motif_appearance` — Visual Motif Appearance
 
-Where a visual motif manifests (in a location, prop, costume, or scene).
+Where a visual motif manifests (in a location, prop, costume, or scene). Open polymorphism — entity_type is open-ended.
 
 | Meta | Value |
 |---|---|
@@ -779,7 +886,7 @@ Where a visual motif manifests (in a location, prop, costume, or scene).
 
 #### 🔗 `motif_manifestation` — Motif Manifestation
 
-Where a conceptual motif manifests in the story.
+Where a conceptual motif manifests in the story. Open polymorphism — entity_type is open-ended.
 
 | Meta | Value |
 |---|---|
@@ -803,13 +910,13 @@ Where a conceptual motif manifests in the story.
 - `name` (text)
 
 
-#### 🔗 `action_sequence_character` — Action Sequence Character
+#### 🔗 `action_sequence_character` — Action Sequence-Character
 
-Links a character to an action sequence.
+Links characters to action sequences with their role.
 
 | Meta | Value |
 |---|---|
-| Plural label | Action Sequence Characters |
+| Plural label | Action Sequence-Characters |
 | Category | Connections |
 | Tier | 0 |
 | Sort order | 66 |
@@ -821,6 +928,7 @@ Links a character to an action sequence.
 | `action_sequence_id` | reference → `action_sequence` | yes |  | General | *Action Sequence* |
 | `character_id` | reference → `character` | yes |  | General | *Character* |
 | `role_in_action` | text |  |  | General | *Role in Action* |
+| `notes` | textarea |  |  | General | *Notes* |
 
 **Hidden fields** (not shown in editor UI):
 
@@ -829,7 +937,7 @@ Links a character to an action sequence.
 
 #### 🔗 `asset_relationship` — Asset Relationship
 
-Links an asset to any entity in the project.
+Links an asset to an entity it documents or references. Open polymorphism — entity_type is open-ended.
 
 | Meta | Value |
 |---|---|
@@ -843,10 +951,10 @@ Links an asset to any entity in the project.
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
 | `asset_id` | reference → `asset` | yes |  | General | *Asset* |
-| `entity_type` | text | yes |  | General | *Entity Type* |
+| `entity_type` | text | yes |  | General | *Entity Type* — Open-ended — any entity name. |
 | `entity_id` | integer | yes |  | General | *Entity ID* |
-| `relationship_type` | select<br/>options: `reference for`, `concept of`, `generated from`, `variant of` |  |  | General | *Relationship Type* |
-| `context_notes` | textarea |  |  | General | *Context Notes* |
+| `relationship_type` | select<br/>options: `reference`, `documentation`, `concept`, `inspiration`, `final`, `other` |  |  | General | *Relationship Type* |
+| `notes` | textarea |  |  | General | *Notes* |
 
 **Hidden fields** (not shown in editor UI):
 
@@ -870,7 +978,7 @@ Junction: assets that compose a bundle.
 |---|---|---|---|---|---|
 | `bundle_id` | reference → `bundle` | yes |  | General | *Bundle* |
 | `asset_id` | reference → `asset` | yes |  | General | *Asset* |
-| `role_in_bundle` | text |  |  | General | *Role in Bundle* — placeholder: e.g. "front view neutral", "phoneme /θ/", "anger reaction" |
+| `role_in_bundle` | text |  |  | General | *Role in Bundle* |
 | `order` | integer |  |  | General | *Order* |
 | `notes` | textarea |  |  | General | *Notes* |
 
@@ -881,7 +989,7 @@ Junction: assets that compose a bundle.
 
 #### 🔗 `actor_character_role` — Actor-Character Role
 
-Junction: actor + character + role type. Handles all combinations: one actor playing multiple characters, multiple actors playing one character (principal, body double, voice double, ADR, mocap).
+Junction: actor + character + role type.
 
 | Meta | Value |
 |---|---|
@@ -899,7 +1007,7 @@ Junction: actor + character + role type. Handles all combinations: one actor pla
 | `character_id` | reference → `character` | yes |  | General | *Character* |
 | `role_type` | select<br/>options: `principal`, `body_double`, `stunt_double`, `voice_double`, `adr`, `motion_capture`, `reference_only`, `other` | yes |  | General | *Role Type* |
 | `scope` | select<br/>options: `whole_project`, `specific_scenes`, `specific_takes` |  | `whole_project` | General | *Scope* |
-| `scope_details` | textarea |  |  | General | *Scope Details* — placeholder: When scope isn't whole_project |
+| `scope_details` | textarea |  |  | General | *Scope Details* |
 | `notes` | textarea |  |  | General | *Notes* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
@@ -932,8 +1040,8 @@ Junction: scenes covered by a take. Takes can cross scenes.
 |---|---|---|---|---|---|
 | `take_id` | reference → `take` | yes |  | General | *Take* |
 | `scene_id` | reference → `scene` | yes |  | General | *Scene* |
-| `order_in_take` | integer |  |  | General | *Order in Take* — Which scene comes first in the take. |
-| `coverage_completeness` | select<br/>options: `partial`, `complete`, `incidental` |  | `complete` | General | *Coverage Completeness* — incidental = take caught the scene in passing, not trying to cover it. |
+| `order_in_take` | integer |  |  | General | *Order in Take* |
+| `coverage_completeness` | select<br/>options: `partial`, `complete`, `incidental` |  | `complete` | General | *Coverage Completeness* |
 | `notes` | textarea |  |  | General | *Notes* |
 
 **Hidden fields** (not shown in editor UI):
@@ -964,6 +1072,145 @@ Junction: characters present in a clip with their role.
 **Hidden fields** (not shown in editor UI):
 
 - `name` (text)
+
+
+#### 🔗 `clip_prop` — Clip-Prop
+
+Junction: props present in a clip with their role. Parallel to clip_character. Supports queries like 'every clip featuring the locket' — useful for production review and for assembling prop-identity training sets.
+
+| Meta | Value |
+|---|---|
+| Plural label | Clip-Props |
+| Category | Connections |
+| Tier | 0 |
+| Sort order | 72 |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `clip_id` | reference → `clip` | yes |  | General | *Clip* |
+| `prop_id` | reference → `prop` | yes |  | General | *Prop* |
+| `role_in_clip` | select<br/>options: `featured`, `supporting`, `background` |  | `featured` | General | *Role in Clip* |
+| `notes` | textarea |  |  | General | *Notes* |
+
+**Hidden fields** (not shown in editor UI):
+
+- `name` (text)
+
+
+---
+
+### Category: Metadata
+
+<a id='category-metadata'></a>
+
+#### ✅ `creative_decision` — Creative Decision
+
+A recorded creative decision with rationale.
+
+| Meta | Value |
+|---|---|
+| Plural label | Creative Decisions |
+| Category | Metadata |
+| Tier | 0 |
+| Sort order | 700 |
+| Has lifecycle status | yes |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `name` | text | yes |  | General | *Decision Name* |
+| `decision_type` | select<br/>options: `casting`, `visual`, `narrative`, `technical`, `audio`, `design`, `structural`, `other` |  |  | General | *Decision Type* |
+| `description` | textarea |  |  | General | *Description* |
+| `rationale` | textarea |  |  | General | *Rationale* |
+| `alternatives_considered` | textarea |  |  | General | *Alternatives Considered* |
+| `affected_entities` | json |  |  | General | *Affected Entities* |
+| `decision_date` | text |  |  | General | *Decision Date* |
+| `decided_by` | text |  |  | General | *Decided By* |
+
+**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
+
+| Field | Type | Required | Default | Tab | Source | Description |
+|---|---|---|---|---|---|---|
+| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+
+**Tabs:** `General`, `Lifecycle`
+
+
+#### 💬 `collaboration_note` — Collaboration Note
+
+Notes for or from collaborators.
+
+| Meta | Value |
+|---|---|
+| Plural label | Collaboration Notes |
+| Category | Metadata |
+| Tier | 0 |
+| Sort order | 701 |
+| Has lifecycle status | yes |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `name` | text |  |  | General | *Note Title* |
+| `note_type` | select<br/>options: `for cinematographer`, `for production designer`, `for costume designer`, `for sound designer`, `for composer`, `for editor`, `for actors`, `general` |  |  | General | *Note Type* |
+| `content` | textarea | yes |  | General | *Content* |
+| `priority` | select<br/>options: `low`, `medium`, `high`, `critical` |  |  | General | *Priority* |
+| `affected_entities` | json |  |  | General | *Affected Entities* |
+| `author` | text |  |  | General | *Author* |
+| `note_date` | text |  |  | General | *Date* |
+
+**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
+
+| Field | Type | Required | Default | Tab | Source | Description |
+|---|---|---|---|---|---|---|
+| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+
+**Tabs:** `General`, `Lifecycle`
+
+
+#### 📎 `asset` — Asset
+
+Reference asset (image, audio, video, document). The atomic unit that bundles compose. Versionable — supports asset version chains.
+
+| Meta | Value |
+|---|---|
+| Plural label | Assets |
+| Category | Metadata |
+| Tier | 0 |
+| Sort order | 702 |
+| Versionable | yes |
+| Has lifecycle status | yes |
+| Has external ID | yes |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `name` | text | yes |  | General | *Asset Name* |
+| `asset_type` | select<br/>options: `image`, `audio`, `video`, `document`, `3d model`, `lookbook`, `reference photo`, `concept art`, `other` |  |  | General | *Asset Type* |
+| `file_path` | text |  |  | General | *File Path / URL* |
+| `description` | textarea |  |  | General | *Description* |
+| `tags` | json |  |  | General | *Tags* |
+| `source` | text |  |  | General | *Source / Credit* |
+| `notes` | textarea |  |  | Notes | *Notes* |
+
+**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
+
+| Field | Type | Required | Default | Tab | Source | Description |
+|---|---|---|---|---|---|---|
+| `parent_id` | reference → `asset` |  |  | Lifecycle | `versionable` | *Parent Version* — Previous version in the chain. Null for root version. |
+| `version_label` | text |  |  | Lifecycle | `versionable` | *Version Label* — placeholder: e.g. "v1.2", "approved-final" — Human-readable version identifier. Tool-managed. |
+| `superseded_at` | timestamp |  |  | Lifecycle | `versionable` | *Superseded At* — Set when a successor version becomes active. |
+| `superseded_by_id` | reference → `asset` |  |  | Lifecycle | `versionable` | *Superseded By* — Forward pointer to successor. Auto-set on supersession. |
+| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+| `external_id` | text |  |  | External | `external` | *External ID* — placeholder: identifier in external system — Optional. Identifier in an external system (OMC, EIDR, production DB, etc.). See conventions.md. |
+| `external_id_namespace` | text |  |  | External | `external` | *External ID Namespace* — placeholder: e.g. "omc", "eidr", "shotgrid:project_42" — Which external system the identifier belongs to. |
+
+**Tabs:** `General`, `Notes`, `Lifecycle`, `External`
 
 
 ---
@@ -1556,7 +1803,7 @@ Relationship between two characters with dynamics and evolution.
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text |  |  | General | *Relationship Label* — placeholder: e.g. Father/Son, Rivals |
+| `name` | text |  |  | General | *Relationship Label* |
 | `character_a_id` | reference → `character` | yes |  | General | *Character A* |
 | `character_b_id` | reference → `character` | yes |  | General | *Character B* |
 | `relationship_type` | select<br/>options: `family`, `friend`, `enemy`, `lover`, `colleague`, `mentor/mentee`, `rival`, `authority`, `other` |  |  | General | *Type* |
@@ -1593,9 +1840,9 @@ Baseline physical existence — posture, movement, tension, energy.
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text |  |  | General | *Name* — placeholder: e.g. Eleanor's Physicality |
+| `name` | text |  |  | General | *Name* |
 | `character_id` | reference → `character` | yes |  | General | *Character* |
-| `height` | text |  |  | General | *Height* — placeholder: e.g. 5'10", Tall, Average |
+| `height` | text |  |  | General | *Height* |
 | `build` | select<br/>options: `slim`, `athletic`, `average`, `stocky`, `heavy`, `muscular`, `frail`, `other` |  |  | General | *Build* |
 | `posture` | select<br/>options: `upright`, `slouched`, `rigid`, `relaxed`, `asymmetric` |  |  | General | *Posture* |
 | `center_of_gravity` | select<br/>options: `high`, `low`, `forward`, `back` |  |  | General | *Center of Gravity* |
@@ -1640,9 +1887,9 @@ Baseline vocal identity — how a character sounds.
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text |  |  | General | *Name* — placeholder: e.g. Eleanor's Voice |
+| `name` | text |  |  | General | *Name* |
 | `character_id` | reference → `character` | yes |  | General | *Character* |
-| `voice_quality` | text |  |  | General | *Voice Quality* — placeholder: e.g. Deep, gravelly, warm |
+| `voice_quality` | text |  |  | General | *Voice Quality* |
 | `pitch_range` | select<br/>options: `high`, `low`, `middle`, `variable` |  |  | General | *Pitch Range* |
 | `timbre` | select<br/>options: `warm`, `nasal`, `resonant`, `thin`, `gravelly` |  |  | General | *Timbre* |
 | `volume_tendency` | select<br/>options: `loud`, `soft`, `variable` |  |  | General | *Volume Tendency* |
@@ -1688,7 +1935,7 @@ How a character generally delivers lines.
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text |  |  | General | *Name* — placeholder: e.g. Eleanor's Delivery |
+| `name` | text |  |  | General | *Name* |
 | `character_id` | reference → `character` | yes |  | General | *Character* |
 | `delivery_style` | select<br/>options: `naturalistic`, `theatrical`, `minimalist`, `mannered` |  |  | General | *Delivery Style* |
 | `emotional_access` | select<br/>options: `available`, `controlled`, `variable` |  |  | General | *Emotional Access* |
@@ -1764,7 +2011,7 @@ Complete visual design — silhouette, distinction, evolution.
 | `body_type` | text |  |  | General | *Body Type* |
 | `height_proportions` | text |  |  | General | *Height / Proportions* |
 | `age_appearance` | text |  |  | General | *Age Appearance* |
-| `hair` | text |  |  | General | *Hair* — placeholder: e.g. Long dark curls |
+| `hair` | text |  |  | General | *Hair* |
 | `eyes` | text |  |  | General | *Eyes* |
 | `distinguishing_features` | textarea |  |  | General | *Distinguishing Features* |
 | `skin_tone` | text |  |  | Appearance | *Skin Tone* |
@@ -1800,7 +2047,7 @@ A specific wardrobe look for a character.
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text | yes |  | General | *Costume Name* — placeholder: e.g. Eleanor's Work Outfit, Marcus's Disguise |
+| `name` | text | yes |  | General | *Costume Name* |
 | `character_id` | reference → `character` | yes |  | General | *Character* |
 | `description` | textarea |  |  | General | *Description* |
 | `silhouette` | text |  |  | General | *Silhouette* |
@@ -1903,7 +2150,7 @@ Non-costume appearance: makeup, hair, prosthetics.
 
 #### 🔀 `character_variant` — Character Variant
 
-Specific state or version of a character (e.g. Young Eleanor, Angry Marcus). The previous duration_type field has been removed; the variant's purpose lives in its name, context, and physical_differences fields.
+Specific state or version of a character (e.g. Young Eleanor, Angry Marcus).
 
 | Meta | Value |
 |---|---|
@@ -1918,11 +2165,11 @@ Specific state or version of a character (e.g. Young Eleanor, Angry Marcus). The
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text | yes |  | General | *Variant Name* — placeholder: e.g. Young Eleanor, Marcus in Disguise |
+| `name` | text | yes |  | General | *Variant Name* |
 | `character_id` | reference → `character` | yes |  | General | *Character* |
 | `physical_differences` | textarea |  |  | General | *Physical Differences* |
 | `emotional_state` | textarea |  |  | General | *Emotional State* |
-| `context` | textarea |  |  | General | *Context* — placeholder: When/why this variant appears |
+| `context` | textarea |  |  | General | *Context* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -1970,13 +2217,94 @@ Recurring physical behavior — gesture, tic, comfort behavior.
 
 ---
 
+### Category: Prop Depth
+
+<a id='category-prop-depth'></a>
+
+#### 🪙 `prop_surface_profile` — Prop Surface Profile
+
+Surface, material, and physical-presence detail for a prop. Holds the descriptive baseline that surface and visual bundles reference. State variation (clean vs damaged) belongs in prop_variant.
+
+| Meta | Value |
+|---|---|
+| Plural label | Prop Surface Profiles |
+| Category | Prop Depth |
+| Tier | 2 |
+| Sort order | 220 |
+| Parent entity | `prop` via `prop_id` |
+| Has lifecycle status | yes |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `name` | text |  |  | General | *Name* |
+| `prop_id` | reference → `prop` | yes |  | General | *Prop* |
+| `material` | text |  |  | General | *Primary Material* — placeholder: e.g. "Tarnished silver", "Worn leather" |
+| `secondary_materials` | text |  |  | General | *Secondary Materials* |
+| `size` | text |  |  | General | *Size* — placeholder: e.g. Palm-sized, 6 feet tall |
+| `weight_impression` | text |  |  | General | *Weight Impression* — placeholder: e.g. "heavier than it looks" |
+| `primary_color_hex` | text |  |  | Color | *Primary Color (hex)* |
+| `primary_color_name` | text |  |  | Color | *Primary Color Name* |
+| `secondary_colors` | json |  |  | Color | *Secondary Colors* |
+| `surface_finish` | select<br/>options: `matte`, `satin`, `gloss`, `worn`, `polished`, `pitted` |  |  | Surface | *Surface Finish* |
+| `texture_quality` | textarea |  |  | Surface | *Texture Quality* |
+| `baseline_condition` | text |  |  | Condition | *Baseline Condition* — The prop's default state. State changes belong in prop_variant. |
+| `wear_pattern` | textarea |  |  | Condition | *Wear Pattern* |
+| `aging_notes` | textarea |  |  | Condition | *Aging Notes* |
+| `visual_distinction` | textarea |  |  | Identity | *Visual Distinction* — placeholder: The silhouette / shorthand of this prop |
+| `notes` | textarea |  |  | Notes | *Notes* |
+
+**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
+
+| Field | Type | Required | Default | Tab | Source | Description |
+|---|---|---|---|---|---|---|
+| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+
+**Tabs:** `General`, `Color`, `Surface`, `Condition`, `Identity`, `Notes`, `Lifecycle`
+
+
+#### 🔀 `prop_variant` — Prop Variant
+
+Specific state or version of a prop (e.g. Locket open, Gun blood-spattered, Letter torn). Tools bind state-specific bundles to a prop variant; the cascade resolves the right bundle for the right state.
+
+| Meta | Value |
+|---|---|
+| Plural label | Prop Variants |
+| Category | Prop Depth |
+| Tier | 2 |
+| Sort order | 221 |
+| Parent entity | `prop` via `prop_id` |
+| Has lifecycle status | yes |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `name` | text | yes |  | General | *Variant Name* — placeholder: e.g. "Locket — open", "Gun — fired" |
+| `prop_id` | reference → `prop` | yes |  | General | *Prop* |
+| `physical_differences` | textarea |  |  | General | *Physical Differences* |
+| `state_trigger` | textarea |  |  | General | *State Trigger* — placeholder: What causes this variant to appear |
+| `context` | textarea |  |  | General | *Context* |
+
+**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
+
+| Field | Type | Required | Default | Tab | Source | Description |
+|---|---|---|---|---|---|---|
+| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+
+**Tabs:** `General`, `Lifecycle`
+
+
+---
+
 ### Category: Asset Reference
 
 <a id='category-asset-reference'></a>
 
 #### 📦 `bundle` — Bundle
 
-Named, intent-typed collection of assets. Tool-agnostic media reference primitive used by the character cluster (and later by props and locations). Versionable — participates in linear version chains.
+Named, intent-typed collection of assets. Tool-agnostic media reference primitive used by the character cluster (and now by props and locations). Versionable — participates in linear version chains.
 
 | Meta | Value |
 |---|---|
@@ -1991,13 +2319,13 @@ Named, intent-typed collection of assets. Tool-agnostic media reference primitiv
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text | yes |  | General | *Bundle Name* — placeholder: e.g. "Snapper — baseline visual" |
-| `intent` | select<br/>options: `visual_identity`, `voice_identity`, `motion`, `behavior`, `performance`, `surface`, `environment`, `other` | yes |  | General | *Intent* — Hard enum. Tools switch on this to determine compatibility. |
-| `description` | textarea |  |  | General | *Description* — placeholder: What this bundle is for |
-| `coverage_summary` | textarea |  |  | General | *Coverage Summary* — placeholder: Plain-language: angles, expressions, phoneme set, etc. |
-| `format_hints` | json |  |  | Technical | *Format Hints* — placeholder: {"frame_count": 30, "lighting_conditions": [...], "audio_duration_sec": 240} — Structured metadata tools can read without prescribing pipeline. Open shape — conventional keys vary by intent. |
-| `intended_consumers` | json |  |  | Technical | *Intended Consumers* — placeholder: ["image_gen", "video_gen", "voice_clone", "world_model"] — Optional hints about what tool types this is designed for. |
-| `provenance` | textarea |  |  | Technical | *Provenance* — placeholder: How this bundle was assembled — shoot session, curated set, etc. |
+| `name` | text | yes |  | General | *Bundle Name* |
+| `intent` | select<br/>options: `visual_identity`, `voice_identity`, `motion`, `behavior`, `performance`, `surface`, `environment`, `acoustic`, `other` | yes |  | General | *Intent* — Hard enum. Tools switch on this to determine compatibility. acoustic added in Phase 1D for location ambience. |
+| `description` | textarea |  |  | General | *Description* |
+| `coverage_summary` | textarea |  |  | General | *Coverage Summary* |
+| `format_hints` | json |  |  | Technical | *Format Hints* — placeholder: {"frame_count": 30, "lighting_conditions": [...]} |
+| `intended_consumers` | json |  |  | Technical | *Intended Consumers* — placeholder: ["image_gen", "video_gen", "voice_clone", "world_model"] |
+| `provenance` | textarea |  |  | Technical | *Provenance* |
 | `notes` | textarea |  |  | Notes | *Notes* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
@@ -2015,7 +2343,7 @@ Named, intent-typed collection of assets. Tool-agnostic media reference primitiv
 
 #### 🎚️ `character_asset_binding` — Character Asset Binding
 
-Applies a bundle to a character under specific conditions. Tools walk the resolution cascade and use bindings to find the right media for a given character in a given scene/state.
+Applies a bundle to a character under specific conditions.
 
 | Meta | Value |
 |---|---|
@@ -2029,18 +2357,18 @@ Applies a bundle to a character under specific conditions. Tools walk the resolu
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text |  |  | General | *Binding Name* — placeholder: e.g. "Snapper baseline visual" |
+| `name` | text |  |  | General | *Binding Name* |
 | `character_id` | reference → `character` | yes |  | General | *Character* |
 | `bundle_id` | reference → `bundle` | yes |  | General | *Bundle* |
-| `is_baseline` | boolean |  | `False` | General | *Is Baseline* — True for the unconditional default binding for this character. |
-| `precedence` | integer |  | `0` | General | *Precedence* — Higher wins when multiple bindings could apply. Author or tool sets this manually. |
+| `is_baseline` | boolean |  | `False` | General | *Is Baseline* |
+| `precedence` | integer |  | `0` | General | *Precedence* |
 | `variant_id` | reference → `character_variant` |  |  | Conditions | *Variant* |
-| `physical_state_filter` | text |  |  | Conditions | *Physical State Filter* — placeholder: Matches against physical_state values |
+| `physical_state_filter` | text |  |  | Conditions | *Physical State Filter* |
 | `vocal_state_filter` | text |  |  | Conditions | *Vocal State Filter* |
 | `scene_range_start_id` | reference → `scene` |  |  | Conditions | *Scene Range Start* |
 | `scene_range_end_id` | reference → `scene` |  |  | Conditions | *Scene Range End* |
-| `act_id` | reference → `act` |  |  | Conditions | *Act* — Alternative coarser scope to scene range. |
-| `conditions_json` | json |  |  | Conditions | *Additional Conditions* — placeholder: {"custom_key": "value"} — Catch-all for tool-specific filters. |
+| `act_id` | reference → `act` |  |  | Conditions | *Act* |
+| `conditions_json` | json |  |  | Conditions | *Additional Conditions* |
 | `notes` | textarea |  |  | Notes | *Notes* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
@@ -2052,13 +2380,13 @@ Applies a bundle to a character under specific conditions. Tools walk the resolu
 **Tabs:** `General`, `Conditions`, `Notes`, `Lifecycle`
 
 
-#### 📍 `identity_anchor` — Identity Anchor
+#### 📍 `entity_anchor` — Entity Anchor
 
-Known-good single frame, audio segment, or motion sample marked as canonical reference for a character. Used for both ID-locking inputs and output verification. Points into source assets without modifying them.
+Known-good single frame, audio segment, or motion sample marked as canonical reference for a character, prop, or location. Used for both ID-locking inputs and output verification. Points into source assets without modifying them. Uses constrained polymorphism — subject_type is a hard closed enum (character / prop / location).
 
 | Meta | Value |
 |---|---|
-| Plural label | Identity Anchors |
+| Plural label | Entity Anchors |
 | Category | Asset Reference |
 | Tier | 2 |
 | Sort order | 252 |
@@ -2068,20 +2396,22 @@ Known-good single frame, audio segment, or motion sample marked as canonical ref
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text |  |  | General | *Anchor Name* — placeholder: e.g. "Snapper front neutral verified" |
-| `character_id` | reference → `character` | yes |  | General | *Character* |
-| `variant_id` | reference → `character_variant` |  |  | General | *Variant* |
+| `name` | text |  |  | General | *Anchor Name* |
+| `subject_type` | select<br/>options: `character`, `prop`, `location` | yes |  | General | *Subject Type* — Hard closed enum. Tools switch on this exhaustively. Distinct from the open-polymorphism entity_type used elsewhere. |
+| `subject_id` | integer | yes |  | General | *Subject ID* — Polymorphic reference into the table named by subject_type. |
+| `subject_variant_id` | integer |  |  | General | *Subject Variant ID* — Optional. Polymorphic reference into the matching variant table (character_variant / prop_variant / location_variant). |
 | `anchor_type` | select<br/>options: `visual`, `audio`, `motion` | yes |  | General | *Anchor Type* |
-| `asset_id` | reference → `asset` | yes |  | General | *Source Asset* — The whole source asset. Anchors describe how to interpret it. |
-| `frame_number` | integer |  |  | Scope | *Frame Number* — For video/motion assets. |
-| `timecode` | text |  |  | Scope | *Timecode* — placeholder: HH:MM:SS:FF — Alternative to frame number. |
-| `region_box` | json |  |  | Scope | *Region Box* — placeholder: {"x": 420, "y": 180, "w": 480, "h": 600} — Optional spatial crop within frame. |
-| `region_label` | text |  |  | Scope | *Region Label* — placeholder: e.g. "face only", "head and shoulders" — Author's note on what the region box represents. |
-| `audio_offset_start_sec` | float |  |  | Scope | *Audio Offset Start (sec)* — For audio anchors. |
+| `asset_id` | reference → `asset` | yes |  | General | *Source Asset* |
+| `frame_number` | integer |  |  | Scope | *Frame Number* |
+| `timecode` | text |  |  | Scope | *Timecode* — placeholder: HH:MM:SS:FF |
+| `region_box` | json |  |  | Scope | *Region Box* — placeholder: {"x": 420, "y": 180, "w": 480, "h": 600} |
+| `region_label` | text |  |  | Scope | *Region Label* |
+| `audio_offset_start_sec` | float |  |  | Scope | *Audio Offset Start (sec)* |
 | `audio_offset_end_sec` | float |  |  | Scope | *Audio Offset End (sec)* |
-| `condition_description` | textarea |  |  | Context | *Condition Description* — placeholder: When this anchor is valid: lighting, expression, state |
-| `physical_state` | text |  |  | Context | *Physical State* |
-| `vocal_state` | text |  |  | Context | *Vocal State* |
+| `condition_description` | textarea |  |  | Context | *Condition Description* |
+| `physical_state` | text |  |  | Context | *Physical State* — Applies for character and prop subjects. |
+| `vocal_state` | text |  |  | Context | *Vocal State* — Applies for character subjects. |
+| `environmental_state` | text |  |  | Context | *Environmental State* — placeholder: e.g. "midday clear", "post-rain dusk" — Applies for location subjects. |
 | `canonical_status` | select<br/>options: `verified`, `candidate`, `rejected` |  | `candidate` | General | *Canonical Status* — Verification axis distinct from lifecycle_status. |
 | `notes` | textarea |  |  | Notes | *Notes* |
 
@@ -2094,6 +2424,81 @@ Known-good single frame, audio segment, or motion sample marked as canonical ref
 **Tabs:** `General`, `Scope`, `Context`, `Notes`, `Lifecycle`
 
 
+#### 🎚️ `prop_asset_binding` — Prop Asset Binding
+
+Applies a bundle to a prop under specific conditions (variant, scene range, act). Tools walk the prop resolution cascade and use bindings to find the right media for a prop in a given scene/state.
+
+| Meta | Value |
+|---|---|
+| Plural label | Prop Asset Bindings |
+| Category | Asset Reference |
+| Tier | 2 |
+| Sort order | 253 |
+| Has lifecycle status | yes |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `name` | text |  |  | General | *Binding Name* |
+| `prop_id` | reference → `prop` | yes |  | General | *Prop* |
+| `bundle_id` | reference → `bundle` | yes |  | General | *Bundle* |
+| `is_baseline` | boolean |  | `False` | General | *Is Baseline* |
+| `precedence` | integer |  | `0` | General | *Precedence* |
+| `variant_id` | reference → `prop_variant` |  |  | Conditions | *Variant* |
+| `scene_range_start_id` | reference → `scene` |  |  | Conditions | *Scene Range Start* |
+| `scene_range_end_id` | reference → `scene` |  |  | Conditions | *Scene Range End* |
+| `act_id` | reference → `act` |  |  | Conditions | *Act* |
+| `conditions_json` | json |  |  | Conditions | *Additional Conditions* |
+| `notes` | textarea |  |  | Notes | *Notes* |
+
+**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
+
+| Field | Type | Required | Default | Tab | Source | Description |
+|---|---|---|---|---|---|---|
+| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+
+**Tabs:** `General`, `Conditions`, `Notes`, `Lifecycle`
+
+
+#### 🎚️ `location_asset_binding` — Location Asset Binding
+
+Applies a bundle to a location under specific conditions (variant, scene range, act, time-of-day). Tools walk the location resolution cascade and use bindings to find the right media for a location.
+
+| Meta | Value |
+|---|---|
+| Plural label | Location Asset Bindings |
+| Category | Asset Reference |
+| Tier | 2 |
+| Sort order | 254 |
+| Has lifecycle status | yes |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `name` | text |  |  | General | *Binding Name* |
+| `location_id` | reference → `location` | yes |  | General | *Location* |
+| `bundle_id` | reference → `bundle` | yes |  | General | *Bundle* |
+| `is_baseline` | boolean |  | `False` | General | *Is Baseline* |
+| `precedence` | integer |  | `0` | General | *Precedence* |
+| `variant_id` | reference → `location_variant` |  |  | Conditions | *Variant* |
+| `scene_range_start_id` | reference → `scene` |  |  | Conditions | *Scene Range Start* |
+| `scene_range_end_id` | reference → `scene` |  |  | Conditions | *Scene Range End* |
+| `act_id` | reference → `act` |  |  | Conditions | *Act* |
+| `time_of_day_filter` | text |  |  | Conditions | *Time of Day Filter* — Matches scene.time_of_day for bindings scoped to specific times. |
+| `conditions_json` | json |  |  | Conditions | *Additional Conditions* |
+| `notes` | textarea |  |  | Notes | *Notes* |
+
+**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
+
+| Field | Type | Required | Default | Tab | Source | Description |
+|---|---|---|---|---|---|---|
+| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+
+**Tabs:** `General`, `Conditions`, `Notes`, `Lifecycle`
+
+
 ---
 
 ### Category: Performance Corpus
@@ -2102,7 +2507,7 @@ Known-good single frame, audio segment, or motion sample marked as canonical ref
 
 #### 🎞️ `performance_corpus` — Performance Corpus
 
-Project-level index of captured footage. Singleton per project. Only populated when shooting happens, but always queryable.
+Project-level index of captured footage.
 
 | Meta | Value |
 |---|---|
@@ -2117,12 +2522,12 @@ Project-level index of captured footage. Singleton per project. Only populated w
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
 | `name` | text |  | `Performance Corpus` | General | *Name* |
-| `shoot_dates_start` | text |  |  | General | *Shoot Dates Start* — placeholder: YYYY-MM-DD |
-| `shoot_dates_end` | text |  |  | General | *Shoot Dates End* — placeholder: YYYY-MM-DD |
+| `shoot_dates_start` | text |  |  | General | *Shoot Dates Start* |
+| `shoot_dates_end` | text |  |  | General | *Shoot Dates End* |
 | `shoot_locations` | textarea |  |  | General | *Shoot Locations* |
 | `coverage_completeness` | select<br/>options: `planned`, `in_production`, `principal_complete`, `pickups_complete`, `complete` |  | `planned` | General | *Coverage Completeness* |
-| `camera_metadata` | textarea |  |  | Technical | *Camera Metadata* — placeholder: Sensors, codec, color space |
-| `audio_metadata` | textarea |  |  | Technical | *Audio Metadata* — placeholder: Sample rate, mic config, boom/lav setup |
+| `camera_metadata` | textarea |  |  | Technical | *Camera Metadata* |
+| `audio_metadata` | textarea |  |  | Technical | *Audio Metadata* |
 | `corpus_notes` | textarea |  |  | Notes | *Corpus Notes* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
@@ -2182,16 +2587,16 @@ A single recorded take. May cross scenes (via take_scene junction).
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text | yes |  | General | *Take Name / Slate* — placeholder: e.g. "23A-3" |
+| `name` | text | yes |  | General | *Take Name / Slate* |
 | `corpus_id` | reference → `performance_corpus` | yes |  | General | *Corpus* |
 | `shot_id` | reference → `shot` |  |  | General | *Shot* |
 | `take_number` | integer |  |  | General | *Take Number* |
-| `date_recorded` | text |  |  | General | *Date Recorded* — placeholder: YYYY-MM-DD |
+| `date_recorded` | text |  |  | General | *Date Recorded* |
 | `duration_seconds` | integer |  |  | General | *Duration (seconds)* |
-| `timecode_start` | text |  |  | General | *Timecode Start* — placeholder: HH:MM:SS:FF |
+| `timecode_start` | text |  |  | General | *Timecode Start* |
 | `timecode_end` | text |  |  | General | *Timecode End* |
 | `preferred` | boolean |  | `False` | General | *Director's Pick* |
-| `camera_designation` | text |  |  | Technical | *Camera* — placeholder: e.g. "A cam", "B cam", "witness" |
+| `camera_designation` | text |  |  | Technical | *Camera* |
 | `lens_info` | text |  |  | Technical | *Lens Info* |
 | `recording_format` | text |  |  | Technical | *Recording Format* |
 | `notes` | textarea |  |  | Notes | *Notes* |
@@ -2209,7 +2614,7 @@ A single recorded take. May cross scenes (via take_scene junction).
 
 #### ✂️ `clip` — Clip
 
-A meaningful within-scene segment of a take. Clips are by definition within-scene; cross-scene takes get cut into multiple clips.
+A meaningful within-scene segment of a take. Plates are clips with clip_type=atmospheric.
 
 | Meta | Value |
 |---|---|
@@ -2227,11 +2632,11 @@ A meaningful within-scene segment of a take. Clips are by definition within-scen
 | `name` | text | yes |  | General | *Clip Name* |
 | `take_id` | reference → `take` | yes |  | General | *Take* |
 | `scene_id` | reference → `scene` | yes |  | General | *Scene* |
-| `clip_in_timecode` | text |  |  | General | *Clip In* — placeholder: HH:MM:SS:FF |
+| `clip_in_timecode` | text |  |  | General | *Clip In* |
 | `clip_out_timecode` | text |  |  | General | *Clip Out* |
 | `duration_seconds` | integer |  |  | General | *Duration (seconds)* |
 | `clip_type` | select<br/>options: `dialogue`, `action`, `reaction`, `transition`, `insert`, `atmospheric` |  |  | General | *Clip Type* |
-| `screenplay_line_start_id` | integer |  |  | Screenplay | *Screenplay Line Start* — Reference into screenplay_lines table. Links clips to dialogue. |
+| `screenplay_line_start_id` | integer |  |  | Screenplay | *Screenplay Line Start* |
 | `screenplay_line_end_id` | integer |  |  | Screenplay | *Screenplay Line End* |
 | `beat_id` | reference → `story_beat` |  |  | Screenplay | *Story Beat* |
 | `notes` | textarea |  |  | Notes | *Notes* |
@@ -2274,9 +2679,9 @@ Production state of each shot. Multiple records per shot, ordered by status_date
 | `coverage_state` | select<br/>options: `planned`, `captured_live`, `generated`, `hybrid_live_plate`, `hybrid_generated_extension`, `reshoot_needed`, `pickup_scheduled`, `final` | yes |  | General | *Coverage State* |
 | `source_take_id` | reference → `take` |  |  | General | *Source Take* |
 | `source_clip_id` | reference → `clip` |  |  | General | *Source Clip* |
-| `generation_required` | textarea |  |  | General | *Generation Required* — placeholder: What needs to be generated to complete this shot |
-| `override_summary` | textarea |  |  | General | *Override Summary* — placeholder: High-level deviation summary — details in character_shot_override |
-| `status_date` | text |  |  | General | *Status Date* — placeholder: YYYY-MM-DD — For ordering history. Most recent record is canonical. |
+| `generation_required` | textarea |  |  | General | *Generation Required* |
+| `override_summary` | textarea |  |  | General | *Override Summary* — placeholder: High-level deviation summary — details in *_shot_override |
+| `status_date` | text |  |  | General | *Status Date* — For ordering history. Most recent record is canonical. |
 | `decided_by` | text |  |  | General | *Decided By* |
 | `notes` | textarea |  |  | General | *Notes* |
 
@@ -2310,13 +2715,13 @@ Per-character deviation from the cascade for a specific shot. Versionable: only 
 | `shot_id` | reference → `shot` | yes |  | General | *Shot* |
 | `character_id` | reference → `character` | yes |  | General | *Character* |
 | `override_types` | multiselect<br/>options: `aging`, `de_aging`, `prosthetic`, `body_change`, `voice_change`, `motion_change`, `identity_swap`, `transformation`, `other` |  |  | General | *Override Types* |
-| `bundle_override_id` | reference → `bundle` |  |  | General | *Bundle Override* — Use this bundle instead of the default cascade resolution. |
+| `bundle_override_id` | reference → `bundle` |  |  | General | *Bundle Override* |
 | `variant_target_id` | reference → `character_variant` |  |  | General | *Variant Target* |
 | `visual_delta` | textarea |  |  | Deltas | *Visual Delta* |
 | `vocal_delta` | textarea |  |  | Deltas | *Vocal Delta* |
 | `motion_delta` | textarea |  |  | Deltas | *Motion Delta* |
-| `progression_axis` | text |  |  | Progression | *Progression Axis* — placeholder: e.g. "transformation", "aging", "decay", "corruption" — Project-defined progression dimension. Free text — axes are project-specific. |
-| `progression_value` | float |  |  | Progression | *Progression Value (0-1)* — Where on the named axis this shot sits. Author-defined endpoints. |
+| `progression_axis` | text |  |  | Progression | *Progression Axis* — placeholder: e.g. "transformation", "aging", "decay" |
+| `progression_value` | float |  |  | Progression | *Progression Value (0-1)* |
 | `notes` | textarea |  |  | Notes | *Notes* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
@@ -2327,6 +2732,92 @@ Per-character deviation from the cascade for a specific shot. Versionable: only 
 | `version_label` | text |  |  | Lifecycle | `versionable` | *Version Label* — placeholder: e.g. "v1.2", "approved-final" — Human-readable version identifier. Tool-managed. |
 | `superseded_at` | timestamp |  |  | Lifecycle | `versionable` | *Superseded At* — Set when a successor version becomes active. |
 | `superseded_by_id` | reference → `character_shot_override` |  |  | Lifecycle | `versionable` | *Superseded By* — Forward pointer to successor. Auto-set on supersession. |
+| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+
+**Tabs:** `General`, `Deltas`, `Progression`, `Notes`, `Lifecycle`
+
+
+#### 🎛️ `prop_shot_override` — Prop Shot Override
+
+Per-prop deviation from the cascade for a specific shot. Versionable: only one active record per (shot, prop). Earns its keep for mid-shot state transitions (gun firing, locket falling open) and shot-specific VFX enhancement.
+
+| Meta | Value |
+|---|---|
+| Plural label | Prop Shot Overrides |
+| Category | Workflow State |
+| Tier | 2 |
+| Sort order | 272 |
+| Versionable | yes |
+| Has lifecycle status | yes |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `name` | text |  |  | General | *Override Name* |
+| `shot_id` | reference → `shot` | yes |  | General | *Shot* |
+| `prop_id` | reference → `prop` | yes |  | General | *Prop* |
+| `override_types` | multiselect<br/>options: `state_change`, `damage`, `transformation`, `vfx_enhancement`, `other` |  |  | General | *Override Types* |
+| `bundle_override_id` | reference → `bundle` |  |  | General | *Bundle Override* |
+| `variant_target_id` | reference → `prop_variant` |  |  | General | *Variant Target* |
+| `visual_delta` | textarea |  |  | Deltas | *Visual Delta* |
+| `surface_delta` | textarea |  |  | Deltas | *Surface Delta* — Material / finish deviation for this shot. |
+| `motion_delta` | textarea |  |  | Deltas | *Motion Delta* — How the prop moves / breaks / behaves in this shot. |
+| `progression_axis` | text |  |  | Progression | *Progression Axis* — placeholder: e.g. "damage", "wear", "transformation" |
+| `progression_value` | float |  |  | Progression | *Progression Value (0-1)* |
+| `notes` | textarea |  |  | Notes | *Notes* |
+
+**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
+
+| Field | Type | Required | Default | Tab | Source | Description |
+|---|---|---|---|---|---|---|
+| `parent_id` | reference → `prop_shot_override` |  |  | Lifecycle | `versionable` | *Parent Version* — Previous version in the chain. Null for root version. |
+| `version_label` | text |  |  | Lifecycle | `versionable` | *Version Label* — placeholder: e.g. "v1.2", "approved-final" — Human-readable version identifier. Tool-managed. |
+| `superseded_at` | timestamp |  |  | Lifecycle | `versionable` | *Superseded At* — Set when a successor version becomes active. |
+| `superseded_by_id` | reference → `prop_shot_override` |  |  | Lifecycle | `versionable` | *Superseded By* — Forward pointer to successor. Auto-set on supersession. |
+| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+
+**Tabs:** `General`, `Deltas`, `Progression`, `Notes`, `Lifecycle`
+
+
+#### 🎛️ `location_shot_override` — Location Shot Override
+
+Per-location deviation from the cascade for a specific shot. Versionable: only one active record per (shot, location). Most location deviations belong at scene level (location_variant); this entity is for genuinely shot-specific cases (VFX additions, shot reveals beyond standard coverage).
+
+| Meta | Value |
+|---|---|
+| Plural label | Location Shot Overrides |
+| Category | Workflow State |
+| Tier | 2 |
+| Sort order | 273 |
+| Versionable | yes |
+| Has lifecycle status | yes |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `name` | text |  |  | General | *Override Name* |
+| `shot_id` | reference → `shot` | yes |  | General | *Shot* |
+| `location_id` | reference → `location` | yes |  | General | *Location* |
+| `override_types` | multiselect<br/>options: `extension_change`, `lighting_change`, `weather_change`, `vfx_addition`, `other` |  |  | General | *Override Types* |
+| `bundle_override_id` | reference → `bundle` |  |  | General | *Bundle Override* |
+| `variant_target_id` | reference → `location_variant` |  |  | General | *Variant Target* |
+| `visual_delta` | textarea |  |  | Deltas | *Visual Delta* |
+| `acoustic_delta` | textarea |  |  | Deltas | *Acoustic Delta* — Ambience / acoustic deviation for this shot. |
+| `lighting_delta` | textarea |  |  | Deltas | *Lighting Delta* — Lighting deviation specific to this shot. |
+| `progression_axis` | text |  |  | Progression | *Progression Axis* — placeholder: e.g. "decay", "construction", "weather_progression" |
+| `progression_value` | float |  |  | Progression | *Progression Value (0-1)* |
+| `notes` | textarea |  |  | Notes | *Notes* |
+
+**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
+
+| Field | Type | Required | Default | Tab | Source | Description |
+|---|---|---|---|---|---|---|
+| `parent_id` | reference → `location_shot_override` |  |  | Lifecycle | `versionable` | *Parent Version* — Previous version in the chain. Null for root version. |
+| `version_label` | text |  |  | Lifecycle | `versionable` | *Version Label* — placeholder: e.g. "v1.2", "approved-final" — Human-readable version identifier. Tool-managed. |
+| `superseded_at` | timestamp |  |  | Lifecycle | `versionable` | *Superseded At* — Set when a successor version becomes active. |
+| `superseded_by_id` | reference → `location_shot_override` |  |  | Lifecycle | `versionable` | *Superseded By* — Forward pointer to successor. Auto-set on supersession. |
 | `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
 
 **Tabs:** `General`, `Deltas`, `Progression`, `Notes`, `Lifecycle`
@@ -2386,7 +2877,7 @@ Detailed visual design — architecture, materials, spatial layout.
 
 #### 🔀 `location_variant` — Location Variant
 
-Modified state of a location (e.g. Night version, After fire).
+Modified state of a location (e.g. Night version, After fire). Includes structured state axes (time-of-day, weather, season, post-event state) that previously lived on the location base entity. Exactly one variant per location should be marked is_baseline = true.
 
 | Meta | Value |
 |---|---|
@@ -2403,6 +2894,11 @@ Modified state of a location (e.g. Night version, After fire).
 |---|---|---|---|---|---|
 | `name` | text | yes |  | General | *Variant Name* |
 | `location_id` | reference → `location` | yes |  | General | *Location* |
+| `is_baseline` | boolean |  | `False` | General | *Is Baseline* — True for the unconditional default variant for this location. |
+| `time_of_day` | select<br/>options: `dawn`, `morning`, `midday`, `afternoon`, `dusk`, `night`, `varies` |  |  | State | *Time of Day* |
+| `weather` | text |  |  | State | *Weather* |
+| `season` | select<br/>options: `spring`, `summer`, `autumn`, `winter`, `unspecified` |  |  | State | *Season* |
+| `post_event_state` | text |  |  | State | *Post-Event State* — placeholder: e.g. "after the fire", "during the festival", "abandoned" |
 | `physical_differences` | textarea |  |  | General | *Physical Differences* |
 | `lighting_differences` | textarea |  |  | General | *Lighting Differences* |
 | `emotional_shift` | textarea |  |  | General | *Emotional Shift* |
@@ -2414,7 +2910,7 @@ Modified state of a location (e.g. Night version, After fire).
 |---|---|---|---|---|---|---|
 | `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
 
-**Tabs:** `General`, `Lifecycle`
+**Tabs:** `General`, `State`, `Lifecycle`
 
 
 #### 🎨 `location_color_scheme` — Location Color Scheme
@@ -2920,7 +3416,7 @@ Underlying meaning beneath surface action or dialogue.
 
 #### 🔗 `thematic_connection` — Thematic Connection
 
-How a specific element connects to a theme.
+How a specific element connects to a theme. Open polymorphism — entity_type is open-ended.
 
 | Meta | Value |
 |---|---|
@@ -3035,7 +3531,7 @@ Signature color language for a character. A directorial choice about how the cha
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text |  |  | General | *Name* — placeholder: e.g. Eleanor's Color Identity |
+| `name` | text |  |  | General | *Name* |
 | `character_id` | reference → `character` | yes |  | General | *Character* |
 | `primary_color_hex` | text |  |  | General | *Primary Color (hex)* — placeholder: #2C3E50 |
 | `primary_color_name` | text |  |  | General | *Primary Color Name* |
@@ -3143,8 +3639,8 @@ What the audience knows vs what characters know.
 | `knowledge_asymmetry` | select<br/>options: `dramatic irony`, `mystery`, `parallel knowledge`, `shifting` |  |  | General | *Knowledge Asymmetry* |
 | `information_withheld` | textarea |  |  | General | *Information Withheld* |
 | `reveal_timing` | textarea |  |  | General | *Reveal Timing* |
-| `suspense_approach` | textarea |  |  | General | *Suspense Approach* |
-| `surprise_setup` | textarea |  |  | General | *Surprise / Plant-and-Payoff* |
+| `audience_position` | select<br/>options: `ahead of characters`, `behind characters`, `with characters` |  |  | General | *Audience Position* |
+| `information_layers` | textarea |  |  | General | *Information Layers* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3155,9 +3651,9 @@ What the audience knows vs what characters know.
 **Tabs:** `General`, `Lifecycle`
 
 
-#### 🪞 `identification_strategy` — Identification Strategy
+#### 🎯 `identification_strategy` — Identification Strategy
 
-How the audience relates to and identifies with characters.
+How the audience aligns with characters in a scene.
 
 | Meta | Value |
 |---|---|
@@ -3171,13 +3667,13 @@ How the audience relates to and identifies with characters.
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text |  | `Audience Identification Strategy` | General | *Name* |
-| `primary_identification_character_id` | reference → `character` |  |  | General | *Primary Identification Character* |
-| `how_identification_created` | textarea |  |  | General | *How Identification is Created* |
-| `identification_shifts` | textarea |  |  | General | *Identification Shifts* |
-| `empathy_targets` | json |  |  | General | *Empathy Targets* |
-| `distance_targets` | json |  |  | General | *Distance Targets* |
-| `moral_alignment_approach` | textarea |  |  | General | *Moral Alignment Approach* |
+| `name` | text |  |  | General | *Name* |
+| `scene_id` | reference → `scene` | yes |  | General | *Scene* |
+| `primary_identification` | reference → `character` |  |  | General | *Primary Identification With* |
+| `secondary_identification` | reference → `character` |  |  | General | *Secondary Identification With* |
+| `audience_position` | select<br/>options: `with character`, `observing character`, `above character` |  |  | General | *Audience Position* |
+| `identification_technique` | textarea |  |  | General | *Identification Technique* |
+| `emotional_alignment` | textarea |  |  | General | *Emotional Alignment* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3194,9 +3690,9 @@ How the audience relates to and identifies with characters.
 
 <a id='category-production'></a>
 
-#### 📷 `shot` — Shot
+#### 🎥 `shot` — Shot
 
-Specific camera setup within a scene.
+A single camera setup within a scene.
 
 | Meta | Value |
 |---|---|
@@ -3204,7 +3700,6 @@ Specific camera setup within a scene.
 | Category | Production |
 | Tier | 6 |
 | Sort order | 600 |
-| Parent entity | `scene` via `scene_id` |
 | Has lifecycle status | yes |
 | Has external ID | yes |
 
@@ -3212,11 +3707,17 @@ Specific camera setup within a scene.
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text | yes |  | General | *Shot Number/Name* |
+| `name` | text | yes |  | General | *Shot Name / Number* — placeholder: e.g. 23A |
 | `scene_id` | reference → `scene` | yes |  | General | *Scene* |
-| `duration` | integer |  |  | General | *Duration (seconds)* |
-| `coverage_type` | select<br/>options: `primary`, `alt angle`, `cutaway`, `insert`, `establishing` |  |  | General | *Coverage Type* |
-| `technical_requirements` | textarea |  |  | General | *Technical Requirements* |
+| `shot_number` | text |  |  | General | *Shot Number* |
+| `shot_order` | integer |  |  | General | *Order in Scene* |
+| `shot_size` | select<br/>options: `extreme wide`, `wide`, `medium wide`, `medium`, `medium close-up`, `close-up`, `extreme close-up` |  |  | General | *Shot Size* |
+| `camera_angle` | select<br/>options: `eye level`, `high angle`, `low angle`, `overhead`, `dutch`, `POV` |  |  | General | *Camera Angle* |
+| `camera_movement` | select<br/>options: `static`, `pan`, `tilt`, `dolly`, `tracking`, `crane`, `handheld`, `steadicam`, `drone`, `zoom` |  |  | General | *Camera Movement* |
+| `lens_choice` | text |  |  | General | *Lens* |
+| `duration_seconds` | float |  |  | General | *Estimated Duration (seconds)* |
+| `description` | textarea |  |  | General | *Shot Description* |
+| `notes` | textarea |  |  | Notes | *Notes* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3226,12 +3727,12 @@ Specific camera setup within a scene.
 | `external_id` | text |  |  | External | `external` | *External ID* — placeholder: identifier in external system — Optional. Identifier in an external system (OMC, EIDR, production DB, etc.). See conventions.md. |
 | `external_id_namespace` | text |  |  | External | `external` | *External ID Namespace* — placeholder: e.g. "omc", "eidr", "shotgrid:project_42" — Which external system the identifier belongs to. |
 
-**Tabs:** `General`, `Lifecycle`, `External`
+**Tabs:** `General`, `Notes`, `Lifecycle`, `External`
 
 
-#### 🎯 `shot_design` — Shot Design
+#### 📐 `shot_design` — Shot Design
 
-Framing, lens, focus, and movement specifications for a shot.
+Detailed visual composition for a shot.
 
 | Meta | Value |
 |---|---|
@@ -3239,7 +3740,6 @@ Framing, lens, focus, and movement specifications for a shot.
 | Category | Production |
 | Tier | 6 |
 | Sort order | 601 |
-| Parent entity | `shot` via `shot_id` |
 | Has lifecycle status | yes |
 
 **Declared fields:**
@@ -3248,22 +3748,14 @@ Framing, lens, focus, and movement specifications for a shot.
 |---|---|---|---|---|---|
 | `name` | text |  |  | General | *Name* |
 | `shot_id` | reference → `shot` | yes |  | General | *Shot* |
-| `framing_type` | select<br/>options: `EWS`, `WS`, `MWS`, `MS`, `MCU`, `CU`, `ECU`, `insert`, `OTS`, `POV` |  |  | General | *Framing Type* |
-| `angle` | select<br/>options: `eye level`, `high`, `low`, `dutch`, `overhead`, `worm's eye` |  |  | General | *Angle* |
-| `composition` | text |  |  | General | *Composition* |
-| `subject_placement` | text |  |  | General | *Subject Placement* |
-| `depth_composition` | textarea |  |  | General | *Depth Composition* |
-| `focal_length` | integer |  |  | Lens | *Focal Length (mm)* |
-| `aperture` | text |  |  | Lens | *Aperture* |
-| `lens_choice_reason` | textarea |  |  | Lens | *Lens Choice Reason* |
-| `focus_mode` | select<br/>options: `deep focus`, `shallow focus`, `rack focus`, `split diopter` |  |  | Focus | *Focus Mode* |
-| `primary_focus_subject` | text |  |  | Focus | *Primary Focus Subject* |
-| `rack_focus_choreography` | textarea |  |  | Focus | *Rack Focus Choreography* |
-| `movement_type` | select<br/>options: `static`, `pan`, `tilt`, `dolly`, `crane`, `handheld`, `steadicam`, `tracking`, `zoom`, `combined` |  |  | Movement | *Movement Type* |
-| `movement_speed` | text |  |  | Movement | *Movement Speed* |
-| `movement_motivation` | textarea |  |  | Movement | *Movement Motivation* |
-| `start_position` | text |  |  | Movement | *Start Position* |
-| `end_position` | text |  |  | Movement | *End Position* |
+| `composition_type` | select<br/>options: `rule of thirds`, `centered`, `symmetrical`, `asymmetric`, `dynamic` |  |  | General | *Composition Type* |
+| `frame_division` | textarea |  |  | General | *Frame Division* |
+| `subject_placement` | textarea |  |  | General | *Subject Placement* |
+| `negative_space` | textarea |  |  | General | *Negative Space Usage* |
+| `depth_of_field` | select<br/>options: `shallow`, `medium`, `deep` |  |  | General | *Depth of Field* |
+| `focus_strategy` | textarea |  |  | General | *Focus Strategy* |
+| `color_emphasis` | textarea |  |  | General | *Color Emphasis* |
+| `textural_emphasis` | textarea |  |  | General | *Textural Emphasis* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3271,12 +3763,12 @@ Framing, lens, focus, and movement specifications for a shot.
 |---|---|---|---|---|---|---|
 | `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
 
-**Tabs:** `General`, `Lens`, `Focus`, `Movement`, `Lifecycle`
+**Tabs:** `General`, `Lifecycle`
 
 
-#### 💬 `shot_language` — Shot Language
+#### 🗣️ `shot_language` — Shot Language
 
-Meaning and intent conveyed through shot choices.
+How shots communicate meaning — visual vocabulary for a scene.
 
 | Meta | Value |
 |---|---|
@@ -3284,7 +3776,6 @@ Meaning and intent conveyed through shot choices.
 | Category | Production |
 | Tier | 6 |
 | Sort order | 602 |
-| Parent entity | `shot` via `shot_id` |
 | Has lifecycle status | yes |
 
 **Declared fields:**
@@ -3292,10 +3783,12 @@ Meaning and intent conveyed through shot choices.
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
 | `name` | text |  |  | General | *Name* |
-| `shot_id` | reference → `shot` | yes |  | General | *Shot* |
-| `shot_intention` | select<br/>options: `establishing`, `reaction`, `POV`, `insert`, `emotional emphasis`, `information delivery` |  |  | General | *Shot Intention* |
-| `shot_psychology` | select<br/>options: `intimate`, `distant`, `powerful`, `vulnerable`, `stable`, `unstable` |  |  | General | *Shot Psychology* |
-| `audience_relationship` | select<br/>options: `observer`, `participant`, `character identification`, `omniscient` |  |  | General | *Audience Relationship* |
+| `scene_id` | reference → `scene` | yes |  | General | *Scene* |
+| `visual_strategy` | textarea |  |  | General | *Visual Strategy* |
+| `shot_relationships` | textarea |  |  | General | *Shot Relationships* |
+| `cutting_pattern` | textarea |  |  | General | *Cutting Pattern* |
+| `rhythm` | select<br/>options: `fast`, `slow`, `varying`, `deliberate` |  |  | General | *Editorial Rhythm* |
+| `transitions` | textarea |  |  | General | *Transition Approach* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3308,15 +3801,14 @@ Meaning and intent conveyed through shot choices.
 
 #### 🗺️ `scene_blocking` — Scene Blocking
 
-Physical arrangement and movement of characters through a scene.
+Physical staging of characters and movement within the scene.
 
 | Meta | Value |
 |---|---|
 | Plural label | Scene Blockings |
 | Category | Production |
 | Tier | 6 |
-| Sort order | 610 |
-| Parent entity | `scene` via `scene_id` |
+| Sort order | 603 |
 | Has lifecycle status | yes |
 
 **Declared fields:**
@@ -3325,10 +3817,10 @@ Physical arrangement and movement of characters through a scene.
 |---|---|---|---|---|---|
 | `name` | text |  |  | General | *Name* |
 | `scene_id` | reference → `scene` | yes |  | General | *Scene* |
-| `opening_positions` | json |  |  | General | *Opening Positions* |
-| `closing_positions` | json |  |  | General | *Closing Positions* |
-| `spatial_storytelling` | textarea |  |  | General | *Spatial Storytelling* |
-| `blocking_notes` | textarea |  |  | General | *Blocking Notes* |
+| `staging_concept` | textarea |  |  | General | *Staging Concept* |
+| `character_geography` | textarea |  |  | General | *Character Geography* |
+| `blocking_evolution` | textarea |  |  | General | *Blocking Evolution Through Scene* |
+| `camera_relationship` | textarea |  |  | General | *Camera Relationship to Action* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3339,13 +3831,254 @@ Physical arrangement and movement of characters through a scene.
 **Tabs:** `General`, `Lifecycle`
 
 
-#### 👣 `blocking_beat` — Blocking Beat
+#### 📍 `blocking_beat` — Blocking Beat
 
-Specific movement or position change within a scene.
+Discrete blocking moment within a scene.
 
 | Meta | Value |
 |---|---|
 | Plural label | Blocking Beats |
+| Category | Production |
+| Tier | 6 |
+| Sort order | 604 |
+| Has lifecycle status | yes |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `name` | text |  |  | General | *Name* |
+| `scene_blocking_id` | reference → `scene_blocking` | yes |  | General | *Scene Blocking* |
+| `beat_order` | integer | yes |  | General | *Beat Order* |
+| `description` | textarea |  |  | General | *Description* |
+| `character_positions` | json |  |  | General | *Character Positions* |
+| `movement_description` | textarea |  |  | General | *Movement Description* |
+| `camera_position` | text |  |  | General | *Camera Position* |
+
+**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
+
+| Field | Type | Required | Default | Tab | Source | Description |
+|---|---|---|---|---|---|---|
+| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+
+**Tabs:** `General`, `Lifecycle`
+
+
+#### 💥 `action_sequence` — Action Sequence
+
+Choreographed action sequence — fight, chase, stunt.
+
+| Meta | Value |
+|---|---|
+| Plural label | Action Sequences |
+| Category | Production |
+| Tier | 6 |
+| Sort order | 605 |
+| Has lifecycle status | yes |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `name` | text | yes |  | General | *Name* |
+| `scene_id` | reference → `scene` | yes |  | General | *Scene* |
+| `sequence_type` | select<br/>options: `fight`, `chase`, `stunt`, `combat`, `athletic`, `physical comedy` |  |  | General | *Sequence Type* |
+| `description` | textarea |  |  | General | *Description* |
+| `style` | text |  |  | General | *Style* |
+| `difficulty_level` | select<br/>options: `simple`, `moderate`, `complex`, `extreme` |  |  | General | *Difficulty Level* |
+| `safety_concerns` | textarea |  |  | General | *Safety Concerns* |
+| `stunt_requirements` | textarea |  |  | General | *Stunt Requirements* |
+
+**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
+
+| Field | Type | Required | Default | Tab | Source | Description |
+|---|---|---|---|---|---|---|
+| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+
+**Tabs:** `General`, `Lifecycle`
+
+
+#### ⚡ `action_beat` — Action Beat
+
+Discrete moment within an action sequence.
+
+| Meta | Value |
+|---|---|
+| Plural label | Action Beats |
+| Category | Production |
+| Tier | 6 |
+| Sort order | 606 |
+| Has lifecycle status | yes |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `name` | text |  |  | General | *Name* |
+| `action_sequence_id` | reference → `action_sequence` | yes |  | General | *Action Sequence* |
+| `beat_order` | integer | yes |  | General | *Beat Order* |
+| `description` | textarea |  |  | General | *Description* |
+| `characters_involved` | json |  |  | General | *Characters Involved* |
+| `physical_action` | textarea |  |  | General | *Physical Action* |
+| `camera_treatment` | text |  |  | General | *Camera Treatment* |
+
+**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
+
+| Field | Type | Required | Default | Tab | Source | Description |
+|---|---|---|---|---|---|---|
+| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+
+**Tabs:** `General`, `Lifecycle`
+
+
+#### 📏 `proxemic_design` — Proxemic Design
+
+Use of physical distance between characters as meaning.
+
+| Meta | Value |
+|---|---|
+| Plural label | Proxemic Designs |
+| Category | Production |
+| Tier | 6 |
+| Sort order | 607 |
+| Has lifecycle status | yes |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `name` | text |  |  | General | *Name* |
+| `scene_id` | reference → `scene` | yes |  | General | *Scene* |
+| `opening_distances` | textarea |  |  | General | *Opening Distances* |
+| `distance_evolution` | textarea |  |  | General | *Distance Evolution* |
+| `intimate_distance_use` | textarea |  |  | General | *Intimate Distance Use* |
+| `personal_distance_use` | textarea |  |  | General | *Personal Distance Use* |
+| `social_distance_use` | textarea |  |  | General | *Social Distance Use* |
+| `public_distance_use` | textarea |  |  | General | *Public Distance Use* |
+| `distance_violations` | textarea |  |  | General | *Distance Violations* |
+
+**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
+
+| Field | Type | Required | Default | Tab | Source | Description |
+|---|---|---|---|---|---|---|
+| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+
+**Tabs:** `General`, `Lifecycle`
+
+
+#### 🌡️ `physical_state` — Physical State
+
+Modulation of a character's baseline physicality in a specific moment.
+
+| Meta | Value |
+|---|---|
+| Plural label | Physical States |
+| Category | Production |
+| Tier | 6 |
+| Sort order | 608 |
+| Has lifecycle status | yes |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `name` | text |  |  | General | *Name* |
+| `character_id` | reference → `character` | yes |  | General | *Character* |
+| `scene_id` | reference → `scene` |  |  | General | *Scene* |
+| `shot_id` | reference → `shot` |  |  | General | *Shot* |
+| `state_description` | textarea |  |  | General | *State Description* |
+| `tension_modulation` | text |  |  | General | *Tension Modulation* |
+| `energy_modulation` | text |  |  | General | *Energy Modulation* |
+| `posture_modulation` | text |  |  | General | *Posture Modulation* |
+| `movement_modulation` | text |  |  | General | *Movement Modulation* |
+| `trigger` | textarea |  |  | General | *Trigger* |
+
+**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
+
+| Field | Type | Required | Default | Tab | Source | Description |
+|---|---|---|---|---|---|---|
+| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+
+**Tabs:** `General`, `Lifecycle`
+
+
+#### 🎤 `vocal_state` — Vocal State
+
+Modulation of a character's baseline vocal profile in a specific moment.
+
+| Meta | Value |
+|---|---|
+| Plural label | Vocal States |
+| Category | Production |
+| Tier | 6 |
+| Sort order | 609 |
+| Has lifecycle status | yes |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `name` | text |  |  | General | *Name* |
+| `character_id` | reference → `character` | yes |  | General | *Character* |
+| `scene_id` | reference → `scene` |  |  | General | *Scene* |
+| `shot_id` | reference → `shot` |  |  | General | *Shot* |
+| `state_description` | textarea |  |  | General | *State Description* |
+| `pitch_modulation` | text |  |  | General | *Pitch Modulation* |
+| `volume_modulation` | text |  |  | General | *Volume Modulation* |
+| `pace_modulation` | text |  |  | General | *Pace Modulation* |
+| `articulation_modulation` | text |  |  | General | *Articulation Modulation* |
+| `emotional_coloring` | textarea |  |  | General | *Emotional Coloring* |
+
+**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
+
+| Field | Type | Required | Default | Tab | Source | Description |
+|---|---|---|---|---|---|---|
+| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+
+**Tabs:** `General`, `Lifecycle`
+
+
+#### 🏃 `physical_performance_beat` — Physical Performance Beat
+
+A specific physical performance moment within a scene.
+
+| Meta | Value |
+|---|---|
+| Plural label | Physical Performance Beats |
+| Category | Production |
+| Tier | 6 |
+| Sort order | 610 |
+| Has lifecycle status | yes |
+
+**Declared fields:**
+
+| Field | Type | Required | Default | Tab | Description |
+|---|---|---|---|---|---|
+| `name` | text |  |  | General | *Name* |
+| `scene_id` | reference → `scene` | yes |  | General | *Scene* |
+| `character_id` | reference → `character` | yes |  | General | *Character* |
+| `beat_order` | integer |  |  | General | *Beat Order* |
+| `description` | textarea |  |  | General | *Description* |
+| `physical_action` | textarea |  |  | General | *Physical Action* |
+| `body_part_focus` | text |  |  | General | *Body Part Focus* |
+| `emotional_subtext` | textarea |  |  | General | *Emotional Subtext* |
+
+**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
+
+| Field | Type | Required | Default | Tab | Source | Description |
+|---|---|---|---|---|---|---|
+| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
+
+**Tabs:** `General`, `Lifecycle`
+
+
+#### 💬 `vocal_beat` — Vocal Beat
+
+A specific vocal performance moment within a scene.
+
+| Meta | Value |
+|---|---|
+| Plural label | Vocal Beats |
 | Category | Production |
 | Tier | 6 |
 | Sort order | 611 |
@@ -3356,15 +4089,13 @@ Specific movement or position change within a scene.
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
 | `name` | text |  |  | General | *Name* |
-| `scene_blocking_id` | reference → `scene_blocking` | yes |  | General | *Scene Blocking* |
+| `scene_id` | reference → `scene` | yes |  | General | *Scene* |
 | `character_id` | reference → `character` | yes |  | General | *Character* |
-| `beat_order` | integer | yes |  | General | *Beat Order* |
-| `movement_description` | textarea | yes |  | General | *Movement Description* |
-| `character_motivation` | textarea |  |  | General | *Character Motivation* |
-| `story_motivation` | textarea |  |  | General | *Story Motivation* |
-| `timing` | text |  |  | General | *Timing* |
-| `quality` | text |  |  | General | *Quality* |
-| `meaning` | textarea |  |  | General | *Meaning* |
+| `beat_order` | integer |  |  | General | *Beat Order* |
+| `description` | textarea |  |  | General | *Description* |
+| `line_or_sound` | textarea |  |  | General | *Line or Sound* |
+| `delivery_quality` | text |  |  | General | *Delivery Quality* |
+| `emotional_subtext` | textarea |  |  | General | *Emotional Subtext* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3375,13 +4106,13 @@ Specific movement or position change within a scene.
 **Tabs:** `General`, `Lifecycle`
 
 
-#### ⚔️ `action_sequence` — Action Sequence
+#### 🗨️ `line_delivery` — Line Delivery
 
-Extended physical action — fight, chase, dance, stunt.
+Specific direction for how a line should be delivered.
 
 | Meta | Value |
 |---|---|
-| Plural label | Action Sequences |
+| Plural label | Line Deliveries |
 | Category | Production |
 | Tier | 6 |
 | Sort order | 612 |
@@ -3391,14 +4122,16 @@ Extended physical action — fight, chase, dance, stunt.
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text | yes |  | General | *Name* |
+| `name` | text |  |  | General | *Name* |
 | `scene_id` | reference → `scene` | yes |  | General | *Scene* |
-| `action_type` | select<br/>options: `fight/combat`, `chase`, `physical labor`, `athletic performance`, `dance`, `stunt sequence` |  |  | General | *Action Type* |
-| `narrative_function` | textarea |  |  | General | *Narrative Function* |
-| `character_revelation` | textarea |  |  | General | *Character Revelation* |
-| `emotional_journey` | textarea |  |  | General | *Emotional Journey* |
-| `action_arc` | textarea |  |  | General | *Action Arc* |
-| `physical_vocabulary` | textarea |  |  | General | *Physical Vocabulary / Style* |
+| `character_id` | reference → `character` | yes |  | General | *Character* |
+| `line_text` | textarea | yes |  | General | *Line Text* |
+| `emotional_target` | text |  |  | General | *Emotional Target* |
+| `subtext` | textarea |  |  | General | *Subtext* |
+| `emphasis_words` | json |  |  | General | *Emphasis Words* |
+| `pace` | select<br/>options: `fast`, `slow`, `measured`, `varying` |  |  | General | *Pace* |
+| `volume` | select<br/>options: `whisper`, `soft`, `normal`, `loud`, `shout` |  |  | General | *Volume* |
+| `delivery_notes` | textarea |  |  | General | *Delivery Notes* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3409,13 +4142,13 @@ Extended physical action — fight, chase, dance, stunt.
 **Tabs:** `General`, `Lifecycle`
 
 
-#### 💥 `action_beat` — Action Beat
+#### 🎼 `dialogue_rhythm` — Dialogue Rhythm
 
-Specific moment within an action sequence.
+Conversational pacing and interaction patterns in a scene.
 
 | Meta | Value |
 |---|---|
-| Plural label | Action Beats |
+| Plural label | Dialogue Rhythms |
 | Category | Production |
 | Tier | 6 |
 | Sort order | 613 |
@@ -3426,14 +4159,11 @@ Specific moment within an action sequence.
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
 | `name` | text |  |  | General | *Name* |
-| `action_sequence_id` | reference → `action_sequence` |  |  | General | *Action Sequence* |
 | `scene_id` | reference → `scene` | yes |  | General | *Scene* |
-| `character_id` | reference → `character` |  |  | General | *Character* |
-| `description` | textarea | yes |  | General | *Description* |
-| `beat_function` | select<br/>options: `story`, `character`, `spectacle`, `emotional` |  |  | General | *Beat Function* |
-| `timing` | text |  |  | General | *Timing* |
-| `intensity` | integer |  |  | General | *Intensity (1-10)* |
-| `safety_requirements` | textarea |  |  | General | *Safety Requirements* |
+| `overall_rhythm` | select<br/>options: `staccato`, `legato`, `varying` |  |  | General | *Overall Rhythm* |
+| `pause_pattern` | textarea |  |  | General | *Pause Pattern* |
+| `overlap_pattern` | textarea |  |  | General | *Overlap Pattern* |
+| `silence_pattern` | textarea |  |  | General | *Silence Pattern* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3444,258 +4174,16 @@ Specific moment within an action sequence.
 **Tabs:** `General`, `Lifecycle`
 
 
-#### ↔️ `proxemic_design` — Proxemic Design
+#### 💢 `emotional_physicality` — Emotional Physicality
 
-Intentional use of interpersonal distance in a scene.
-
-| Meta | Value |
-|---|---|
-| Plural label | Proxemic Designs |
-| Category | Production |
-| Tier | 6 |
-| Sort order | 614 |
-| Parent entity | `scene` via `scene_id` |
-| Has lifecycle status | yes |
-
-**Declared fields:**
-
-| Field | Type | Required | Default | Tab | Description |
-|---|---|---|---|---|---|
-| `name` | text |  |  | General | *Name* |
-| `scene_id` | reference → `scene` | yes |  | General | *Scene* |
-| `starting_distance_zone` | select<br/>options: `intimate (0-18in)`, `personal (18in-4ft)`, `social (4-12ft)`, `public (12ft+)` |  |  | General | *Starting Distance Zone* |
-| `ending_distance_zone` | select<br/>options: `intimate (0-18in)`, `personal (18in-4ft)`, `social (4-12ft)`, `public (12ft+)` |  |  | General | *Ending Distance Zone* |
-| `distance_story` | textarea |  |  | General | *Distance Story* |
-| `violations` | textarea |  |  | General | *Violations* |
-| `violation_purpose` | textarea |  |  | General | *Violation Purpose* |
-
-**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
-
-| Field | Type | Required | Default | Tab | Source | Description |
-|---|---|---|---|---|---|---|
-| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
-
-**Tabs:** `General`, `Lifecycle`
-
-
-#### 🤕 `physical_state` — Physical State
-
-Character's physical condition at a specific story point.
-
-| Meta | Value |
-|---|---|
-| Plural label | Physical States |
-| Category | Production |
-| Tier | 6 |
-| Sort order | 620 |
-| Has lifecycle status | yes |
-
-**Declared fields:**
-
-| Field | Type | Required | Default | Tab | Description |
-|---|---|---|---|---|---|
-| `name` | text |  |  | General | *Name* |
-| `character_id` | reference → `character` | yes |  | General | *Character* |
-| `scene_id` | reference → `scene` | yes |  | General | *Scene* |
-| `energy_level` | select<br/>options: `alert/energized`, `tired/depleted`, `wired/anxious`, `relaxed/calm` |  |  | General | *Energy Level* |
-| `physical_comfort` | textarea |  |  | General | *Physical Comfort* |
-| `intoxication_level` | select<br/>options: `sober`, `slightly intoxicated`, `heavily intoxicated`, `medicated`, `exhausted to impairment` |  |  | General | *Intoxication / Alteration* |
-| `physical_needs` | textarea |  |  | General | *Physical Needs* |
-| `current_injuries` | textarea |  |  | General | *Current Injuries* |
-| `illness_symptoms` | textarea |  |  | General | *Illness Symptoms* |
-
-**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
-
-| Field | Type | Required | Default | Tab | Source | Description |
-|---|---|---|---|---|---|---|
-| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
-
-**Tabs:** `General`, `Lifecycle`
-
-
-#### 🗣️ `vocal_state` — Vocal State
-
-Character's vocal condition at a specific story point.
-
-| Meta | Value |
-|---|---|
-| Plural label | Vocal States |
-| Category | Production |
-| Tier | 6 |
-| Sort order | 621 |
-| Has lifecycle status | yes |
-
-**Declared fields:**
-
-| Field | Type | Required | Default | Tab | Description |
-|---|---|---|---|---|---|
-| `name` | text |  |  | General | *Name* |
-| `character_id` | reference → `character` | yes |  | General | *Character* |
-| `scene_id` | reference → `scene` | yes |  | General | *Scene* |
-| `physical_vocal_state` | select<br/>options: `healthy`, `hoarse`, `strained`, `damaged` |  |  | General | *Physical Vocal State* |
-| `emotional_vocal_state` | select<br/>options: `controlled`, `emotional`, `confident`, `shaking` |  |  | General | *Emotional Vocal State* |
-| `environmental_factors` | textarea |  |  | General | *Environmental Factors* |
-| `altered_state_effects` | textarea |  |  | General | *Altered State Effects* |
-
-**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
-
-| Field | Type | Required | Default | Tab | Source | Description |
-|---|---|---|---|---|---|---|
-| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
-
-**Tabs:** `General`, `Lifecycle`
-
-
-#### 🎭 `physical_performance_beat` — Physical Performance Beat
-
-Specific physical moment or action in a performance.
-
-| Meta | Value |
-|---|---|
-| Plural label | Physical Performance Beats |
-| Category | Production |
-| Tier | 6 |
-| Sort order | 622 |
-| Has lifecycle status | yes |
-
-**Declared fields:**
-
-| Field | Type | Required | Default | Tab | Description |
-|---|---|---|---|---|---|
-| `name` | text |  |  | General | *Name* |
-| `character_id` | reference → `character` | yes |  | General | *Character* |
-| `scene_id` | reference → `scene` | yes |  | General | *Scene* |
-| `beat_description` | textarea | yes |  | General | *Beat Description* |
-| `timing` | text |  |  | General | *Timing* |
-| `purpose` | textarea |  |  | General | *Purpose* |
-| `quality_notes` | text |  |  | General | *Quality Notes* |
-| `scale` | select<br/>options: `large`, `small`, `subtle` |  |  | General | *Scale* |
-| `relationship_to_dialogue` | select<br/>options: `accompanies`, `replaces`, `contradicts`, `punctuates` |  |  | General | *Relationship to Dialogue* |
-
-**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
-
-| Field | Type | Required | Default | Tab | Source | Description |
-|---|---|---|---|---|---|---|
-| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
-
-**Tabs:** `General`, `Lifecycle`
-
-
-#### 🎤 `vocal_beat` — Vocal Beat
-
-Specific vocal moment.
-
-| Meta | Value |
-|---|---|
-| Plural label | Vocal Beats |
-| Category | Production |
-| Tier | 6 |
-| Sort order | 623 |
-| Has lifecycle status | yes |
-
-**Declared fields:**
-
-| Field | Type | Required | Default | Tab | Description |
-|---|---|---|---|---|---|
-| `name` | text |  |  | General | *Name* |
-| `character_id` | reference → `character` | yes |  | General | *Character* |
-| `scene_id` | reference → `scene` | yes |  | General | *Scene* |
-| `beat_description` | textarea | yes |  | General | *Beat Description* |
-| `beat_type` | select<br/>options: `silence/pause`, `non-verbal sound`, `quality shift`, `volume shift`, `tempo shift` |  |  | General | *Beat Type* |
-| `timing` | text |  |  | General | *Timing* |
-| `purpose` | textarea |  |  | General | *Purpose* |
-
-**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
-
-| Field | Type | Required | Default | Tab | Source | Description |
-|---|---|---|---|---|---|---|
-| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
-
-**Tabs:** `General`, `Lifecycle`
-
-
-#### 📜 `line_delivery` — Line Delivery
-
-Specific delivery instructions for a line of dialogue.
-
-| Meta | Value |
-|---|---|
-| Plural label | Line Deliveries |
-| Category | Production |
-| Tier | 6 |
-| Sort order | 624 |
-| Has lifecycle status | yes |
-
-**Declared fields:**
-
-| Field | Type | Required | Default | Tab | Description |
-|---|---|---|---|---|---|
-| `name` | text |  |  | General | *Name* |
-| `character_id` | reference → `character` |  |  | General | *Character* |
-| `scene_id` | reference → `scene` |  |  | General | *Scene* |
-| `line_text` | text |  |  | General | *Line Text* |
-| `emotional_quality` | textarea |  |  | General | *Emotional Quality* |
-| `tempo` | text |  |  | General | *Tempo* |
-| `volume` | text |  |  | General | *Volume* |
-| `emphasis_words` | json |  |  | General | *Emphasis Words* |
-| `pause_locations` | json |  |  | General | *Pause Locations* |
-| `subtext` | textarea |  |  | General | *Subtext* |
-| `operative_words` | textarea |  |  | General | *Operative Words* |
-| `physical_integration` | textarea |  |  | General | *Physical Integration* |
-
-**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
-
-| Field | Type | Required | Default | Tab | Source | Description |
-|---|---|---|---|---|---|---|
-| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
-
-**Tabs:** `General`, `Lifecycle`
-
-
-#### 🥁 `dialogue_rhythm` — Dialogue Rhythm
-
-The musicality of conversation between characters in a scene.
-
-| Meta | Value |
-|---|---|
-| Plural label | Dialogue Rhythms |
-| Category | Production |
-| Tier | 6 |
-| Sort order | 625 |
-| Has lifecycle status | yes |
-
-**Declared fields:**
-
-| Field | Type | Required | Default | Tab | Description |
-|---|---|---|---|---|---|
-| `name` | text |  |  | General | *Name* |
-| `scene_id` | reference → `scene` | yes |  | General | *Scene* |
-| `character_a_id` | reference → `character` | yes |  | General | *Character A* |
-| `character_b_id` | reference → `character` |  |  | General | *Character B* |
-| `conversational_style` | select<br/>options: `overlapping/interrupting`, `turn-taking/polite`, `rapid exchange`, `languid/paused` |  |  | General | *Conversational Style* |
-| `power_dynamics` | textarea |  |  | General | *Power Dynamics* |
-| `listening_indicators` | textarea |  |  | General | *Listening Indicators* |
-| `rhythm_evolution` | textarea |  |  | General | *Rhythm Evolution Through Scene* |
-
-**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
-
-| Field | Type | Required | Default | Tab | Source | Description |
-|---|---|---|---|---|---|---|
-| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
-
-**Tabs:** `General`, `Lifecycle`
-
-
-#### 😤 `emotional_physicality` — Emotional Physicality
-
-How a specific emotion manifests physically for a character.
+How emotion manifests in the body.
 
 | Meta | Value |
 |---|---|
 | Plural label | Emotional Physicalities |
 | Category | Production |
 | Tier | 6 |
-| Sort order | 630 |
+| Sort order | 614 |
 | Has lifecycle status | yes |
 
 **Declared fields:**
@@ -3705,13 +4193,11 @@ How a specific emotion manifests physically for a character.
 | `name` | text |  |  | General | *Name* |
 | `character_id` | reference → `character` | yes |  | General | *Character* |
 | `emotion` | text | yes |  | General | *Emotion* |
-| `posture_changes` | textarea |  |  | General | *Posture Changes* |
-| `tension_location` | text |  |  | General | *Tension Location* |
-| `breathing_pattern` | textarea |  |  | General | *Breathing Pattern* |
-| `expansion_contraction` | select<br/>options: `expanding`, `contracting` |  |  | General | *Expansion / Contraction* |
-| `stillness_vs_movement` | textarea |  |  | General | *Stillness vs Movement* |
-| `visibility_level` | select<br/>options: `obvious`, `subtle`, `hidden`, `leaked` |  |  | General | *Visibility Level* |
-| `control_level` | select<br/>options: `conscious`, `unconscious`, `suppressed`, `overwhelming` |  |  | General | *Control Level* |
+| `body_manifestation` | textarea |  |  | General | *Body Manifestation* |
+| `face_manifestation` | textarea |  |  | General | *Face Manifestation* |
+| `voice_manifestation` | textarea |  |  | General | *Voice Manifestation* |
+| `breathing_manifestation` | textarea |  |  | General | *Breathing Manifestation* |
+| `intensity_level` | select<br/>options: `subtle`, `moderate`, `intense`, `overwhelming` |  |  | General | *Intensity Level* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3722,16 +4208,16 @@ How a specific emotion manifests physically for a character.
 **Tabs:** `General`, `Lifecycle`
 
 
-#### 😏 `microexpression` — Microexpression
+#### 👁️ `microexpression` — Microexpression
 
-Fleeting facial expression that reveals hidden emotion.
+Brief involuntary facial expression revealing inner state.
 
 | Meta | Value |
 |---|---|
 | Plural label | Microexpressions |
 | Category | Production |
 | Tier | 6 |
-| Sort order | 632 |
+| Sort order | 615 |
 | Has lifecycle status | yes |
 
 **Declared fields:**
@@ -3739,14 +4225,12 @@ Fleeting facial expression that reveals hidden emotion.
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
 | `name` | text |  |  | General | *Name* |
+| `scene_id` | reference → `scene` | yes |  | General | *Scene* |
 | `character_id` | reference → `character` | yes |  | General | *Character* |
-| `scene_id` | reference → `scene` |  |  | General | *Scene* |
-| `expression_type` | text |  |  | General | *Expression Type* |
-| `facial_region` | text |  |  | General | *Facial Region* |
-| `underlying_emotion` | text |  |  | General | *Underlying (True) Emotion* |
-| `displayed_emotion` | text |  |  | General | *Displayed (Surface) Emotion* |
-| `character_awareness` | select<br/>options: `aware`, `unaware` |  |  | General | *Character Awareness* |
-| `audience_intended_to_catch` | boolean |  |  | General | *Audience Intended to Catch?* |
+| `emotion_revealed` | text | yes |  | General | *Emotion Revealed* |
+| `trigger` | textarea |  |  | General | *Trigger* |
+| `description` | textarea |  |  | General | *Description* |
+| `audience_visibility` | select<br/>options: `clearly seen`, `subtle`, `blink and miss` |  |  | General | *Audience Visibility* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3757,16 +4241,16 @@ Fleeting facial expression that reveals hidden emotion.
 **Tabs:** `General`, `Lifecycle`
 
 
-#### 🏠 `character_environment_physicality` — Character-Environment Physicality
+#### 🏞️ `character_environment_physicality` — Character-Environment Physicality
 
-How a character physically inhabits a specific location.
+How a character physically interacts with their environment.
 
 | Meta | Value |
 |---|---|
 | Plural label | Character-Environment Physicalities |
 | Category | Production |
 | Tier | 6 |
-| Sort order | 633 |
+| Sort order | 616 |
 | Has lifecycle status | yes |
 
 **Declared fields:**
@@ -3776,11 +4260,10 @@ How a character physically inhabits a specific location.
 | `name` | text |  |  | General | *Name* |
 | `character_id` | reference → `character` | yes |  | General | *Character* |
 | `location_id` | reference → `location` | yes |  | General | *Location* |
-| `how_enters_space` | textarea |  |  | General | *How Character Enters* |
-| `typical_position` | textarea |  |  | General | *Typical Position* |
-| `space_claiming_behavior` | textarea |  |  | General | *Space Claiming Behavior* |
-| `object_interaction_quality` | textarea |  |  | General | *Object Interaction Quality* |
-| `territorial_behavior` | textarea |  |  | General | *Territorial Behavior* |
+| `comfort_level` | select<br/>options: `at home`, `comfortable`, `alert`, `uncomfortable`, `alien` |  |  | General | *Comfort Level* |
+| `interaction_pattern` | textarea |  |  | General | *Interaction Pattern* |
+| `spatial_use` | textarea |  |  | General | *Spatial Use* |
+| `object_interaction` | textarea |  |  | General | *Object Interaction* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3791,16 +4274,16 @@ How a character physically inhabits a specific location.
 **Tabs:** `General`, `Lifecycle`
 
 
-#### 🤲 `physical_relationship` — Physical Relationship
+#### 🤝 `physical_relationship` — Physical Relationship
 
-How two characters physically relate.
+Physical dimension of a relationship between characters.
 
 | Meta | Value |
 |---|---|
 | Plural label | Physical Relationships |
 | Category | Production |
 | Tier | 6 |
-| Sort order | 634 |
+| Sort order | 617 |
 | Has lifecycle status | yes |
 
 **Declared fields:**
@@ -3810,13 +4293,11 @@ How two characters physically relate.
 | `name` | text |  |  | General | *Name* |
 | `character_a_id` | reference → `character` | yes |  | General | *Character A* |
 | `character_b_id` | reference → `character` | yes |  | General | *Character B* |
-| `typical_distance` | select<br/>options: `intimate`, `personal`, `social`, `public` |  |  | General | *Typical Distance* |
-| `who_controls_distance` | text |  |  | General | *Who Controls Distance* |
-| `touch_patterns` | textarea |  |  | General | *Touch Patterns* |
-| `touch_quality` | select<br/>options: `gentle`, `aggressive`, `casual`, `charged` |  |  | General | *Touch Quality* |
-| `who_initiates_touch` | text |  |  | General | *Who Initiates Touch* |
-| `physical_mirroring` | textarea |  |  | General | *Physical Mirroring* |
-| `physical_power_dynamic` | textarea |  |  | General | *Physical Power Dynamic* |
+| `touch_comfort` | select<br/>options: `touching`, `tactile`, `reserved`, `avoidant` |  |  | General | *Touch Comfort* |
+| `distance_preference` | text |  |  | General | *Distance Preference* |
+| `eye_contact_pattern` | text |  |  | General | *Eye Contact Pattern* |
+| `body_orientation` | text |  |  | General | *Body Orientation* |
+| `mirroring_tendencies` | textarea |  |  | General | *Mirroring Tendencies* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3827,16 +4308,16 @@ How two characters physically relate.
 **Tabs:** `General`, `Lifecycle`
 
 
-#### 📊 `physical_relationship_evolution` — Physical Relationship Evolution
+#### 📈 `physical_relationship_evolution` — Physical Relationship Evolution
 
-How a physical relationship between characters changes at a specific scene.
+How a physical relationship changes across the story.
 
 | Meta | Value |
 |---|---|
 | Plural label | Physical Relationship Evolutions |
 | Category | Production |
 | Tier | 6 |
-| Sort order | 635 |
+| Sort order | 618 |
 | Has lifecycle status | yes |
 
 **Declared fields:**
@@ -3845,11 +4326,10 @@ How a physical relationship between characters changes at a specific scene.
 |---|---|---|---|---|---|
 | `name` | text |  |  | General | *Name* |
 | `physical_relationship_id` | reference → `physical_relationship` | yes |  | General | *Physical Relationship* |
-| `scene_id` | reference → `scene` | yes |  | General | *Scene* |
-| `distance_state` | text |  |  | General | *Distance State* |
-| `touch_state` | text |  |  | General | *Touch State* |
-| `mirroring_state` | text |  |  | General | *Mirroring State* |
-| `change_from_previous` | textarea |  |  | General | *Change from Previous* |
+| `starting_state` | textarea |  |  | General | *Starting State* |
+| `ending_state` | textarea |  |  | General | *Ending State* |
+| `key_transition_points` | textarea |  |  | General | *Key Transition Points* |
+| `driving_events` | textarea |  |  | General | *Driving Events* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3862,26 +4342,27 @@ How a physical relationship between characters changes at a specific scene.
 
 #### 💃 `movement_choreography` — Movement Choreography
 
-Designed movement patterns — dance, ritual, work, sport.
+Choreographed movement design for a scene or sequence.
 
 | Meta | Value |
 |---|---|
 | Plural label | Movement Choreographies |
 | Category | Production |
 | Tier | 6 |
-| Sort order | 636 |
+| Sort order | 619 |
 | Has lifecycle status | yes |
 
 **Declared fields:**
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text | yes |  | General | *Name* |
+| `name` | text |  |  | General | *Name* |
 | `scene_id` | reference → `scene` | yes |  | General | *Scene* |
-| `choreography_type` | select<br/>options: `dance (formal)`, `dance (social)`, `dance (spontaneous)`, `ritual/ceremony`, `work/labor`, `sport/game`, `synchronized movement` |  |  | General | *Choreography Type* |
-| `style` | textarea |  |  | General | *Style* |
-| `meaning` | textarea |  |  | General | *Meaning* |
-| `period_accuracy` | textarea |  |  | General | *Period Accuracy* |
+| `movement_concept` | textarea |  |  | General | *Movement Concept* |
+| `rhythm_pattern` | textarea |  |  | General | *Rhythm Pattern* |
+| `spatial_pattern` | textarea |  |  | General | *Spatial Pattern* |
+| `ensemble_coordination` | textarea |  |  | General | *Ensemble Coordination* |
+| `style_reference` | text |  |  | General | *Style Reference* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3894,14 +4375,14 @@ Designed movement patterns — dance, ritual, work, sport.
 
 #### 🎼 `musical_theme` — Musical Theme
 
-Recurring melodic or harmonic idea — leitmotif.
+Recurring musical phrase associated with a character, place, or idea.
 
 | Meta | Value |
 |---|---|
 | Plural label | Musical Themes |
 | Category | Production |
 | Tier | 6 |
-| Sort order | 640 |
+| Sort order | 620 |
 | Has lifecycle status | yes |
 
 **Declared fields:**
@@ -3909,13 +4390,12 @@ Recurring melodic or harmonic idea — leitmotif.
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
 | `name` | text | yes |  | General | *Theme Name* |
-| `theme_description` | textarea |  |  | General | *Theme Description* |
-| `emotional_association` | textarea |  |  | General | *Emotional Association* |
-| `character_id` | reference → `character` |  |  | General | *Associated Character* |
-| `concept_association` | text |  |  | General | *Concept Association* |
-| `first_appearance_scene_id` | reference → `scene` |  |  | General | *First Appearance Scene* |
-| `development_description` | textarea |  |  | General | *Development Through Story* |
-| `orchestration_variations` | textarea |  |  | General | *Orchestration Variations* |
+| `theme_type` | select<br/>options: `character theme`, `place theme`, `idea theme`, `relationship theme`, `emotional theme` |  |  | General | *Theme Type* |
+| `associated_entity` | text |  |  | General | *Associated Entity* |
+| `description` | textarea |  |  | General | *Description* |
+| `instrumentation` | text |  |  | General | *Instrumentation* |
+| `variations` | textarea |  |  | General | *Variations Through Story* |
+| `evolution_description` | textarea |  |  | General | *Evolution Description* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3926,32 +4406,30 @@ Recurring melodic or harmonic idea — leitmotif.
 **Tabs:** `General`, `Lifecycle`
 
 
-#### 🔈 `sound_cue` — Sound Cue
+#### 🔊 `sound_cue` — Sound Cue
 
-Individual sound effect or designed sound placement.
+A specific sound element placement.
 
 | Meta | Value |
 |---|---|
 | Plural label | Sound Cues |
 | Category | Production |
 | Tier | 6 |
-| Sort order | 641 |
+| Sort order | 621 |
 | Has lifecycle status | yes |
 
 **Declared fields:**
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text |  |  | General | *Name* |
-| `scene_id` | reference → `scene` | yes |  | General | *Scene* |
+| `name` | text | yes |  | General | *Name* |
+| `scene_id` | reference → `scene` |  |  | General | *Scene* |
 | `shot_id` | reference → `shot` |  |  | General | *Shot* |
-| `cue_type` | select<br/>options: `SFX`, `foley`, `ambient`, `designed` |  |  | General | *Cue Type* |
+| `sound_type` | select<br/>options: `ambient`, `effect`, `foley`, `design`, `stinger`, `dialogue`, `voiceover` |  |  | General | *Sound Type* |
 | `description` | textarea |  |  | General | *Description* |
-| `source` | select<br/>options: `on screen`, `off screen` |  |  | General | *Source* |
-| `volume_intensity` | text |  |  | General | *Volume / Intensity* |
-| `emotional_function` | textarea |  |  | General | *Emotional Function* |
 | `timing` | text |  |  | General | *Timing* |
-| `duration` | integer |  |  | General | *Duration (seconds)* |
+| `duration` | text |  |  | General | *Duration* |
+| `emotional_function` | textarea |  |  | General | *Emotional Function* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3964,30 +4442,29 @@ Individual sound effect or designed sound placement.
 
 #### 🎵 `music_cue` — Music Cue
 
-Individual music cue placement in a scene.
+A specific music placement and its function.
 
 | Meta | Value |
 |---|---|
 | Plural label | Music Cues |
 | Category | Production |
 | Tier | 6 |
-| Sort order | 642 |
+| Sort order | 622 |
 | Has lifecycle status | yes |
 
 **Declared fields:**
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text |  |  | General | *Cue Name* |
+| `name` | text | yes |  | General | *Cue Name* |
 | `scene_id` | reference → `scene` | yes |  | General | *Scene* |
-| `cue_type` | select<br/>options: `diegetic`, `non-diegetic` |  |  | General | *Cue Type* |
-| `genre_style` | text |  |  | General | *Genre / Style* |
-| `tempo_mood` | text |  |  | General | *Tempo / Mood* |
-| `emotional_purpose` | textarea |  |  | General | *Emotional Purpose* |
+| `cue_type` | select<br/>options: `score`, `source` |  |  | General | *Cue Type* |
+| `entry_timing` | text |  |  | General | *Entry Timing* |
+| `exit_timing` | text |  |  | General | *Exit Timing* |
+| `duration_seconds` | integer |  |  | General | *Duration (seconds)* |
 | `musical_theme_id` | reference → `musical_theme` |  |  | General | *Musical Theme* |
-| `instrumentation` | textarea |  |  | General | *Instrumentation* |
-| `volume_level` | text |  |  | General | *Volume Level* |
-| `source` | text |  |  | Source | *Source (if diegetic)* |
+| `emotional_function` | textarea |  |  | General | *Emotional Function* |
+| `dynamics` | textarea |  |  | General | *Dynamics* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -3995,19 +4472,19 @@ Individual music cue placement in a scene.
 |---|---|---|---|---|---|---|
 | `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
 
-**Tabs:** `General`, `Source`, `Lifecycle`
+**Tabs:** `General`, `Lifecycle`
 
 
 #### 👂 `sound_perspective` — Sound Perspective
 
-Point-of-view in sound — whose hearing, what techniques.
+POV approach to sound — whose ears are we using?
 
 | Meta | Value |
 |---|---|
 | Plural label | Sound Perspectives |
 | Category | Production |
 | Tier | 6 |
-| Sort order | 643 |
+| Sort order | 623 |
 | Has lifecycle status | yes |
 
 **Declared fields:**
@@ -4016,10 +4493,10 @@ Point-of-view in sound — whose hearing, what techniques.
 |---|---|---|---|---|---|
 | `name` | text |  |  | General | *Name* |
 | `scene_id` | reference → `scene` | yes |  | General | *Scene* |
-| `character_id` | reference → `character` |  |  | General | *Character* |
-| `perspective_type` | select<br/>options: `objective`, `subjective`, `omniscient` |  |  | General | *Perspective Type* |
-| `subjective_techniques` | textarea |  |  | General | *Subjective Techniques* |
-| `transition_triggers` | textarea |  |  | General | *Transition Triggers* |
+| `perspective_type` | select<br/>options: `objective`, `subjective`, `shifting` |  |  | General | *Perspective Type* |
+| `pov_character_id` | reference → `character` |  |  | General | *POV Character* |
+| `spatial_logic` | textarea |  |  | General | *Spatial Logic* |
+| `psychological_logic` | textarea |  |  | General | *Psychological Logic* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -4030,48 +4507,16 @@ Point-of-view in sound — whose hearing, what techniques.
 **Tabs:** `General`, `Lifecycle`
 
 
-#### 📢 `voiceover_design` — Voiceover Design
+#### 🎙️ `voiceover_design` — Voiceover Design
 
-Non-diegetic or semi-diegetic speech design.
+Narration / inner-voice approach for the project or scene.
 
 | Meta | Value |
 |---|---|
 | Plural label | Voiceover Designs |
 | Category | Production |
 | Tier | 6 |
-| Sort order | 644 |
-| Has lifecycle status | yes |
-
-**Declared fields:**
-
-| Field | Type | Required | Default | Tab | Description |
-|---|---|---|---|---|---|
-| `name` | text |  | `Voiceover Design` | General | *Name* |
-| `character_id` | reference → `character` |  |  | General | *Character (whose voice)* |
-| `narration_type` | select<br/>options: `character voice-over`, `omniscient narrator`, `internal monologue` |  |  | General | *Narration Type* |
-| `acoustic_treatment` | select<br/>options: `intimate (close, dry)`, `distanced (room, space)`, `stylized` |  |  | General | *Acoustic Treatment* |
-| `relationship_to_image` | select<br/>options: `complements`, `counterpoints`, `reveals` |  |  | General | *Relationship to Image* |
-| `placement_in_mix` | textarea |  |  | General | *Placement in Mix* |
-
-**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
-
-| Field | Type | Required | Default | Tab | Source | Description |
-|---|---|---|---|---|---|---|
-| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
-
-**Tabs:** `General`, `Lifecycle`
-
-
-#### 🔀 `music_sound_relationship` — Music-Sound Relationship
-
-How score and sound design interact.
-
-| Meta | Value |
-|---|---|
-| Plural label | Music-Sound Relationships |
-| Category | Production |
-| Tier | 6 |
-| Sort order | 645 |
+| Sort order | 624 |
 | Has lifecycle status | yes |
 
 **Declared fields:**
@@ -4079,10 +4524,13 @@ How score and sound design interact.
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
 | `name` | text |  |  | General | *Name* |
-| `scene_id` | reference → `scene` |  |  | General | *Scene (optional)* |
-| `hierarchy` | select<br/>options: `music-forward`, `sound-forward`, `equal partners`, `shifting` |  |  | General | *Hierarchy* |
-| `blend_approach` | select<br/>options: `clear separation`, `blurred boundaries`, `designed interaction` |  |  | General | *Blend Approach* |
-| `combined_silence` | textarea |  |  | General | *Combined Silence* |
+| `scene_id` | reference → `scene` |  |  | General | *Scene (if scene-specific)* |
+| `character_id` | reference → `character` |  |  | General | *Narrator Character* |
+| `voiceover_type` | select<br/>options: `narrator`, `inner monologue`, `letter/diary`, `retrospective`, `future self` |  |  | General | *Voiceover Type* |
+| `voiceover_function` | textarea |  |  | General | *Function* |
+| `temporal_position` | select<br/>options: `concurrent`, `retrospective`, `prospective` |  |  | General | *Temporal Position* |
+| `knowledge_position` | select<br/>options: `omniscient`, `limited`, `unreliable` |  |  | General | *Knowledge Position* |
+| `relationship_to_image` | select<br/>options: `matches`, `counterpoint`, `expands` |  |  | General | *Relationship to Image* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -4093,37 +4541,28 @@ How score and sound design interact.
 **Tabs:** `General`, `Lifecycle`
 
 
----
+#### 🎚️ `music_sound_relationship` — Music-Sound Relationship
 
-### Category: Metadata
-
-<a id='category-metadata'></a>
-
-#### ⚖️ `creative_decision` — Creative Decision
-
-Documented rationale for a creative choice.
+How music and sound design interact in a scene.
 
 | Meta | Value |
 |---|---|
-| Plural label | Creative Decisions |
-| Category | Metadata |
-| Tier | 1 |
-| Sort order | 800 |
+| Plural label | Music-Sound Relationships |
+| Category | Production |
+| Tier | 6 |
+| Sort order | 625 |
 | Has lifecycle status | yes |
 
 **Declared fields:**
 
 | Field | Type | Required | Default | Tab | Description |
 |---|---|---|---|---|---|
-| `name` | text | yes |  | General | *Decision Title* |
-| `entity_type` | text |  |  | General | *Related Entity Type* |
-| `entity_id` | integer |  |  | General | *Related Entity ID* |
-| `decision_description` | textarea | yes |  | General | *Decision Description* |
-| `options_considered` | json |  |  | General | *Options Considered* |
-| `why_chosen` | textarea |  |  | General | *Why This Option Chosen* |
-| `what_sacrificed` | textarea |  |  | General | *What Was Sacrificed* |
-| `what_gained` | textarea |  |  | General | *What Was Gained* |
-| `confidence_level` | select<br/>options: `certain`, `confident`, `uncertain`, `compromised` |  |  | General | *Confidence Level* |
+| `name` | text |  |  | General | *Name* |
+| `scene_id` | reference → `scene` | yes |  | General | *Scene* |
+| `relationship_type` | select<br/>options: `music dominant`, `sound dominant`, `integrated`, `alternating` |  |  | General | *Relationship Type* |
+| `integration_approach` | textarea |  |  | General | *Integration Approach* |
+| `dynamic_balance` | textarea |  |  | General | *Dynamic Balance* |
+| `frequency_separation` | textarea |  |  | General | *Frequency Separation* |
 
 **Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
 
@@ -4132,80 +4571,6 @@ Documented rationale for a creative choice.
 | `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
 
 **Tabs:** `General`, `Lifecycle`
-
-
-#### 📝 `collaboration_note` — Collaboration Note
-
-Director's guidance to specific collaborators or domains.
-
-| Meta | Value |
-|---|---|
-| Plural label | Collaboration Notes |
-| Category | Metadata |
-| Tier | 1 |
-| Sort order | 801 |
-| Has lifecycle status | yes |
-
-**Declared fields:**
-
-| Field | Type | Required | Default | Tab | Description |
-|---|---|---|---|---|---|
-| `name` | text | yes |  | General | *Note Title* |
-| `entity_type` | text |  |  | General | *Related Entity Type* |
-| `entity_id` | integer |  |  | General | *Related Entity ID* |
-| `domain` | text |  |  | General | *Domain / Area* |
-| `note_text` | textarea | yes |  | General | *Note Text* |
-| `note_type` | select<br/>options: `vision communication`, `problem-solving`, `permission-granting`, `boundary-setting`, `question-posing` |  |  | General | *Note Type* |
-| `priority` | select<br/>options: `critical`, `important`, `optional` |  |  | General | *Priority* |
-| `response_expected` | select<br/>options: `execution`, `interpretation`, `options` |  |  | General | *Response Expected* |
-
-**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
-
-| Field | Type | Required | Default | Tab | Source | Description |
-|---|---|---|---|---|---|---|
-| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
-
-**Tabs:** `General`, `Lifecycle`
-
-
-#### 📎 `asset` — Asset
-
-External file reference — image, model, audio, document.
-
-| Meta | Value |
-|---|---|
-| Plural label | Assets |
-| Category | Metadata |
-| Tier | 1 |
-| Sort order | 802 |
-| Has lifecycle status | yes |
-| Has external ID | yes |
-
-**Declared fields:**
-
-| Field | Type | Required | Default | Tab | Description |
-|---|---|---|---|---|---|
-| `name` | text | yes |  | General | *File Name* |
-| `file_path` | text | yes |  | General | *File Path* |
-| `file_type` | select<br/>options: `image`, `3D model`, `audio`, `video`, `document`, `project file` |  |  | General | *File Type* |
-| `purpose` | select<br/>options: `reference`, `concept`, `pre-production`, `production`, `post-production` |  |  | General | *Purpose* |
-| `department` | text |  |  | General | *Department* |
-| `creator` | text |  |  | General | *Creator* |
-| `approval_status` | select<br/>options: `wip`, `pending`, `approved`, `final` |  |  | General | *Approval Status* — Approval axis — distinct from lifecycle_status. |
-| `resolution` | text |  |  | Technical | *Resolution* |
-| `color_space` | text |  |  | Technical | *Color Space* |
-| `duration` | integer |  |  | Technical | *Duration (seconds)* |
-| `file_size` | integer |  |  | Technical | *File Size (bytes)* |
-
-**Auto-injected fields** (added by registry flags — see *Cross-cutting conventions*):
-
-| Field | Type | Required | Default | Tab | Source | Description |
-|---|---|---|---|---|---|---|
-| `lifecycle_status` | select<br/>options: `active`, `draft`, `superseded`, `deprecated`, `cut`, `archived` |  | `active` | Lifecycle | `lifecycle` | *Lifecycle Status* — Cross-cutting record state. See conventions.md. |
-| `external_id` | text |  |  | External | `external` | *External ID* — placeholder: identifier in external system — Optional. Identifier in an external system (OMC, EIDR, production DB, etc.). See conventions.md. |
-| `external_id_namespace` | text |  |  | External | `external` | *External ID Namespace* — placeholder: e.g. "omc", "eidr", "shotgrid:project_42" — Which external system the identifier belongs to. |
-
-**Tabs:** `General`, `Technical`, `Lifecycle`, `External`
 
 
 ---
