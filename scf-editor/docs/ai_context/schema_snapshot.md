@@ -1,6 +1,6 @@
 # SCF Schema Snapshot
 
-*Compact reference for orientation. Auto-generated from `entity_registry.py` on 2026-05-17 UTC. For full field-level detail, see `schema_reference.md`.*
+*Compact reference for orientation. Auto-generated from `entity_registry.py` on 2026-05-19 UTC. For full field-level detail, see `schema_reference.md`.*
 
 ## What SCF is
 

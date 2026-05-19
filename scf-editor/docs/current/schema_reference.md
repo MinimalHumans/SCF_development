@@ -1,6 +1,6 @@
 # SCF Schema Reference
 
-*Auto-generated from `entity_registry.py` on 2026-05-17 UTC. Do not edit by hand — re-run `scripts/generate_schema_docs.py` instead.*
+*Auto-generated from `entity_registry.py` on 2026-05-19 UTC. Do not edit by hand — re-run `scripts/generate_schema_docs.py` instead.*
 
 ---
 
